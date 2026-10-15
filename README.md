@@ -20,11 +20,11 @@ Open [http://localhost:8000](http://localhost:8000). A local HTTP server is need
 | Arena | Survive against three AI riders. |
 | Play lesson | Learn to turn, leave a trail, and avoid collisions. You can skip the lesson. |
 
-Turn left or right with **Left/Right Arrow** or **A/D**. Press **P** or **Escape** to pause or resume, and **M** to mute or unmute. On touch devices, use the on-screen turn buttons. The HUD also has touch, sound, and pause buttons. Use the game menu to start or restart a run.
+Turn left or right with **Left/Right Arrow** or **A/D**. Press **P** or **Escape** to pause or resume, and **M** to mute or unmute. On touch devices, use the on-screen turn buttons. The HUD also has touch, sound, and pause buttons. Use the game menu to start or restart a run. After a crash, a six-second replay shows the recorded collision and its cause; use **Skip Replay**, **Enter**, or **Escape** to continue immediately.
 
 ## Settings and progress
 
-The menu offers separate effects and music volume, camera distance, and High/Low graphics settings. The game saves these preferences, mode choices, touch-control choice, and your best score in your browser's local storage. There is no account, online leaderboard, or PvP mode.
+The menu offers separate effects and music volume, Close/Standard/Far camera distance, Chase/Tactical camera views, High/Low graphics, and a Reduce flashes option. The game also respects your browser's reduced-motion preference. The game saves these preferences, mode choices, touch-control choice, and your best score in your browser's local storage. There is no account, online leaderboard, or PvP mode.
 
 The game works without a gameplay server. Its optional Google Fonts are loaded from Google when a network connection is available.
 
@@ -57,7 +57,7 @@ node --test tests/*.test.mjs
 
 ## Project status
 
-Duel, Arena, a playable lesson, AI rivals, cinematic arena scenery, distinct rider silhouettes, and procedural music/effects are implemented. Additional maps, expanded combat and transformation mechanics, and PvP are future ideas, not current features.
+Duel, Arena, a playable lesson, AI rivals, cinematic arena scenery, distinct rider silhouettes, procedural music/effects, camera views, and crash replays are implemented. Additional maps, expanded combat and transformation mechanics, and PvP are future ideas, not current features.
 
 This is an unofficial fan project inspired by TRON. It is not affiliated with or endorsed by Disney.
 
