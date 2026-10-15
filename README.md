@@ -48,7 +48,9 @@ Vercel documents this setup for [static sites without a build step](https://verc
 - `dist/index.html` — interface and styling.
 - `dist/game.js` — WebGL renderer, game loop, input, audio, and persistence.
 - `dist/simulation.js` — movement, trails, collisions, and AI simulation.
-- `dist/match.js` — Duel match rules.\n- dist/arena.js ? three-heat Arena match rules.\n- dist/maps.js ? shared map geometry, palettes, spawns, and spawn validation.
+- `dist/match.js` - Duel match rules.
+- `dist/arena.js` - three-heat Arena match rules.
+- `dist/maps.js` - shared map geometry, palettes, spawns, and spawn validation.
 - `tests/` — Node.js tests for simulation and match behavior.
 
 To run the available tests, use:
