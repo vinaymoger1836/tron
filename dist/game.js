@@ -3,7 +3,7 @@ import { MAPS, getMap } from './maps.js';
 import { createArenaMatch, recordArenaRound, nextArenaRound, arenaWon } from './arena.js';
 import { createMatch, recordRound, nextRound, roundSeed } from './match.js';
 import { OPERATIONS, JOURNEY, getOperation } from './operations.js';
-import { createShiftRound, stepShiftRound, setShiftMove, queueShiftTurn, requestShiftForm, throwShiftDisc } from './grid-shift.js';
+import { createShiftRound, stepShiftRound, setShiftMove, queueShiftTurn, requestShiftForm, throwShiftDisc, fireShiftPulse } from './grid-shift.js';
 
 const canvas = document.querySelector('#game');
 const radar = document.querySelector('#radar');
@@ -189,7 +189,8 @@ const QUALITY_KEY = 'tron-grid-run-quality';
 const HISTORY_KEY = 'tron-grid-run-history:v1';
 const RECORDS_KEY = 'tron-grid-run-records:v1';
 const BADGES_KEY = 'tron-grid-run-badges:v1';
-const BINDINGS_KEY = 'tron-grid-run-bindings:v1';
+const BINDINGS_KEY = 'tron-grid-run-bindings:v2';
+const OLD_BINDINGS_KEY = 'tron-grid-run-bindings:v1';
 const TOUCH_SIZE_KEY = 'tron-grid-run-touch-size';
 const TOUCH_PLACEMENT_KEY = 'tron-grid-run-touch-placement';
 const RENDER_SCALE_KEY = 'tron-grid-run-render-scale';
@@ -198,7 +199,7 @@ const FLASH_INTENSITY_KEY = 'tron-grid-run-flash-intensity';
 const GAMEPAD_KEY = 'tron-grid-run-gamepad';
 const CAPTIONS_KEY = 'tron-grid-run-captions';
 const DAILY_RULES_VERSION = 1;
-const DEFAULT_BINDINGS = Object.freeze({ left: 'a', right: 'd', up: 'w', down: 's', form: 'e', disc: 'space', pause: 'p', sound: 'm' });
+const DEFAULT_BINDINGS = Object.freeze({ left: 'a', right: 'd', up: 'w', down: 's', form: 'f', pulse: 'e', disc: 'space', pause: 'p', sound: 'm' });
 let storageAvailable = true;
 
 function readLocal(key) {
@@ -218,13 +219,30 @@ function optionValue(key, options, fallback) {
 }
 function validBinding(key) { return key === 'space' || /^[a-z0-9]$/.test(key); }
 function readBindings() {
-  let saved;
-  try { saved = JSON.parse(readLocal(BINDINGS_KEY) || '{}'); } catch { saved = {}; }
+  let saved = {}, legacy = false;
+  try {
+    const current = readLocal(BINDINGS_KEY);
+    legacy = !current;
+    saved = JSON.parse(current || readLocal(OLD_BINDINGS_KEY) || '{}');
+  } catch { saved = {}; }
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) saved = {};
   const next = { ...DEFAULT_BINDINGS };
-  for (const action of Object.keys(next)) {
-    if (typeof saved?.[action] === 'string' && validBinding(saved[action])) next[action] = saved[action];
+  if (legacy && saved.form === 'e') {
+    const used = new Set(Object.entries(saved).filter(([action]) => action !== 'form')
+      .map(([, key]) => key));
+    saved.form = ['f', 'q', 'r', 't', 'g'].find(key => !used.has(key)) || 'f';
   }
-  if (new Set(Object.values(next)).size !== Object.keys(next).length) return { ...DEFAULT_BINDINGS };
+  for (const action of Object.keys(next)) {
+    if (typeof saved[action] === 'string' && validBinding(saved[action]))
+      next[action] = saved[action];
+  }
+  if (legacy && Object.keys(saved).length && !saved.pulse) {
+    const occupied = new Set(Object.entries(next).filter(([action]) => action !== 'pulse')
+      .map(([, key]) => key));
+    next.pulse = ['e', 'f', 'q', 'r'].find(key => !occupied.has(key)) || 'e';
+  }
+  if (new Set(Object.values(next)).size !== Object.keys(next).length)
+    return { ...DEFAULT_BINDINGS };
   return next;
 }
 function readHistory() {
@@ -665,14 +683,21 @@ function updateShiftHud() {
     ? 'CYCLE / WALL ACTIVE' : 'ON FOOT / DISC';
   const disc = round.shift.discs.some(d => d.ownerId === player.id);
   const cooldown = Math.max(0, player.discReadyAt - round.elapsed);
+  const pulseCooldown = Math.max(0, player.pulseReadyAt - round.elapsed);
   document.querySelector('#shift-status').textContent =
-    'You ' + player.hp + '/2 integrity / Disc ' +
-    (disc ? 'returning' : cooldown > 0 ? cooldown.toFixed(1) + 's' : 'ready');
+    'You ' + player.hp + '/2 integrity / ' +
+    (player.form === 'cycle' ? 'Cutter ' +
+      (pulseCooldown > 0 ? pulseCooldown.toFixed(1) + 's' : 'ready') :
+      'Disc ' + (disc ? 'returning' : cooldown > 0 ? cooldown.toFixed(1) + 's' : 'ready'));
   document.querySelector('#shift-rival-status').textContent =
     'Echo ' + rival.hp + '/2 integrity / ' + rival.form.toUpperCase();
-  document.querySelector('#shift-throw').disabled = player.form !== 'foot' || disc || cooldown > 0 || mode !== 'running';
+  const weaponButton = document.querySelector('#shift-throw');
+  weaponButton.textContent = player.form === 'cycle' ? 'CUT' : 'DISC';
+  weaponButton.setAttribute('aria-label', player.form === 'cycle' ? 'Fire wall cutter' : 'Throw disc');
+  weaponButton.disabled = mode !== 'running' || (player.form === 'cycle'
+    ? pulseCooldown > 0 || round.elapsed < player.recoveryUntil : disc || cooldown > 0);
   document.querySelector('#shift-tip').textContent =
-    player.form === 'cycle' ? keyLabel('form') + ' dismount / ' +
+    player.form === 'cycle' ? keyLabel('pulse') + ' cut wall / ' + keyLabel('form') + ' dismount / ' +
       keyLabel('left') + ' ' + keyLabel('right') + ' turn / ' +
       Math.max(0, Math.ceil(round.shift.timeLimit - round.elapsed)) + 's'
       : [keyLabel('up'), keyLabel('left'), keyLabel('down'), keyLabel('right')].join(' ') +
@@ -879,7 +904,7 @@ function syncControlHints(shift = modeSelect.value === 'shift') {
   const key = action => '<kbd>' + keyLabel(action) + '</kbd>';
   document.querySelector('#controls-hint').innerHTML = shift
     ? key('left') + key('right') + ' TURN ' + key('form') + ' FORM ' +
-      key('disc') + ' DISC ' + key('pause') + ' PAUSE'
+      key('pulse') + ' CUT ' + key('disc') + ' DISC ' + key('pause') + ' PAUSE'
     : key('left') + key('right') + ' TURN ' + key('pause') + ' PAUSE ' +
       key('sound') + ' SOUND';
   document.querySelector('#panel-footer').innerHTML = shift
@@ -887,7 +912,7 @@ function syncControlHints(shift = modeSelect.value === 'shift') {
       ' TURN</span> &nbsp;?&nbsp; FOOT <span>' +
       [keyLabel('up'),keyLabel('left'),keyLabel('down'),keyLabel('right')].join(' ') +
       ' MOVE</span> &nbsp;?&nbsp; <span>' + keyLabel('form') + ' FORM / ' +
-      keyLabel('disc') + ' DISC</span>'
+      keyLabel('pulse') + ' CUT / ' + keyLabel('disc') + ' DISC</span>'
     : 'KEYBOARD <span>ARROWS / ' + keyLabel('left') + ' ' + keyLabel('right') +
       '</span> &nbsp;?&nbsp; TOUCH <span>TURN BUTTONS</span>';
 }
@@ -954,7 +979,7 @@ function launch() {
   lastFrame = performance.now();
   beep(730, 0.2, 'triangle', 0.06);
   effectMotif('wall');
-  announce(sessionMode === 'operations' ? 'Go. ' + getOperation(round.operation.id).objective : sessionMode === 'shift' ? 'Go. Derez Echo using your disc or light wall.' : 'Go. Survive the Grid.');
+  announce(sessionMode === 'operations' ? 'Go. ' + getOperation(round.operation.id).objective : sessionMode === 'shift' ? 'Go. Derez Echo using your disc or light wall. Cut a wall with the mounted pulse.' : 'Go. Survive the Grid.');
   const token = generation;
   setTimeout(() => { if (token === generation && mode === 'running') hideCountdown(); }, 420);
 }
@@ -1000,7 +1025,7 @@ function drawMapPreview() {
   mapPreview.setAttribute('aria-label', (mission?.name || map.name) + ' layout with ' +
     map.obstacles.length + ' fixed barriers and ' + spawns.length + ' spawn positions');
   mapTip.textContent = modeSelect.value === 'shift'
-    ? 'One open arena. Ride to draw a wall; dismount to move freely and throw a returning disc. Two hits derez a rival.'
+    ? 'One open arena. Ride to draw walls and fire a short-range wall cutter; dismount to move freely and throw a returning disc. Two disc hits derez a rival.'
     : operations
     ? mission.objective + ' ' + mission.tip +
       (operationSelect.value === 'journey' ? ' The journey links all three operations.' : '')
@@ -1040,7 +1065,7 @@ function syncSetup() {
   ui['rival-preview'].textContent = daily
     ? 'UTC ' + dailyChallenge.day + ' / rules v' + dailyChallenge.version + ' / seed ' + dailyChallenge.seed + '. Same map, rival, and Standard rules on every replay today.'
     : shift
-    ? 'Echo obeys the same cycle, foot, disc, and mounting rules. Read its form before closing distance.'
+    ? 'Echo obeys the same cycle, wall-cutter, foot, disc, and mounting rules. Read its form before closing distance.'
     : operations
     ? operationSelect.value === 'journey'
       ? 'Three linked operations with skippable briefings. Final Sentinel challenge is optional.'
@@ -1052,12 +1077,12 @@ function syncSetup() {
     : daily ? 'START DAILY SIGNAL' : duel ? 'ENTER DUEL' : 'ENTER ARENA';
   document.querySelector('#mode-guide').textContent = daily
     ? 'Offline challenge / First to three. Your best for this UTC day is stored only in this browser.'
-    : shift ? 'Two forms / Ride to build walls, then dismount to dodge and throw. Your walls remain lethal.'
+    : shift ? 'Two forms / Ride to build and cut walls, then dismount to dodge and throw. Your walls remain lethal.'
     : operations ? 'Solo mission / Follow the objective and watch its warning panel.'
     : duel ? 'First to three / Turn into open space and trap one rival.'
     : 'Three heats / Survive at least two against three rivals. Trails: solid you, dashed Hunter, dotted Survivor, paired Trapper.';
   if (gamepadEnabled) document.querySelector('#mode-guide').textContent +=
-    ' Gamepad: left stick or D-pad steers, A confirms or changes form, B throws, Start pauses.';
+    ' Gamepad: left stick or D-pad steers, A changes form, B uses the current weapon, Start pauses.';
   canvas.setAttribute('aria-label', shift ? '3D Grid Shift cycle and disc arena' : '3D light cycle arena');
   syncControlHints(shift);
   drawMapPreview();
@@ -1167,11 +1192,12 @@ function showShiftBrief() {
   setOverlay('GRID SHIFT / TRAINING', 'TWO <span>FORMS</span>',
     'Derez Echo before the 90-second lockout. Cycle: ' + keyLabel('left') + '/' +
     keyLabel('right') + ' or Left/Right turns and leaves a lethal wall. ' +
+    keyLabel('pulse') + ' fires a short-range wall cutter; ' +
     keyLabel('form') + ' dismounts into clear space. On foot: movement keys or arrows move freely, ' +
     keyLabel('disc') + ' throws a returning disc, ' + keyLabel('form') +
     ' remounts when clear. Two disc hits derez either rider. Your own walls remain lethal.',
     'START GRID SHIFT');
-  announce('Grid Shift briefing. Cycle to draw walls; dismount with E, move on foot, and throw with Space. Both riders have two integrity.');
+  announce('Grid Shift briefing. On the cycle, fire the wall cutter with ' + keyLabel('pulse') + ' and dismount with ' + keyLabel('form') + '. On foot, throw the disc with ' + keyLabel('disc') + '.');
 }
 function startLesson() {
   generation++;
@@ -1223,7 +1249,7 @@ function beginRound() {
   lessonHint.hidden = sessionMode !== 'lesson' && sessionMode !== 'shift';
   skipLesson.hidden = sessionMode !== 'lesson';
   if (sessionMode === 'lesson') showLessonStep('Step 1 / Turn left or right to carve a light wall.');
-  if (sessionMode === 'shift') showLessonStep('Grid Shift / E dismounts when your lane is clear.');
+  if (sessionMode === 'shift') showLessonStep('Grid Shift / ' + keyLabel('pulse') + ' cuts a wall; ' + keyLabel('form') + ' dismounts when clear.');
   updateHud();
   drawRadar();
   hideOverlay();
@@ -1232,7 +1258,7 @@ function beginRound() {
   activateAudio();
   beep(440, 0.08, 'triangle', 0.03);
   syncAudioMix();
-  announce(sessionMode === 'lesson' ? 'Lesson starting. Turn left or right.' : sessionMode === 'shift' ? 'Grid Shift starting. Dismount with E and throw with Space.' : sessionMode === 'operations' ? getOperation(round.operation.id).name + '. ' + getOperation(round.operation.id).objective + ' Starting in three, two, one.' : 'Round starting. Three, two, one.');
+  announce(sessionMode === 'lesson' ? 'Lesson starting. Turn left or right.' : sessionMode === 'shift' ? 'Grid Shift starting. Cut walls with ' + keyLabel('pulse') + ', dismount with ' + keyLabel('form') + ', and throw with ' + keyLabel('disc') + '.' : sessionMode === 'operations' ? getOperation(round.operation.id).name + '. ' + getOperation(round.operation.id).objective + ' Starting in three, two, one.' : 'Round starting. Three, two, one.');
 }
 
 function start() {
@@ -1415,7 +1441,8 @@ function captureReplayFrame(force=false) {
     time:round.elapsed, elapsed:round.elapsed, limit:round.limit,
     operation:round.operation ? { ...round.operation,
       beam:round.operation.beam ? { ...round.operation.beam } : null } : null,
-    shift:round.shift ? { discs:round.shift.discs.map(disc=>({ ...disc })) } : null,
+    shift:round.shift ? { discs:round.shift.discs.map(disc=>({ ...disc })),
+      pulses:round.shift.pulses.map(pulse=>({ ...pulse })) } : null,
     riders:[...riderMap.values()],
     segments:round.segments.map(segment=>({
       id:segment.id,x1:segment.x1,z1:segment.z1,x2:segment.x2,z2:segment.z2,
@@ -1627,6 +1654,19 @@ function handleEvents() {
     } else if (event.type === 'shift-denied' && event.riderId === 'YOU') {
       showToast(event.reason.toUpperCase());
       announce(event.reason + '.');
+    } else if (event.type === 'pulse-fire') {
+      beep(event.riderId === 'YOU' ? 930 : 690, .1, 'sawtooth', .028);
+      if (event.riderId === 'YOU') announce('Wall cutter fired.');
+    } else if (event.type === 'pulse-cut') {
+      showToast(event.riderId + ' CUT A WALL');
+      effectMotif('wall');
+      spawnImpact(event);
+      showCaption('LIGHT WALL CUT');
+      announce(event.riderId + ' cut a gap in ' + event.by + ' light wall.');
+      updateHud();
+    } else if (event.type === 'pulse-blocked' && event.riderId === 'YOU') {
+      showToast('CUTTER BLOCKED / ' + event.reason.toUpperCase());
+      announce('Wall cutter blocked by ' + event.reason + '.');
     } else if (event.type === 'disc-throw') {
       showToast(event.riderId + ' DISC OUT');
       beep(event.riderId === 'YOU' ? 780 : 580, .13, 'sawtooth', .035);
@@ -1823,6 +1863,11 @@ function discMesh(out, disc) {
   box(out, disc.x, .75, disc.z, .19, .11, .19, [.02, .06, .08]);
   box(out, disc.x, .03, disc.z, .58, .03, .58, mixColor(c, .48), 2);
 }
+function pulseMesh(out, pulse) {
+  const c = pulse.ownerId === 'YOU' ? [.56, 1, .96] : [1, .72, .36];
+  box(out, pulse.x, .54, pulse.z, .32, .2, .32, c, 2);
+  box(out, pulse.x, .04, pulse.z, .5, .04, .5, mixColor(c, .4), 2);
+}
 function gateMesh(out) {
   const duration=match?.roundNumber>1 ? 1.5 : 3;
   const progress=mode==='ready' ? 0 : reducedMotion.matches ? 1 : mode==='countdown'
@@ -1956,6 +2001,7 @@ function draw(renderDt) {
       shiftFormRing(dynamic, rider, scene.elapsed - rider.formChangedAt);
   }
   if (scene.shift) for (const disc of scene.shift.discs) discMesh(dynamic, disc);
+  if (scene.shift) for (const pulse of scene.shift.pulses || []) pulseMesh(dynamic, pulse);
   if(mode==='highlight' && highlight && highlight.elapsed>highlight.duration-1.15) {
     const x=highlight.event.x,z=highlight.event.z;
     box(dynamic,x,.035,z,.8,.07,.11,[1,.86,.48],2);
@@ -2052,6 +2098,10 @@ function drawRadar() {
     ctx.fillStyle = disc.ownerId === 'YOU' ? '#b7faff' : '#ffbc7b';
     ctx.fillRect(at(disc.x)-2, at(disc.z)-2, 4, 4);
   }
+  if (scene.shift) for (const pulse of scene.shift.pulses || []) {
+    ctx.fillStyle = pulse.ownerId === 'YOU' ? '#b7fff7' : '#ffd29a';
+    ctx.fillRect(at(pulse.x)-2, at(pulse.z)-2, 4, 4);
+  }
   for (const rider of scene.riders) {
     if (!rider.alive) continue;
     const color = rider.color;
@@ -2134,7 +2184,11 @@ function pollGamepad() {
         if (fresh('right')) playerTurn(1);
       }
       if (fresh('confirm')) { requestShiftForm(round, 'YOU'); handleEvents(); }
-      if (fresh('disc')) { throwShiftDisc(round, 'YOU'); handleEvents(); }
+      if (fresh('disc')) {
+        if (round.riders[0].form === 'cycle') fireShiftPulse(round, 'YOU');
+        else throwShiftDisc(round, 'YOU');
+        handleEvents();
+      }
     } else {
       if (fresh('left')) playerTurn(-1);
       if (fresh('right')) playerTurn(1);
@@ -2319,6 +2373,7 @@ document.querySelector('#reset-settings').addEventListener('click', () => {
   try {
     for (const key of [MUTE_KEY, TOUCH_KEY, LOOK_KEY, VOLUME_KEY, MUSIC_VOLUME_KEY,
       CAMERA_KEY, CAMERA_MODE_KEY, REDUCE_FLASHES_KEY, QUALITY_KEY, BINDINGS_KEY,
+      OLD_BINDINGS_KEY,
       TOUCH_SIZE_KEY, TOUCH_PLACEMENT_KEY, RENDER_SCALE_KEY, CAMERA_MOTION_KEY,
       FLASH_INTENSITY_KEY, GAMEPAD_KEY, CAPTIONS_KEY]) localStorage.removeItem(key);
     location.reload();
@@ -2409,6 +2464,13 @@ window.addEventListener('keydown', event => {
       handleEvents();
       return;
     }
+    if (action === 'pulse') {
+      event.preventDefault();
+      if (!fireShiftPulse(round, 'YOU'))
+        showToast(round.riders[0].form === 'foot' ? 'MOUNT TO CUT' : 'CUTTER NOT READY');
+      handleEvents();
+      return;
+    }
     if (action === 'disc') {
       event.preventDefault();
       if (!throwShiftDisc(round, 'YOU'))
@@ -2484,7 +2546,8 @@ document.querySelector('#shift-transform').addEventListener('pointerdown', event
 document.querySelector('#shift-throw').addEventListener('pointerdown', event => {
   event.preventDefault();
   if (sessionMode === 'shift' && mode === 'running') {
-    throwShiftDisc(round, 'YOU');
+    if (round.riders[0].form === 'cycle') fireShiftPulse(round, 'YOU');
+    else throwShiftDisc(round, 'YOU');
     handleEvents();
   }
 });

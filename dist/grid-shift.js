@@ -1,13 +1,16 @@
-﻿import { createRound, STEP } from './simulation.js';
+import { createRound, STEP } from './simulation.js';
 
 const DIR = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 const EPS = 1e-8;
-const SPEED = { cycle: 10.6, foot: 5.2, disc: 22 };
+const SPEED = { cycle: 10.6, foot: 5.2, disc: 22, pulse: 32 };
 const RADIUS = { cycle: 0.36, foot: 0.28 };
 const TIME_LIMIT = 90;
 const FORM_COOLDOWN = 1.15;
 const FORM_RECOVERY = 0.36;
 const DISC_COOLDOWN = 1.45;
+const PULSE_COOLDOWN = 3.2;
+const PULSE_RANGE = 14;
+const PULSE_GAP = 1.35;
 
 function random(round) {
   let x = round.randomState;
@@ -55,7 +58,7 @@ function worldHit(round, rider, x, z, dx, dz, radius, skipId = null) {
       Math.min(segment.z1, segment.z2) - radius - .09,
       Math.max(segment.z1, segment.z2) + radius + .09);
     if (t !== null && (!hit || t < hit.t))
-      hit = { t, reason: 'trail', by: segment.ownerId };
+      hit = { t, reason: 'trail', by: segment.ownerId, segment };
   }
   return hit;
 }
@@ -100,13 +103,14 @@ export function createShiftRound({ seed = 1, difficulty = 'standard' } = {}) {
         style: 'hunter', color: [1, .47, .18] },
     ],
   });
-  round.shift = { discs: [], timeLimit: TIME_LIMIT, aiIntent: 'reading lanes' };
+  round.shift = { discs: [], pulses: [], timeLimit: TIME_LIMIT, aiIntent: 'reading lanes' };
   for (const rider of round.riders) {
     rider.form = 'cycle';
     rider.hp = 2;
     rider.formReadyAt = 0;
     rider.recoveryUntil = 0;
     rider.discReadyAt = 0;
+    rider.pulseReadyAt = 0;
     rider.formChangedAt = -10;
     rider.input = { x: 0, z: 0 };
     rider.footTime = 0;
@@ -198,6 +202,68 @@ export function throwShiftDisc(round, id) {
   round.actionLog.push({ tick: round.tick, riderId: id, action: 'throw' });
   return true;
 }
+export function fireShiftPulse(round, id) {
+  const rider = round.riders.find(r => r.id === id);
+  if (!rider || !rider.alive || rider.form !== 'cycle' || round.outcome ||
+      round.elapsed < rider.pulseReadyAt || round.elapsed < rider.recoveryUntil) return false;
+  const [vx, vz] = DIR[rider.dir];
+  round.shift.pulses.push({ ownerId: id, x: rider.x + vx * .8,
+    z: rider.z + vz * .8, vx, vz, traveled: 0 });
+  rider.pulseReadyAt = round.elapsed + PULSE_COOLDOWN;
+  round.events.push({ type: 'pulse-fire', riderId: id });
+  round.actionLog.push({ tick: round.tick, riderId: id, action: 'pulse' });
+  return true;
+}
+function cutTrail(round, segment, x, z) {
+  const dx = segment.x2 - segment.x1, dz = segment.z2 - segment.z1;
+  const length = Math.hypot(dx, dz);
+  if (length < EPS) return;
+  const along = Math.max(0, Math.min(length,
+    ((x - segment.x1) * dx + (z - segment.z1) * dz) / length));
+  const before = Math.max(0, along - PULSE_GAP);
+  const after = Math.min(length, along + PULSE_GAP);
+  const point = distance => ({ x: segment.x1 + dx * distance / length,
+    z: segment.z1 + dz * distance / length });
+  const firstEnd = point(before), lastStart = point(after);
+  if (segment.active) {
+    if (before > EPS) round.segments.push({ ...segment, id: round.nextSegmentId++,
+      x2: firstEnd.x, z2: firstEnd.z, active: false, closedAt: round.elapsed });
+    segment.x1 = lastStart.x; segment.z1 = lastStart.z;
+  } else {
+    if (after < length - EPS) round.segments.push({ ...segment,
+      id: round.nextSegmentId++, x1: lastStart.x, z1: lastStart.z });
+    if (before > EPS) {
+      segment.x2 = firstEnd.x; segment.z2 = firstEnd.z;
+    } else round.segments.splice(round.segments.indexOf(segment), 1);
+  }
+}
+function movePulse(round, pulse) {
+  const travel = Math.min(SPEED.pulse * STEP, PULSE_RANGE - pulse.traveled);
+  if (travel <= 0) return false;
+  const dx = pulse.vx * travel, dz = pulse.vz * travel;
+  const hit = worldHit(round, null, pulse.x, pulse.z, dx, dz, .12);
+  const target = round.riders.find(r => r.id !== pulse.ownerId && r.alive);
+  const riderHit = target && boxHit(pulse.x, pulse.z, dx, dz,
+    target.x - RADIUS[target.form] - .12, target.x + RADIUS[target.form] + .12,
+    target.z - RADIUS[target.form] - .12, target.z + RADIUS[target.form] + .12);
+  if (riderHit !== null && riderHit !== undefined && (!hit || riderHit < hit.t)) {
+    round.events.push({ type: 'pulse-blocked', riderId: pulse.ownerId, reason: 'rider' });
+    return false;
+  }
+  if (hit) {
+    if (hit.segment) {
+      const x = pulse.x + dx * hit.t, z = pulse.z + dz * hit.t;
+      cutTrail(round, hit.segment, x, z);
+      round.events.push({ type: 'pulse-cut', riderId: pulse.ownerId,
+        by: hit.segment.ownerId, x, z });
+      if (pulse.ownerId === 'YOU') round.score += 25;
+    } else round.events.push({ type: 'pulse-blocked', riderId: pulse.ownerId,
+      reason: hit.reason });
+    return false;
+  }
+  pulse.x += dx; pulse.z += dz; pulse.traveled += travel;
+  return pulse.traveled < PULSE_RANGE - EPS;
+}
 function turn(round, rider, sign) {
   closeTrail(round, rider);
   rider.ignoreSegmentId = rider.segment?.id ?? null;
@@ -220,9 +286,16 @@ function aiDecision(round, rider) {
   const dist = Math.hypot(target.x - rider.x, target.z - rider.z);
   const enemyDisc = round.shift.discs.find(d => d.ownerId !== rider.id && !d.returning);
   if (rider.form === 'cycle') {
-    const front = spaceAhead(round, rider, rider.dir, 10);
+    const [vx, vz] = DIR[rider.dir];
+    const forwardHit = worldHit(round, rider, rider.x, rider.z, vx * 10, vz * 10, RADIUS.cycle);
+    const front = forwardHit ? forwardHit.t * 10 : 10;
     const left = spaceAhead(round, rider, (rider.dir + 3) % 4, 10);
     const right = spaceAhead(round, rider, (rider.dir + 1) % 4, 10);
+    if (forwardHit?.reason === 'trail' && front > 3.7 && front < 9 &&
+        fireShiftPulse(round, rider.id)) {
+      round.shift.aiIntent = 'cutting a wall';
+      return;
+    }
     if (round.elapsed > rider.tactic.footAt + (rider.tactic.preferCycle ? 2.1 : 0) && dist < 29 &&
         (front < 8 || round.elapsed > rider.tactic.footAt + 1.3 ||
           random(round) < (target.form === 'foot' ? .55 : .38) + rider.tactic.aggression * .25) &&
@@ -354,6 +427,7 @@ export function stepShiftRound(round) {
     }
   }
   round.shift.discs = round.shift.discs.filter(disc => moveDisc(round, disc));
+  round.shift.pulses = round.shift.pulses.filter(pulse => movePulse(round, pulse));
   round.tick++;
   round.elapsed = round.tick * STEP;
   const player = round.riders.find(r => r.isPlayer);
