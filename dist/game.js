@@ -966,6 +966,10 @@ function pause() {
     pausedFrom = mode;
     mode = 'paused';
     accumulator = 0;
+    if (sessionMode === 'shift') {
+      shiftKeys.clear();
+      setShiftMove(round, 'YOU', 0, 0);
+    }
     syncAudioMix();
     countdown.classList.remove('show');
     ui.pause.textContent = '▶';
@@ -1283,7 +1287,7 @@ function handleEvents() {
       if (event.riderId === 'YOU') {
         effectMotif('turn');
         showLessonStep(event.form === 'foot'
-          ? 'On foot / Move with W A S D or arrows. Space throws your disc.'
+          ? 'On foot / W A S D moves in arena directions. Your old wall is behind you. Space throws your disc.'
           : 'Cycle / Your trail is live again. E dismounts when clear.');
         syncShiftMove();
       }
@@ -1552,7 +1556,12 @@ function cameraPose(player) {
   const direction=DIR[player.dir];
   const distance=cameraDistance==='close' ? 11 : cameraDistance==='far' ? 18 : 14;
   let desired, aim;
-  if(cameraMode==='tactical' || mode==='highlight' || (sessionMode === 'shift' && player.form === 'foot')) {
+  if (sessionMode === 'shift' && player.form === 'foot') {
+    // Keep arena north at the top of the screen as facing changes with WASD.
+    desired=[player.x, cameraDistance==='far' ? 30 : cameraDistance==='close' ? 23 : 27,
+      player.z+12];
+    aim=[player.x,.2,player.z-2];
+  } else if(cameraMode==='tactical' || mode==='highlight') {
     desired=[player.x-direction[0]*8-direction[1]*2,
       cameraDistance==='far' ? 30 : cameraDistance==='close' ? 23 : 27,
       player.z-direction[1]*8+direction[0]*2];
@@ -1904,12 +1913,13 @@ canvas.addEventListener('pointerdown', () => {
   if (mode === 'countdown') launch();
 });
 window.addEventListener('keydown', event => {
-  if (event.repeat) return;
+  const key = event.key.toLowerCase();
+  const shiftDirection = ['w','a','s','d','arrowup','arrowleft','arrowdown','arrowright'].includes(key);
+  if (event.repeat && !(sessionMode === 'shift' && mode === 'running' && shiftDirection)) return;
   const interactive = event.target instanceof Element &&
     event.target.closest('button, input, select, textarea, a');
   const editing = event.target instanceof Element &&
     event.target.closest('input, select, textarea, [contenteditable]');
-  const key = event.key.toLowerCase();
   if (mode === 'highlight' && (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ')) {
     event.preventDefault();
     completeHighlight();
@@ -1929,14 +1939,13 @@ window.addEventListener('keydown', event => {
       handleEvents();
       return;
     }
-    if (['w','a','s','d','arrowup','arrowleft','arrowdown','arrowright'].includes(key)) {
+    if (shiftDirection) {
       event.preventDefault();
-      if (round.riders[0].form === 'cycle') {
+      shiftKeys.add(key);
+      syncShiftMove();
+      if (round.riders[0].form === 'cycle' && !event.repeat) {
         if (key === 'a' || key === 'arrowleft') playerTurn(-1);
         if (key === 'd' || key === 'arrowright') playerTurn(1);
-      } else {
-        shiftKeys.add(key);
-        syncShiftMove();
       }
       return;
     }
@@ -1974,12 +1983,10 @@ for (const button of shiftTouch.querySelectorAll('[data-move]')) {
   button.addEventListener('pointerdown', event => {
     event.preventDefault();
     if (sessionMode !== 'shift' || mode !== 'running') return;
-    if (round.riders[0].form === 'cycle') {
-      if (move === 'left' || move === 'right') playerTurn(move === 'left' ? -1 : 1);
-    } else {
-      shiftKeys.add('arrow' + move);
-      syncShiftMove();
-    }
+    shiftKeys.add('arrow' + move);
+    syncShiftMove();
+    if (round.riders[0].form === 'cycle' && (move === 'left' || move === 'right'))
+      playerTurn(move === 'left' ? -1 : 1);
   });
   const release = () => { shiftKeys.delete('arrow' + move); syncShiftMove(); };
   button.addEventListener('pointerup', release);
