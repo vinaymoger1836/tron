@@ -559,7 +559,7 @@ function drawMapPreview() {
   ctx.fillStyle = map.palette.radar;
   for (const o of map.obstacles)
     ctx.fillRect(at(o.minX), at(o.minZ), (o.maxX-o.minX)*scale, (o.maxZ-o.minZ)*scale);
-  map.spawns.arena.forEach((spawn, index) => {
+  map.spawns[modeSelect.value].forEach((spawn, index) => {
     ctx.fillStyle = index === 0 ? '#73eaff' : ['#ffa353','#c78aff','#ffdf72'][index-1];
     ctx.beginPath(); ctx.arc(at(spawn.x),at(spawn.z),3.5,0,Math.PI*2); ctx.fill();
   });
@@ -569,6 +569,7 @@ function drawMapPreview() {
   ctx.font = '12px Rajdhani, sans-serif';
   ctx.fillText(map.obstacles.length ? map.obstacles.length + ' fixed barriers' : 'Open circuit', size + 12, 45);
   ctx.fillText('CYAN = YOU', size + 12, 68);
+  mapPreview.setAttribute('aria-label', map.name + ' layout with ' + map.obstacles.length + ' fixed barriers and ' + map.spawns[modeSelect.value].length + ' spawn positions');
   mapTip.textContent = map.cue + (ruleSelect.value === 'decay' && modeSelect.value === 'arena'
     ? ' Advanced: closed walls pulse before fading after 10 seconds.' : ' Light walls remain until the heat ends.') +
     (legacyBest ? ' Legacy best ' + legacyBest + ' is preserved.' : '');
