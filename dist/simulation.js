@@ -55,6 +55,7 @@ export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles = [] 
     segments: [],
     obstacles: obstacles.map(o => ({ ...o })),
     events: [],
+    actionLog: [],
     nextSegmentId: 1,
     hasOpponents: riders.some(r => !r.isPlayer),
   };
@@ -94,6 +95,7 @@ export function queueTurn(round, riderId, sign) {
     sign,
     expiresAt: round.elapsed + Math.max(TURN_BUFFER, readyAt - round.elapsed + STEP),
   };
+  round.actionLog.push({ tick: round.tick, riderId, sign });
   if (readyAt > round.elapsed + EPSILON) {
     round.events.push({ type: 'turn-queued', riderId, sign });
   }
@@ -252,16 +254,20 @@ export function stepRound(round) {
     };
   });
 
+  const riderEncounters = [];
   for (let i = 0; i < proposals.length; i++) {
     for (let j = i + 1; j < proposals.length; j++) {
-      const a = proposals[i], b = proposals[j];
-      const t = movingRiderHit(a, b);
-      if (t === null) continue;
-      if ((!a.hit || t <= a.hit.t + EPSILON) &&
-          (!b.hit || t <= b.hit.t + EPSILON)) {
-        a.hit = { t, reason: 'rider', by: b.rider.id };
-        b.hit = { t, reason: 'rider', by: a.rider.id };
-      }
+      const t = movingRiderHit(proposals[i], proposals[j]);
+      if (t !== null) riderEncounters.push({ i, j, t });
+    }
+  }
+  riderEncounters.sort((a, b) => a.t - b.t);
+  for (const { i, j, t } of riderEncounters) {
+    const a = proposals[i], b = proposals[j];
+    if ((!a.hit || t <= a.hit.t + EPSILON) &&
+        (!b.hit || t <= b.hit.t + EPSILON)) {
+      a.hit = { t, reason: 'rider', by: b.rider.id };
+      b.hit = { t, reason: 'rider', by: a.rider.id };
     }
   }
 

@@ -12,6 +12,28 @@ const ui = Object.fromEntries(
     .map(id => [id, document.getElementById(id)]),
 );
 
+function showWebglError(message) {
+  overlay.inert = true;
+  document.querySelector('.hud').inert = true;
+  touchControls.inert = true;
+  canvas.inert = true;
+  const box = document.createElement('div');
+  box.className = 'webgl-error';
+  box.setAttribute('role', 'alert');
+  const content = document.createElement('div');
+  const description = document.createElement('p');
+  description.textContent = message;
+  const retry = document.createElement('button');
+  retry.className = 'primary';
+  retry.type = 'button';
+  retry.textContent = 'RETRY';
+  retry.addEventListener('click', () => location.reload());
+  content.append(description, retry);
+  box.append(content);
+  document.body.append(box);
+  retry.focus({ preventScroll: true });
+}
+
 let gl;
 try {
   gl = canvas.getContext('webgl', { antialias: true, alpha: false, powerPreference: 'high-performance' });
@@ -19,12 +41,9 @@ try {
   gl = null;
 }
 if (!gl) {
-  document.body.insertAdjacentHTML(
-    'beforeend',
-    '<div class="webgl-error" role="alert"><div>This Grid needs WebGL. Enable graphics acceleration or try another browser.<br><button class="primary" id="retry-webgl" type="button">RETRY</button></div></div>',
-  );
-  document.getElementById('retry-webgl').addEventListener('click', () => location.reload());
+  showWebglError('This Grid needs WebGL. Enable graphics acceleration or try another browser.');
 } else {
+try {
 const VERTEX = `
 attribute vec3 aPosition;
 attribute vec3 aColor;
@@ -199,11 +218,18 @@ function updateHud() {
   ui.rivals.textContent = String(round.riders.filter(r => !r.isPlayer && r.alive).length).padStart(2, '0');
 }
 
+function setBackgroundInert(inert) {
+  canvas.inert = inert;
+  document.querySelector('.hud').inert = inert;
+  touchControls.inert = inert;
+}
+
 function setOverlay(eyebrow, title, deck, button) {
   ui.eyebrow.textContent = eyebrow;
   ui.title.innerHTML = title;
   ui.deck.textContent = deck;
   ui.start.textContent = button;
+  setBackgroundInert(true);
   overlay.inert = false;
   overlay.setAttribute('aria-hidden', 'false');
   overlay.classList.remove('hidden');
@@ -214,6 +240,7 @@ function hideOverlay() {
   overlay.classList.add('hidden');
   overlay.setAttribute('aria-hidden', 'true');
   overlay.inert = true;
+  setBackgroundInert(false);
   canvas.focus({ preventScroll: true });
 }
 
@@ -594,18 +621,20 @@ function frame(now) {
   const realDt = lastFrame ? Math.min(Math.max((now - lastFrame) / 1000, 0), 0.25) : 0;
   lastFrame = now;
   if (!reducedMotion.matches && mode !== 'paused') visualTime += realDt;
+  let launchedThisFrame = false;
   if (mode === 'countdown') {
     countdownRemaining -= realDt;
     const nextNumber = Math.ceil(countdownRemaining);
     if (nextNumber <= 0) {
       launch();
+      launchedThisFrame = true;
     } else if (nextNumber !== countdownNumber) {
       countdownNumber = nextNumber;
       countdown.textContent = String(nextNumber);
       beep(440 + (3 - nextNumber) * 95, 0.08, 'triangle', 0.03);
     }
   }
-  if (mode === 'running') {
+  if (mode === 'running' && !launchedThisFrame) {
     accumulator += realDt;
     let steps = 0;
     while (accumulator >= STEP && steps < 16 && mode === 'running') {
@@ -616,7 +645,7 @@ function frame(now) {
     }
     accumulator = Math.min(accumulator, STEP * 16);
   }
-  updateParticles(realDt);
+  if (mode !== 'paused') updateParticles(realDt);
   if (!graphicsLost) {
     draw(realDt);
     drawRadar();
@@ -624,6 +653,12 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
+overlay.addEventListener('keydown', event => {
+  if (event.key === 'Tab' && !overlay.classList.contains('hidden')) {
+    event.preventDefault();
+    ui.start.focus({ preventScroll: true });
+  }
+});
 ui.start.addEventListener('click', () => {
   if (graphicsLost) location.reload();
   else if (mode === 'paused') pause();
@@ -658,25 +693,27 @@ canvas.addEventListener('pointerdown', () => {
   if (mode === 'countdown') launch();
 });
 window.addEventListener('keydown', event => {
+  if (event.repeat) return;
   const interactive = event.target instanceof Element &&
     event.target.closest('button, input, select, textarea, a');
-  if (interactive) return;
+  const editing = event.target instanceof Element &&
+    event.target.closest('input, select, textarea, [contenteditable]');
   const key = event.key.toLowerCase();
-  if (mode === 'running' && (event.key === 'ArrowLeft' || key === 'a')) {
+  if (mode === 'running' && !editing && (event.key === 'ArrowLeft' || key === 'a')) {
     event.preventDefault();
     playerTurn(-1);
-  } else if (mode === 'running' && (event.key === 'ArrowRight' || key === 'd')) {
+  } else if (mode === 'running' && !editing && (event.key === 'ArrowRight' || key === 'd')) {
     event.preventDefault();
     playerTurn(1);
   } else if (key === 'p' || event.key === 'Escape') {
     event.preventDefault();
     pause();
-  } else if (key === 'm') {
+  } else if (key === 'm' && !editing) {
     ui.sound.click();
-  } else if ((event.key === 'Enter' || event.key === ' ') && mode === 'countdown') {
+  } else if (!interactive && (event.key === 'Enter' || event.key === ' ') && mode === 'countdown') {
     event.preventDefault();
     launch();
-  } else if ((event.key === 'Enter' || event.key === ' ') &&
+  } else if (!interactive && (event.key === 'Enter' || event.key === ' ') &&
       (mode === 'ready' || mode === 'won' || mode === 'lost')) {
     event.preventDefault();
     start();
@@ -706,5 +743,11 @@ syncSoundButton();
 syncTouchControls();
 updateHud();
 drawRadar();
+setBackgroundInert(true);
+ui.start.focus({ preventScroll: true });
 requestAnimationFrame(frame);
+} catch (error) {
+  console.error('Grid graphics initialization failed:', error);
+  showWebglError('The Grid could not start graphics. Try reloading or another browser.');
+}
 }
