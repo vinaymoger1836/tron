@@ -15,6 +15,7 @@ const modeSelect = document.querySelector('#mode-select');
 const rivalSelect = document.querySelector('#rival-select');
 const difficultySelect = document.querySelector('#difficulty-select');
 const volumeInput = document.querySelector('#volume');
+const musicVolumeInput = document.querySelector('#music-volume');
 const cameraSelect = document.querySelector('#camera-distance');
 const qualitySelect = document.querySelector('#graphics-quality');
 const ui = Object.fromEntries(
@@ -130,6 +131,7 @@ const MODE_KEY = 'tron-grid-run-mode';
 const RIVAL_KEY = 'tron-grid-run-rival';
 const DIFFICULTY_KEY = 'tron-grid-run-difficulty';
 const VOLUME_KEY = 'tron-grid-run-volume';
+const MUSIC_VOLUME_KEY = 'tron-grid-run-music-volume';
 const CAMERA_KEY = 'tron-grid-run-camera';
 const QUALITY_KEY = 'tron-grid-run-quality';
 
@@ -148,6 +150,8 @@ let match = null;
 let lessonStage = 0;
 const storedVolume = Number(readLocal(VOLUME_KEY) ?? 70);
 let volume = Number.isFinite(storedVolume) ? Math.max(0, Math.min(100, storedVolume)) : 70;
+const storedMusicVolume = Number(readLocal(MUSIC_VOLUME_KEY) ?? 45);
+let musicVolume = Number.isFinite(storedMusicVolume) ? Math.max(0, Math.min(100, storedMusicVolume)) : 45;
 let cameraDistance = ['close', 'standard', 'far'].includes(readLocal(CAMERA_KEY)) ? readLocal(CAMERA_KEY) : 'standard';
 let graphicsQuality = ['low', 'high'].includes(readLocal(QUALITY_KEY)) ? readLocal(QUALITY_KEY) : 'high';
 let round = createRound();
@@ -166,6 +170,10 @@ let camera = [7, 13, 31];
 let target = [0, 0, 0];
 let particles = [];
 let audio;
+let effectBus;
+let musicBus;
+let nextMusicBeat = 0;
+let musicStep = 0;
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 function mixColor(color, shade) { return color.map(v => Math.min(1, v * shade)); }
 function vertex(out, p, color, kind) { out.push(p[0],p[1],p[2],color[0],color[1],color[2],kind); }
@@ -184,17 +192,49 @@ function box(out,x,y,z,sx,sy,sz,color,kind=0) {
 }
 const staticData = [];
 quad(staticData,[-32,0,-32],[32,0,-32],[32,0,32],[-32,0,32],C.floor,1);
-for (const s of [-1,1]) {
-  box(staticData, s*LIMIT,.62,0,.34,1.24,LIMIT*2+.5,C.wall);
-  box(staticData, 0,.62,s*LIMIT,LIMIT*2+.5,1.24,.34,C.wall);
-  box(staticData, s*LIMIT,1.26,0,.18,.10,LIMIT*2+.5,[.06,.66,.82],2);
-  box(staticData, 0,1.26,s*LIMIT,LIMIT*2+.5,.10,.18,[.06,.66,.82],2);
-  for(let i=-3;i<=3;i++) {
-    box(staticData,s*LIMIT,1.2,i*8,.48,2.4,.48,[.025,.18,.25]);
-    box(staticData,i*8,1.2,s*LIMIT,.48,2.4,.48,[.025,.18,.25]);
-    box(staticData,s*LIMIT,2.34,i*8,.5,.08,.5,[.13,.85,1],2);
-    box(staticData,i*8,2.34,s*LIMIT,.5,.08,.5,[.13,.85,1],2);
+for (const side of [-1, 1]) {
+  // All scenery stays outside the playable bounds; the luminous top rail marks the real edge.
+  box(staticData, side*LIMIT,.62,0,.34,1.24,LIMIT*2+.5,C.wall);
+  box(staticData, 0,.62,side*LIMIT,LIMIT*2+.5,1.24,.34,C.wall);
+  box(staticData, side*LIMIT,1.26,0,.18,.10,LIMIT*2+.5,[.06,.66,.82],2);
+  box(staticData, 0,1.26,side*LIMIT,LIMIT*2+.5,.10,.18,[.06,.66,.82],2);
+  for (let i=-3; i<=3; i++) {
+    box(staticData,side*LIMIT,1.2,i*8,.48,2.4,.48,[.025,.18,.25]);
+    box(staticData,i*8,1.2,side*LIMIT,.48,2.4,.48,[.025,.18,.25]);
+    box(staticData,side*LIMIT,2.34,i*8,.5,.08,.5,[.13,.85,1],2);
+    box(staticData,i*8,2.34,side*LIMIT,.5,.08,.5,[.13,.85,1],2);
   }
+  // Three stepped spectator terraces frame the arena without obscuring its edge.
+  for (let tier=0; tier<3; tier++) {
+    const reach=LIMIT+1.5+tier*2.25;
+    const height=1.05+tier*1.25;
+    box(staticData,side*reach,height/2,0,1.9,height,LIMIT*2+9,[.012,.029,.048]);
+    box(staticData,0,height/2,side*reach,LIMIT*2+9,height,1.9,[.012,.029,.048]);
+    box(staticData,side*reach,height+.03,0,1.82,.06,LIMIT*2+9,[.025,.15,.20],2);
+    box(staticData,0,height+.03,side*reach,LIMIT*2+9,.06,1.82,[.025,.15,.20],2);
+  }
+  // Original projection panels and sparse crowd lights, kept dimmer than live trails.
+  for (let i=-2; i<=2; i++) {
+    const z=i*11;
+    box(staticData,side*(LIMIT+3.9),5.5,z,.30,4.4,7.0,[.025,.057,.077]);
+    box(staticData,side*(LIMIT+3.70),5.5,z,.07,3.5,6.1,[.025,.14,.19],2);
+    box(staticData,side*(LIMIT+3.60),5.5,z,.07,.12,5.6,[.08,.42,.52],2);
+    for (let j=-2; j<=2; j++) {
+      box(staticData,side*(LIMIT+2.45),3.0,z+j*1.2,.13,.10,.21,
+        j%2 ? [.07,.23,.28] : [.10,.32,.38],2);
+    }
+  }
+}
+// Arena portal and upper architecture sit beyond the north collision boundary.
+for (const side of [-1,1]) {
+  box(staticData,side*5.1,3.5,-LIMIT-1.2,.95,7.0,1.05,[.025,.065,.09]);
+  box(staticData,side*5.1,3.5,-LIMIT-.62,.20,6.4,.12,[.08,.57,.68],2);
+  box(staticData,side*6.8,6.9,-LIMIT-2.2,1.2,9.5,1.2,[.012,.035,.06]);
+}
+box(staticData,0,7.1,-LIMIT-1.2,11.2,.85,1.05,[.023,.07,.10]);
+box(staticData,0,6.76,-LIMIT-.65,10.4,.11,.12,[.10,.68,.79],2);
+for (let i=-4; i<=4; i++) {
+  box(staticData,i*2.7,8.9,-LIMIT-3.4,.09,2.7,.09,[.055,.29,.36],2);
 }
 const staticBuffer = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, staticBuffer);
@@ -294,31 +334,110 @@ function showToast(message) {
   }, 1100);
 }
 
+function syncAudioMix() {
+  if (!audio) return;
+  const at=audio.currentTime;
+  effectBus.gain.setTargetAtTime(muted ? 0 : volume/100,at,.025);
+  const active=mode==='running' || mode==='countdown';
+  musicBus.gain.setTargetAtTime(muted || !active ? 0 : musicVolume/100,at,.07);
+}
 function ensureAudio() {
   if (!audio) {
-    try { audio = new (window.AudioContext || window.webkitAudioContext)(); }
-    catch { muted = true; syncSoundButton(); }
+    try {
+      audio = new (window.AudioContext || window.webkitAudioContext)();
+      effectBus=audio.createGain();
+      musicBus=audio.createGain();
+      effectBus.connect(audio.destination);
+      musicBus.connect(audio.destination);
+      syncAudioMix();
+    } catch {
+      audio=null;
+      muted=true;
+      syncSoundButton();
+    }
   }
 }
-
-function beep(freq, duration = 0.11, type = 'sawtooth', gain = 0.035) {
-  if (muted) return;
+function activateAudio() {
+  if (muted || (volume===0 && musicVolume===0)) return;
+  ensureAudio();
+  if (audio?.state==='suspended') audio.resume().catch(()=>{});
+}
+function synth(bus,freq,at,duration,type='triangle',gain=.025,finishFreq=freq) {
+  if (!audio || !bus || gain<=0) return;
+  const oscillator=audio.createOscillator();
+  const envelope=audio.createGain();
+  oscillator.type=type;
+  oscillator.frequency.setValueAtTime(freq,at);
+  oscillator.frequency.exponentialRampToValueAtTime(Math.max(40,finishFreq),at+duration);
+  envelope.gain.setValueAtTime(.0001,at);
+  envelope.gain.exponentialRampToValueAtTime(Math.max(.0002,gain),at+.012);
+  envelope.gain.exponentialRampToValueAtTime(.0001,at+duration);
+  oscillator.connect(envelope).connect(bus);
+  oscillator.start(at);
+  oscillator.stop(at+duration+.012);
+}
+function beep(freq,duration=.11,type='sawtooth',gain=.035) {
+  if (muted || volume===0) return;
   ensureAudio();
   if (!audio) return;
-  if (audio.state === 'suspended') audio.resume().catch(() => {});
-  const oscillator = audio.createOscillator();
-  const envelope = audio.createGain();
-  const now = audio.currentTime;
-  oscillator.type = type;
-  oscillator.frequency.setValueAtTime(freq, now);
-  oscillator.frequency.exponentialRampToValueAtTime(Math.max(50, freq * 0.57), now + duration);
-  envelope.gain.setValueAtTime(gain * volume / 100, now);
-  envelope.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-  oscillator.connect(envelope).connect(audio.destination);
-  oscillator.start(now);
-  oscillator.stop(now + duration + 0.01);
+  if (audio.state==='suspended') audio.resume().catch(()=>{});
+  synth(effectBus,freq,audio.currentTime,duration,type,gain,freq*.57);
 }
-
+function effectMotif(kind) {
+  if (muted || volume===0) return;
+  ensureAudio();
+  if (!audio) return;
+  if (audio.state==='suspended') audio.resume().catch(()=>{});
+  const at=audio.currentTime;
+  if(kind==='turn') {
+    synth(effectBus,520,at,.08,'triangle',.025,780);
+  } else if(kind==='wall') {
+    synth(effectBus,180,at,.15,'sine',.017,110);
+  } else if(kind==='near') {
+    synth(effectBus,760,at,.13,'sine',.028,1080);
+    synth(effectBus,1020,at+.09,.16,'triangle',.020,1350);
+  } else if(kind==='crash') {
+    synth(effectBus,170,at,.24,'sawtooth',.047,55);
+  } else if(kind==='derez') {
+    synth(effectBus,710,at,.27,'triangle',.026,70);
+  } else if(kind==='win') {
+    [392,523,659].forEach((note,i)=>synth(effectBus,note,at+i*.085,.19,'triangle',.021,note));
+  }
+}
+function musicIntensity() {
+  if(mode==='countdown') return .22;
+  const player=round.riders.find(r=>r.isPlayer);
+  const nearest=player ? Math.min(20,...round.riders.filter(r=>!r.isPlayer&&r.alive)
+    .map(r=>Math.hypot(r.x-player.x,r.z-player.z))) : 20;
+  const pressure=Math.max(0,1-nearest/16);
+  const duration=Math.min(1,round.elapsed/38);
+  const stakes=sessionMode==='duel' && match
+    ? Math.min(1,(match.wins.player+match.wins.rival)/4) : 0;
+  return Math.min(1,.25+duration*.20+pressure*.35+stakes*.20);
+}
+function updateMusic() {
+  if (!audio || audio.state!=='running' || muted || musicVolume===0 ||
+      (mode!=='running' && mode!=='countdown')) return;
+  const at=audio.currentTime;
+  if(nextMusicBeat<at-.15) nextMusicBeat=at+.025;
+  let queued=0;
+  while(nextMusicBeat<at+.14 && queued++<3) {
+    const intensity=musicIntensity();
+    const step=musicStep++%16;
+    const bass=[55,55,65.41,49][Math.floor(step/4)];
+    const beatLength=60/(100+intensity*34)/2;
+    // An original, sparse sequencer: sub pulse, minor arpeggio and airy upper tone.
+    if(step%2===0) synth(musicBus,bass,nextMusicBeat,.27,'sine',.066+intensity*.025,bass*.88);
+    if(step%4===2) synth(musicBus,bass*2,nextMusicBeat,.16,'triangle',.015+intensity*.013,bass*2.04);
+    if(step%4===0 || (intensity>.65 && step%4===3)) {
+      const notes=[220,261.63,329.63,293.66];
+      const note=notes[Math.floor(step/4)];
+      synth(musicBus,note,nextMusicBeat+.015,.19,'triangle',.012+intensity*.014,note*1.02);
+    }
+    if(step===0 || step===8) synth(musicBus,440,nextMusicBeat,.75,'sine',.006+intensity*.006,392);
+    nextMusicBeat+=beatLength;
+  }
+}
 function syncSoundButton() {
   ui.sound.textContent = muted ? '♪̸' : '♫';
   ui.sound.setAttribute('aria-label', muted ? 'Unmute sound' : 'Mute sound');
@@ -359,11 +478,13 @@ function hideCountdown() {
 function launch() {
   if (mode !== 'countdown') return;
   mode = 'running';
+  syncAudioMix();
   countdown.textContent = 'GO';
   countdown.classList.add('show');
   accumulator = 0;
   lastFrame = performance.now();
   beep(730, 0.2, 'triangle', 0.06);
+  effectMotif('wall');
   announce('Go. Survive the Grid.');
   const token = generation;
   setTimeout(() => { if (token === generation && mode === 'running') hideCountdown(); }, 420);
@@ -398,8 +519,10 @@ function showMenu() {
   match = null;
   sessionMode = modeSelect.value;
   mode = 'ready';
+  syncAudioMix();
   round = createRound({ seed: 1 });
   particles = [];
+  turnLean.clear();
   hideCountdown();
   lessonHint.hidden = true;
   skipLesson.hidden = true;
@@ -443,6 +566,8 @@ function beginRound() {
   camera = [7, 13, 31];
   target = [0, 0, 0];
   particles = [];
+  turnLean.clear();
+  nextMusicBeat=0;
   ++toastSequence;
   ui.toast.classList.remove('show');
   ui.pause.textContent = 'Ⅱ';
@@ -459,7 +584,9 @@ function beginRound() {
   hideOverlay();
   countdown.classList.add('show');
   countdown.textContent = String(countdownNumber);
+  activateAudio();
   beep(440, 0.08, 'triangle', 0.03);
+  syncAudioMix();
   announce(sessionMode === 'lesson' ? 'Lesson starting. Turn left or right.' : 'Round starting. Three, two, one.');
 }
 
@@ -480,6 +607,7 @@ function pause() {
     pausedFrom = mode;
     mode = 'paused';
     accumulator = 0;
+    syncAudioMix();
     countdown.classList.remove('show');
     ui.pause.textContent = '▶';
     ui.pause.setAttribute('aria-label', 'Resume game');
@@ -488,6 +616,8 @@ function pause() {
     announce('Game paused.');
   } else if (mode === 'paused') {
     mode = pausedFrom;
+    nextMusicBeat=0;
+    syncAudioMix();
     lastFrame = performance.now();
     accumulator = 0;
     hideOverlay();
@@ -561,6 +691,7 @@ function scoreExplanation() {
 function finishLesson(success, outcome) {
   generation++;
   mode = success ? 'lesson-complete' : 'lesson-lost';
+  syncAudioMix();
   accumulator = 0;
   lessonHint.hidden = true;
   skipLesson.hidden = true;
@@ -577,6 +708,7 @@ function finishLesson(success, outcome) {
 function finish(event) {
   if (sessionMode === 'lesson') { finishLesson(false, event); return; }
   mode = event.kind;
+  syncAudioMix();
   accumulator = 0;
   const duel = sessionMode === 'duel';
   ui['rival-intent'].textContent = '';
@@ -588,7 +720,7 @@ function finish(event) {
   }
   updateHud();
   const won = event.kind === 'won';
-  beep(won ? 740 : 140, won ? 0.2 : 0.3, won ? 'triangle' : 'sawtooth', 0.065);
+  if (won) effectMotif('win');
   const cause = won
     ? duel ? DUEL_RIVALS[match.rival].id + ' derezzed.' : 'All rivals derezzed.'
     : crashMessage(event);
@@ -617,14 +749,16 @@ function finish(event) {
 
 function handleEvents() {
   for (const event of drainEvents(round)) {
+    if (event.type==='turn') turnLean.set(event.riderId,{value:event.sign*.27,age:0});
     if (event.type === 'turn-queued' && event.riderId === 'YOU') {
       showToast(event.sign < 0 ? 'LEFT TURN QUEUED' : 'RIGHT TURN QUEUED');
       beep(340, 0.045, 'triangle', 0.015);
     } else if (event.type === 'turn' && event.riderId === 'YOU') {
-      beep(event.sign < 0 ? 560 : 720, 0.08, 'triangle', 0.035);
+      effectMotif('turn');
+      effectMotif('wall');
       if (event.nearMiss) {
         showToast('CLOSE CALL');
-        beep(980, 0.14, 'sine', 0.025);
+        effectMotif('near');
       }
       if (sessionMode === 'lesson' && lessonStage < 2) {
         lessonStage++;
@@ -640,9 +774,10 @@ function handleEvents() {
       updateHud();
     } else if (event.type === 'crash') {
       spawnDerez(event);
+      effectMotif('crash');
+      effectMotif('derez');
       if (event.riderId !== 'YOU') {
         showToast(event.riderId + ' DEREZZED +250');
-        beep(190, 0.18, 'sawtooth', 0.038);
         updateHud();
       }
     } else if (event.type === 'round-end') {
@@ -665,35 +800,121 @@ function handleEvents() {
     box(out,x,.9,z,sx+.03,.045,sz+.03,mixColor(c,.8),2);
   }
 }
-function bikePart(out,r,forward,side,y,w,h,length,color,kind=0){
-  const d=DIR[r.dir],x=r.x+d[0]*forward-d[1]*side,z=r.z+d[1]*forward+d[0]*side;
-  box(out,x,y,z,r.dir%2?length:w,h,r.dir%2?w:length,color,kind);
+const turnLean = new Map();
+function bikePoint(r, forward, side, y, lean=0) {
+  const d=DIR[r.dir];
+  const shifted=side+(y>.48 ? lean*(y-.48) : 0);
+  return [r.x+d[0]*forward-d[1]*shifted,y,r.z+d[1]*forward+d[0]*shifted];
 }
-function bikeMesh(out,r){
-  const c=r.color;
-  bikePart(out,r,0,0,.45,.62,.38,2.05,[.02,.055,.08]);
-  bikePart(out,r,.30,0,.68,.52,.16,1.25,mixColor(c,.83),2);
-  bikePart(out,r,.95,0,.46,.49,.13,.23,c,2);
-  bikePart(out,r,-.89,0,.44,.48,.13,.23,c,2);
-  bikePart(out,r,0,0,.89,.42,.28,.47,[.025,.075,.10]);
-  bikePart(out,r,-.02,0,1.07,.26,.11,.32,mixColor(c,.62),2);
-  for(const side of [-1,1]){
-    bikePart(out,r,.57,side*.38,.35,.24,.53,.20,[.006,.016,.025]);
-    bikePart(out,r,-.58,side*.38,.35,.24,.53,.20,[.006,.016,.025]);
-    bikePart(out,r,.57,side*.52,.35,.08,.13,.12,c,2);
-    bikePart(out,r,-.58,side*.52,.35,.08,.13,.12,c,2);
-    bikePart(out,r,0,side*.35,.24,.10,.09,1.48,mixColor(c,.55),2);
-  }
-  bikePart(out,r,-1.0,0,.8,.20,.47,.11,c,2);
-  if (r.style === 'survivor') {
-    bikePart(out,r,.55,0,.85,1.05,.18,.26,c,2);
-  } else if (r.style === 'hunter') {
-    for (const side of [-1,1]) bikePart(out,r,1.02,side*.39,.73,.13,.16,.7,c,2);
-  } else if (r.style === 'trapper') {
-    for (const side of [-1,1]) bikePart(out,r,-.88,side*.39,.86,.18,.52,.32,c,2);
+function bikeFace(out,r,points,color,kind=0,lean=0) {
+  const world=points.map(p=>bikePoint(r,p[0],p[1],p[2],lean));
+  for(let i=1;i<world.length-1;i++) {
+    vertex(out,world[0],color,kind);
+    vertex(out,world[i],color,kind);
+    vertex(out,world[i+1],color,kind);
   }
 }
-
+function bikeWheel(out,r,forward,color) {
+  const segments=10, radius=.35, centerY=.39;
+  const dark=[.006,.018,.029];
+  for(let i=0;i<segments;i++) {
+    const a=i*Math.PI*2/segments,b=(i+1)*Math.PI*2/segments;
+    const edge=(angle,side,rad)=>[forward+Math.sin(angle)*rad,side,centerY+Math.cos(angle)*rad];
+    // Hollow luminous ring and dark recessed hub; the wheel reads in silhouette.
+    for(const side of [-.22,.22]) {
+      bikeFace(out,r,[edge(a,side,radius),edge(b,side,radius),
+        edge(b,side,radius-.075),edge(a,side,radius-.075)],color,2);
+      bikeFace(out,r,[edge(a,side,radius-.075),edge(b,side,radius-.075),
+        edge(b,side,.12),edge(a,side,.12)],dark);
+    }
+    bikeFace(out,r,[edge(a,-.22,radius),edge(a,.22,radius),
+      edge(b,.22,radius),edge(b,-.22,radius)],mixColor(color,.38),2);
+  }
+}
+function bikeMesh(out,r) {
+  const c=r.color, lean=reducedMotion.matches ? 0 : turnLean.get(r.id)?.value||0;
+  const graphite=[.025,.050,.070], armor=[.045,.105,.135];
+  // A small ground marker corresponds to the simulation's 0.3-unit rider radius.
+  for(let i=0;i<8;i++) {
+    const a=i*Math.PI/4,b=(i+1)*Math.PI/4;
+    bikeFace(out,r,[[Math.cos(a)*.30,Math.sin(a)*.30,.025],
+      [Math.cos(b)*.30,Math.sin(b)*.30,.025],
+      [Math.cos(b)*.23,Math.sin(b)*.23,.025],
+      [Math.cos(a)*.23,Math.sin(a)*.23,.025]],mixColor(c,.33),2);
+  }
+  bikeWheel(out,r,.82,c);
+  bikeWheel(out,r,-.78,c);
+  // Angular, tapered cycle shell; light seams identify its actual heading.
+  bikeFace(out,r,[[-1.12,-.31,.43],[.80,-.34,.45],[1.29,0,.53],
+    [.80,.34,.45],[-1.12,.31,.43]],graphite);
+  bikeFace(out,r,[[-1.12,-.31,.43],[-.79,-.28,.79],[.65,-.29,.76],
+    [1.29,0,.53],[.80,-.34,.45]],armor);
+  bikeFace(out,r,[[-1.12,.31,.43],[-.79,.28,.79],[.65,.29,.76],
+    [1.29,0,.53],[.80,.34,.45]],armor);
+  bikeFace(out,r,[[-.79,-.28,.79],[-.31,-.23,.92],[.58,0,.84],
+    [-.31,.23,.92],[-.79,.28,.79]],mixColor(c,.26));
+  for(const side of [-1,1]) {
+    bikeFace(out,r,[[-1.04,side*.32,.50],[.60,side*.30,.78],
+      [.93,side*.19,.62],[-.76,side*.33,.59]],mixColor(c,.72),2);
+    bikeFace(out,r,[[-.93,side*.34,.40],[.72,side*.35,.43],
+      [.98,side*.17,.54],[-.68,side*.35,.51]],mixColor(c,.35),2);
+  }
+  bikeFace(out,r,[[.72,-.18,.83],[1.33,0,.58],[.72,.18,.83]],c,2);
+  bikeFace(out,r,[[.96,-.075,.80],[1.27,0,.69],[.96,.075,.80]],
+    [.91,.98,1],2);
+  // Rider: faceted torso, helmet, visor, and luminous suit lines.
+  const torso=[-.37,0,1.30], waist=[-.55,0,.88];
+  bikeFace(out,r,[[waist[0],-.18,waist[2]],[-.25,-.23,1.17],
+    [-.03,-.16,1.40],[-.22,0,1.48],[-.52,0,1.15]],graphite,0,lean);
+  bikeFace(out,r,[[waist[0],.18,waist[2]],[-.25,.23,1.17],
+    [-.03,.16,1.40],[-.22,0,1.48],[-.52,0,1.15]],graphite,0,lean);
+  bikeFace(out,r,[[-.25,-.23,1.17],[-.03,-.16,1.40],
+    [-.03,.16,1.40],[-.25,.23,1.17]],mixColor(c,.16),0,lean);
+  bikeFace(out,r,[[-.27,0,1.51],[-.13,-.18,1.47],
+    [.05,-.15,1.63],[.10,0,1.69],[.05,.15,1.63],
+    [-.13,.18,1.47]],armor,0,lean);
+  bikeFace(out,r,[[.03,-.15,1.60],[.12,0,1.62],[.03,.15,1.60],
+    [-.02,0,1.55]],mixColor(c,.85),2,lean);
+  for(const side of [-1,1]) {
+    bikeFace(out,r,[[-.44,side*.19,.96],[-.19,side*.24,1.30],
+      [-.14,side*.24,1.34],[-.36,side*.20,1.02]],c,2,lean);
+    bikeFace(out,r,[[-.13,side*.20,1.32],[.28,side*.24,1.03],
+      [.37,side*.23,.99],[.02,side*.19,1.37]],graphite,0,lean);
+    bikeFace(out,r,[[-.07,side*.23,1.33],[.29,side*.26,1.05],
+      [.23,side*.26,1.00],[-.12,side*.22,1.27]],mixColor(c,.65),2,lean);
+  }
+  // Silhouette language: Vanta forks forward, Aegis shields the rider,
+  // Knot carries split tail vanes, and the player has a single spine.
+  if(r.style==='hunter') for(const side of [-1,1]) {
+    bikeFace(out,r,[[.55,side*.34,.64],[1.37,side*.44,.65],
+      [1.13,side*.33,.93],[.56,side*.30,.79]],c,2);
+  }
+  else if(r.style==='survivor') {
+    bikeFace(out,r,[[.30,-.55,.85],[.72,-.47,1.02],
+      [.72,.47,1.02],[.30,.55,.85]],mixColor(c,.66),2);
+    bikeFace(out,r,[[.30,-.55,.85],[.30,-.40,1.14],
+      [.72,-.31,1.23],[.72,-.47,1.02]],armor);
+    bikeFace(out,r,[[.30,.55,.85],[.30,.40,1.14],
+      [.72,.31,1.23],[.72,.47,1.02]],armor);
+  }
+  else if(r.style==='trapper') for(const side of [-1,1]) {
+    bikeFace(out,r,[[-1.23,side*.46,.36],[-.52,side*.31,.72],
+      [-1.05,side*.36,1.08],[-1.38,side*.48,.86]],c,2);
+  }
+  else bikeFace(out,r,[[-1.18,0,.75],[-.30,0,.99],
+    [.36,0,1.03],[.91,0,.84]],c,2);
+}
+function gateMesh(out) {
+  const duration=sessionMode==='duel' && match?.roundNumber>1 ? 1.5 : 3;
+  const progress=mode==='ready' ? 0 : reducedMotion.matches ? 1 : mode==='countdown'
+    ? Math.max(0,Math.min(1,1-countdownRemaining/duration)) : 1;
+  for(const side of [-1,1]) {
+    const x=side*(1.48+progress*2.30);
+    box(out,x,3.35,-LIMIT-1.15,2.8,5.45,.28,[.016,.056,.073]);
+    box(out,x-side*1.32,3.35,-LIMIT-.94,.075,5.20,.08,[.11,.66,.77],2);
+    box(out,x,5.89,-LIMIT-.94,2.55,.07,.08,[.08,.44,.54],2);
+  }
+}
 function draw(renderDt) {
   if (graphicsLost) return;
   resize();
@@ -724,6 +945,7 @@ function draw(renderDt) {
   bind(staticBuffer);
   gl.drawArrays(gl.TRIANGLES, 0, staticData.length / 7);
   const dynamic = [];
+  gateMesh(dynamic);
   for (const segment of round.segments) trailMesh(dynamic, segment);
   for (const rider of round.riders) if (rider.alive) bikeMesh(dynamic, rider);
   for (const particle of particles) {
@@ -842,7 +1064,15 @@ function frame(now) {
     }
     accumulator = Math.min(accumulator, STEP * 16);
   }
-  if (mode !== 'paused') updateParticles(realDt);
+  if (mode !== 'paused') {
+    updateParticles(realDt);
+    for (const [id,lean] of turnLean) {
+      lean.age+=realDt;
+      lean.value*=Math.exp(-realDt*8);
+      if(lean.age>.45) turnLean.delete(id);
+    }
+  }
+  updateMusic();
   if (!graphicsLost) {
     draw(realDt);
     drawRadar();
@@ -876,6 +1106,14 @@ difficultySelect.addEventListener('change', () => { writeLocal(DIFFICULTY_KEY, d
 volumeInput.addEventListener('input', () => {
   volume = Number(volumeInput.value);
   writeLocal(VOLUME_KEY, String(volume));
+  activateAudio();
+  syncAudioMix();
+});
+musicVolumeInput.addEventListener('input', () => {
+  musicVolume=Number(musicVolumeInput.value);
+  writeLocal(MUSIC_VOLUME_KEY,String(musicVolume));
+  activateAudio();
+  syncAudioMix();
 });
 cameraSelect.addEventListener('change', () => {
   cameraDistance = cameraSelect.value;
@@ -888,6 +1126,8 @@ qualitySelect.addEventListener('change', () => {
 ui.sound.addEventListener('click', () => {
   muted = !muted;
   writeLocal(MUTE_KEY, String(muted));
+  activateAudio();
+  syncAudioMix();
   syncSoundButton();
   if (!muted) beep(650);
 });
@@ -947,6 +1187,7 @@ canvas.addEventListener('webglcontextlost', event => {
   graphicsLost = true;
   generation++;
   mode = 'paused';
+  syncAudioMix();
   accumulator = 0;
   hideCountdown();
   setOverlay('SIGNAL INTERRUPTED', 'GRID <span>OFFLINE<small>01</small></span>',
@@ -963,6 +1204,7 @@ modeSelect.value = ['duel', 'arena'].includes(readLocal(MODE_KEY)) ? readLocal(M
 rivalSelect.value = DUEL_RIVALS[readLocal(RIVAL_KEY)] ? readLocal(RIVAL_KEY) : 'hunter';
 difficultySelect.value = DIFFICULTIES[readLocal(DIFFICULTY_KEY)] ? readLocal(DIFFICULTY_KEY) : 'standard';
 volumeInput.value = String(volume);
+musicVolumeInput.value=String(musicVolume);
 cameraSelect.value = cameraDistance;
 qualitySelect.value = graphicsQuality;
 syncSoundButton();

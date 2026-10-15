@@ -24,7 +24,7 @@ Turn left or right with **Left/Right Arrow** or **A/D**. Press **P** or **Escape
 
 ## Settings and progress
 
-The menu offers effects volume, camera distance, and High/Low graphics settings. The game saves these preferences, mode choices, touch-control choice, and your best score in your browser's local storage. There is no account, online leaderboard, or PvP mode.
+The menu offers separate effects and music volume, camera distance, and High/Low graphics settings. The game saves these preferences, mode choices, touch-control choice, and your best score in your browser's local storage. There is no account, online leaderboard, or PvP mode.
 
 The game works without a gameplay server. Its optional Google Fonts are loaded from Google when a network connection is available.
 
@@ -57,7 +57,7 @@ node --test tests/*.test.mjs
 
 ## Project status
 
-Duel, Arena, a playable lesson, settings, and AI rivals are implemented. Additional maps, expanded combat and transformation mechanics, and PvP are future ideas, not current features.
+Duel, Arena, a playable lesson, AI rivals, cinematic arena scenery, distinct rider silhouettes, and procedural music/effects are implemented. Additional maps, expanded combat and transformation mechanics, and PvP are future ideas, not current features.
 
 This is an unofficial fan project inspired by TRON. It is not affiliated with or endorsed by Disney.
 
