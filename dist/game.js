@@ -1,9 +1,9 @@
-import { createRound, createDuelRound, createArenaRound, createOperationRound, DUEL_RIVALS, DIFFICULTIES, drainEvents, queueTurn, stepRound, STEP } from './simulation.js';
-import { MAPS, getMap } from './maps.js';
+﻿import { createRound, createDuelRound, createArenaRound, createOperationRound, DUEL_RIVALS, DIFFICULTIES, drainEvents, queueTurn, stepRound, setCycleFire, STEP } from './simulation.js';
+import { MAPS, getMap, terrainHeight } from './maps.js';
 import { createArenaMatch, recordArenaRound, nextArenaRound, arenaWon } from './arena.js';
 import { createMatch, recordRound, nextRound, roundSeed } from './match.js';
 import { OPERATIONS, JOURNEY, getOperation } from './operations.js';
-import { createShiftRound, stepShiftRound, setShiftMove, queueShiftTurn, requestShiftForm, throwShiftDisc, fireShiftPulse } from './grid-shift.js';
+import { createShiftRound, stepShiftRound, setShiftMove, queueShiftTurn, requestShiftForm, throwShiftDisc, setShiftFire } from './grid-shift.js';
 
 const canvas = document.querySelector('#game');
 const radar = document.querySelector('#radar');
@@ -189,7 +189,8 @@ const QUALITY_KEY = 'tron-grid-run-quality';
 const HISTORY_KEY = 'tron-grid-run-history:v1';
 const RECORDS_KEY = 'tron-grid-run-records:v1';
 const BADGES_KEY = 'tron-grid-run-badges:v1';
-const BINDINGS_KEY = 'tron-grid-run-bindings:v2';
+const BINDINGS_KEY = 'tron-grid-run-bindings:v3';
+const PREVIOUS_BINDINGS_KEY = 'tron-grid-run-bindings:v2';
 const OLD_BINDINGS_KEY = 'tron-grid-run-bindings:v1';
 const TOUCH_SIZE_KEY = 'tron-grid-run-touch-size';
 const TOUCH_PLACEMENT_KEY = 'tron-grid-run-touch-placement';
@@ -198,8 +199,8 @@ const CAMERA_MOTION_KEY = 'tron-grid-run-camera-motion';
 const FLASH_INTENSITY_KEY = 'tron-grid-run-flash-intensity';
 const GAMEPAD_KEY = 'tron-grid-run-gamepad';
 const CAPTIONS_KEY = 'tron-grid-run-captions';
-const DAILY_RULES_VERSION = 1;
-const DEFAULT_BINDINGS = Object.freeze({ left: 'a', right: 'd', up: 'w', down: 's', form: 'f', pulse: 'e', disc: 'space', pause: 'p', sound: 'm' });
+const DAILY_RULES_VERSION = 2;
+const DEFAULT_BINDINGS = Object.freeze({ left: 'a', right: 'd', up: 'w', down: 's', form: 'f', fire: 'e', disc: 'space', pause: 'p', sound: 'm' });
 let storageAvailable = true;
 
 function readLocal(key) {
@@ -223,10 +224,11 @@ function readBindings() {
   try {
     const current = readLocal(BINDINGS_KEY);
     legacy = !current;
-    saved = JSON.parse(current || readLocal(OLD_BINDINGS_KEY) || '{}');
+    saved = JSON.parse(current || readLocal(PREVIOUS_BINDINGS_KEY) || readLocal(OLD_BINDINGS_KEY) || '{}');
   } catch { saved = {}; }
   if (!saved || typeof saved !== 'object' || Array.isArray(saved)) saved = {};
   const next = { ...DEFAULT_BINDINGS };
+  if (saved.pulse && !saved.fire) saved.fire = saved.pulse;
   if (legacy && saved.form === 'e') {
     const used = new Set(Object.entries(saved).filter(([action]) => action !== 'form')
       .map(([, key]) => key));
@@ -236,10 +238,10 @@ function readBindings() {
     if (typeof saved[action] === 'string' && validBinding(saved[action]))
       next[action] = saved[action];
   }
-  if (legacy && Object.keys(saved).length && !saved.pulse) {
-    const occupied = new Set(Object.entries(next).filter(([action]) => action !== 'pulse')
+  if (legacy && Object.keys(saved).length && !saved.fire) {
+    const occupied = new Set(Object.entries(next).filter(([action]) => action !== 'fire')
       .map(([, key]) => key));
-    next.pulse = ['e', 'f', 'q', 'r'].find(key => !occupied.has(key)) || 'e';
+    next.fire = ['e', 'f', 'q', 'r'].find(key => !occupied.has(key)) || 'e';
   }
   if (new Set(Object.values(next)).size !== Object.keys(next).length)
     return { ...DEFAULT_BINDINGS };
@@ -331,6 +333,7 @@ let captionsEnabled = readLocal(CAPTIONS_KEY) !== 'false';
 let captionToken = 0;
 let gamepadMove = { x: 0, z: 0 };
 let gamepadHeld = new Set();
+const fireSources = new Set();
 let round = createRound();
 let mode = 'ready';
 let pausedFrom = 'running';
@@ -376,6 +379,21 @@ function box(out,x,y,z,sx,sy,sz,color,kind=0) {
   quad(out,[x1,y0,z1],[x1,y1,z1],[x1,y1,z0],[x1,y0,z0],mixColor(color,.55),kind);
   quad(out,[x0,y0,z0],[x0,y1,z0],[x0,y1,z1],[x0,y0,z1],mixColor(color,.9),kind);
 }
+function cylinder(out, x, y, z, radius, height, color, rail) {
+  const count = 20, top = y + height;
+  for (let i = 0; i < count; i++) {
+    const a = i * Math.PI * 2 / count, b = (i + 1) * Math.PI * 2 / count;
+    const ax = x + Math.cos(a) * radius, az = z + Math.sin(a) * radius;
+    const bx = x + Math.cos(b) * radius, bz = z + Math.sin(b) * radius;
+    quad(out, [ax,y,az],[bx,y,bz],[bx,top,bz],[ax,top,az],color);
+    vertex(out,[x,top,z],mixColor(color,1.2),0);
+    vertex(out,[ax,top,az],mixColor(color,1.2),0);
+    vertex(out,[bx,top,bz],mixColor(color,1.2),0);
+    quad(out,[ax,top+.03,az],[bx,top+.03,bz],
+      [bx,top+.10,bz],[ax,top+.10,az],rail,2);
+  }
+}
+function groundAt(x, z) { return terrainHeight(getMap(round.map), x, z); }
 let staticData = [];
 const staticBuffer = gl.createBuffer();
 function rebuildStatic(map) {
@@ -383,7 +401,15 @@ function rebuildStatic(map) {
   C.floor = map.palette.floor;
   C.wall = map.palette.wall;
   staticData = [];
-quad(staticData,[-LIMIT-3,0,-LIMIT-3],[LIMIT+3,0,-LIMIT-3],[LIMIT+3,0,LIMIT+3],[-LIMIT-3,0,LIMIT+3],C.floor,1);
+quad(staticData,[-LIMIT-3,-.08,-LIMIT-3],[LIMIT+3,-.08,-LIMIT-3],
+  [LIMIT+3,-.08,LIMIT+3],[-LIMIT-3,-.08,LIMIT+3],C.floor,1);
+for (let x = -LIMIT; x < LIMIT; x += 2) for (let z = -LIMIT; z < LIMIT; z += 2) {
+  const x2 = Math.min(LIMIT, x + 2), z2 = Math.min(LIMIT, z + 2);
+  quad(staticData,[x,terrainHeight(map,x,z),z],
+    [x2,terrainHeight(map,x2,z),z],
+    [x2,terrainHeight(map,x2,z2),z2],
+    [x,terrainHeight(map,x,z2),z2],C.floor,1);
+}
 for (const side of [-1, 1]) {
   // All scenery stays outside the playable bounds; the luminous top rail marks the real edge.
   box(staticData, side*LIMIT,.62,0,.34,1.24,LIMIT*2+.5,C.wall);
@@ -429,10 +455,16 @@ for (let i=-4; i<=4; i++) {
   box(staticData,i*2.7,8.9,-LIMIT-3.4,.09,2.7,.09,[.055,.29,.36],2);
 }
 for (const obstacle of map.obstacles) {
-  const x=(obstacle.minX+obstacle.maxX)/2, z=(obstacle.minZ+obstacle.maxZ)/2;
-  const sx=obstacle.maxX-obstacle.minX, sz=obstacle.maxZ-obstacle.minZ;
-  box(staticData,x,.7,z,sx,1.4,sz,map.palette.obstacle);
-  box(staticData,x,1.43,z,sx+.08,.07,sz+.08,map.palette.rail,2);
+  if (obstacle.shape === 'circle') {
+    cylinder(staticData, obstacle.x, terrainHeight(map,obstacle.x,obstacle.z),
+      obstacle.z, obstacle.radius, 1.8, map.palette.obstacle, map.palette.rail);
+  } else {
+    const x=(obstacle.minX+obstacle.maxX)/2, z=(obstacle.minZ+obstacle.maxZ)/2;
+    const sx=obstacle.maxX-obstacle.minX, sz=obstacle.maxZ-obstacle.minZ;
+    const y=terrainHeight(map,x,z);
+    box(staticData,x,y+.7,z,sx,1.4,sz,map.palette.obstacle);
+    box(staticData,x,y+1.43,z,sx+.08,.07,sz+.08,map.palette.rail,2);
+  }
 }
 gl.bindBuffer(gl.ARRAY_BUFFER, staticBuffer);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(staticData), gl.STATIC_DRAW);
@@ -683,21 +715,19 @@ function updateShiftHud() {
     ? 'CYCLE / WALL ACTIVE' : 'ON FOOT / DISC';
   const disc = round.shift.discs.some(d => d.ownerId === player.id);
   const cooldown = Math.max(0, player.discReadyAt - round.elapsed);
-  const pulseCooldown = Math.max(0, player.pulseReadyAt - round.elapsed);
   document.querySelector('#shift-status').textContent =
     'You ' + player.hp + '/2 integrity / ' +
-    (player.form === 'cycle' ? 'Cutter ' +
-      (pulseCooldown > 0 ? pulseCooldown.toFixed(1) + 's' : 'ready') :
+    (player.form === 'cycle' ? 'Gun ' + player.ammo + '/24 bullets' :
       'Disc ' + (disc ? 'returning' : cooldown > 0 ? cooldown.toFixed(1) + 's' : 'ready'));
   document.querySelector('#shift-rival-status').textContent =
     'Echo ' + rival.hp + '/2 integrity / ' + rival.form.toUpperCase();
   const weaponButton = document.querySelector('#shift-throw');
-  weaponButton.textContent = player.form === 'cycle' ? 'CUT' : 'DISC';
-  weaponButton.setAttribute('aria-label', player.form === 'cycle' ? 'Fire wall cutter' : 'Throw disc');
+  weaponButton.textContent = player.form === 'cycle' ? 'FIRE ' + player.ammo : 'DISC';
+  weaponButton.setAttribute('aria-label', player.form === 'cycle' ? 'Fire wall gun' : 'Throw disc');
   weaponButton.disabled = mode !== 'running' || (player.form === 'cycle'
-    ? pulseCooldown > 0 || round.elapsed < player.recoveryUntil : disc || cooldown > 0);
+    ? player.ammo <= 0 || round.elapsed < player.recoveryUntil : disc || cooldown > 0);
   document.querySelector('#shift-tip').textContent =
-    player.form === 'cycle' ? keyLabel('pulse') + ' cut wall / ' + keyLabel('form') + ' dismount / ' +
+    player.form === 'cycle' ? keyLabel('fire') + ' hold to fire / ' + keyLabel('form') + ' dismount / ' +
       keyLabel('left') + ' ' + keyLabel('right') + ' turn / ' +
       Math.max(0, Math.ceil(round.shift.timeLimit - round.elapsed)) + 's'
       : [keyLabel('up'), keyLabel('left'), keyLabel('down'), keyLabel('right')].join(' ') +
@@ -736,6 +766,17 @@ function updateHud() {
     : String(round.riders.filter(r => !r.isPlayer && r.alive).length).padStart(2, '0');
   updateOperationHud();
   updateShiftHud();
+  updateCycleWeaponHud();
+}
+function updateCycleWeaponHud() {
+  const player = round.riders.find(r => r.isPlayer);
+  const active = mode !== 'ready' && sessionMode !== 'shift' && player;
+  const status = document.querySelector('#cycle-weapon-status');
+  const button = document.querySelector('#cycle-fire');
+  status.hidden = !active;
+  if (active) status.textContent = 'GUN ' + player.ammo + '/24';
+  button.textContent = 'FIRE ' + (player?.ammo ?? 24);
+  button.disabled = mode !== 'running' || sessionMode === 'shift' || !player?.ammo;
 }
 function setBackgroundInert(inert) {
   canvas.inert = inert;
@@ -904,17 +945,17 @@ function syncControlHints(shift = modeSelect.value === 'shift') {
   const key = action => '<kbd>' + keyLabel(action) + '</kbd>';
   document.querySelector('#controls-hint').innerHTML = shift
     ? key('left') + key('right') + ' TURN ' + key('form') + ' FORM ' +
-      key('pulse') + ' CUT ' + key('disc') + ' DISC ' + key('pause') + ' PAUSE'
-    : key('left') + key('right') + ' TURN ' + key('pause') + ' PAUSE ' +
+      key('fire') + ' FIRE ' + key('disc') + ' DISC ' + key('pause') + ' PAUSE'
+    : key('left') + key('right') + ' TURN ' + key('fire') + ' FIRE ' + key('pause') + ' PAUSE ' +
       key('sound') + ' SOUND';
   document.querySelector('#panel-footer').innerHTML = shift
     ? 'CYCLE <span>' + keyLabel('left') + ' ' + keyLabel('right') +
       ' TURN</span> &nbsp;?&nbsp; FOOT <span>' +
       [keyLabel('up'),keyLabel('left'),keyLabel('down'),keyLabel('right')].join(' ') +
       ' MOVE</span> &nbsp;?&nbsp; <span>' + keyLabel('form') + ' FORM / ' +
-      keyLabel('pulse') + ' CUT / ' + keyLabel('disc') + ' DISC</span>'
+      keyLabel('fire') + ' FIRE / ' + keyLabel('disc') + ' DISC</span>'
     : 'KEYBOARD <span>ARROWS / ' + keyLabel('left') + ' ' + keyLabel('right') +
-      '</span> &nbsp;?&nbsp; TOUCH <span>TURN BUTTONS</span>';
+      '</span> / ' + keyLabel('fire') + ' FIRE &nbsp;?&nbsp; TOUCH <span>TURN + FIRE</span>';
 }
 function syncBindingButtons() {
   for (const button of document.querySelectorAll('[data-bind]')) {
@@ -979,7 +1020,7 @@ function launch() {
   lastFrame = performance.now();
   beep(730, 0.2, 'triangle', 0.06);
   effectMotif('wall');
-  announce(sessionMode === 'operations' ? 'Go. ' + getOperation(round.operation.id).objective : sessionMode === 'shift' ? 'Go. Derez Echo using your disc or light wall. Cut a wall with the mounted pulse.' : 'Go. Survive the Grid.');
+  announce(sessionMode === 'operations' ? 'Go. ' + getOperation(round.operation.id).objective : sessionMode === 'shift' ? 'Go. Derez Echo using your disc or light wall. Hold ' + keyLabel('fire') + ' to fire 24 mounted bullets.' : 'Go. Survive the Grid. Hold ' + keyLabel('fire') + ' to fire your 24 mounted bullets.');
   const token = generation;
   setTimeout(() => { if (token === generation && mode === 'running') hideCountdown(); }, 420);
 }
@@ -1000,9 +1041,20 @@ function drawMapPreview() {
   ctx.strokeStyle = map.palette.radar;
   ctx.lineWidth = 2;
   ctx.strokeRect(at(-map.limit), at(-map.limit), map.limit * 2 * scale, map.limit * 2 * scale);
+  for (const rise of map.terrain || []) {
+    ctx.strokeStyle = map.palette.radar;
+    ctx.globalAlpha = .45;
+    ctx.beginPath();
+    ctx.ellipse(at(rise.x),at(rise.z),rise.rx*scale,rise.rz*scale,0,0,Math.PI*2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
   ctx.fillStyle = map.palette.radar;
-  for (const o of map.obstacles)
-    ctx.fillRect(at(o.minX), at(o.minZ), (o.maxX-o.minX)*scale, (o.maxZ-o.minZ)*scale);
+  for (const o of map.obstacles) {
+    if (o.shape === 'circle') {
+      ctx.beginPath(); ctx.arc(at(o.x),at(o.z),o.radius*scale,0,Math.PI*2); ctx.fill();
+    } else ctx.fillRect(at(o.minX),at(o.minZ),(o.maxX-o.minX)*scale,(o.maxZ-o.minZ)*scale);
+  }
   const spawns = operations ? [mission.spawn, ...(mission.rivalSpawn ? [mission.rivalSpawn] : [])]
     : modeSelect.value === 'shift' ? [{x:-8,z:16},{x:8,z:-16}]
       : map.spawns[modeSelect.value === 'daily' ? 'duel' : modeSelect.value];
@@ -1025,7 +1077,7 @@ function drawMapPreview() {
   mapPreview.setAttribute('aria-label', (mission?.name || map.name) + ' layout with ' +
     map.obstacles.length + ' fixed barriers and ' + spawns.length + ' spawn positions');
   mapTip.textContent = modeSelect.value === 'shift'
-    ? 'One open arena. Ride to draw walls and fire a short-range wall cutter; dismount to move freely and throw a returning disc. Two disc hits derez a rival.'
+    ? 'One open arena. Hold fire while mounted to shoot up to 24 wall-breaking bullets; dismount to move freely and throw a returning disc. Two disc hits derez a rival.'
     : operations
     ? mission.objective + ' ' + mission.tip +
       (operationSelect.value === 'journey' ? ' The journey links all three operations.' : '')
@@ -1065,7 +1117,7 @@ function syncSetup() {
   ui['rival-preview'].textContent = daily
     ? 'UTC ' + dailyChallenge.day + ' / rules v' + dailyChallenge.version + ' / seed ' + dailyChallenge.seed + '. Same map, rival, and Standard rules on every replay today.'
     : shift
-    ? 'Echo obeys the same cycle, wall-cutter, foot, disc, and mounting rules. Read its form before closing distance.'
+    ? 'Echo has the same 24-bullet mounted gun, foot disc, and mounting rules. Read its form before closing distance.'
     : operations
     ? operationSelect.value === 'journey'
       ? 'Three linked operations with skippable briefings. Final Sentinel challenge is optional.'
@@ -1119,6 +1171,7 @@ function showMenu() {
   particles = [];
   turnLean.clear();
   shiftKeys.clear();
+  fireSources.clear();
   hideCountdown();
   lessonHint.hidden = true;
   skipLesson.hidden = true;
@@ -1192,12 +1245,12 @@ function showShiftBrief() {
   setOverlay('GRID SHIFT / TRAINING', 'TWO <span>FORMS</span>',
     'Derez Echo before the 90-second lockout. Cycle: ' + keyLabel('left') + '/' +
     keyLabel('right') + ' or Left/Right turns and leaves a lethal wall. ' +
-    keyLabel('pulse') + ' fires a short-range wall cutter; ' +
+    keyLabel('fire') + ' held fires up to 24 wall-breaking bullets; ' +
     keyLabel('form') + ' dismounts into clear space. On foot: movement keys or arrows move freely, ' +
     keyLabel('disc') + ' throws a returning disc, ' + keyLabel('form') +
     ' remounts when clear. Two disc hits derez either rider. Your own walls remain lethal.',
     'START GRID SHIFT');
-  announce('Grid Shift briefing. On the cycle, fire the wall cutter with ' + keyLabel('pulse') + ' and dismount with ' + keyLabel('form') + '. On foot, throw the disc with ' + keyLabel('disc') + '.');
+  announce('Grid Shift briefing. On the cycle, hold the gun trigger with ' + keyLabel('fire') + ' and dismount with ' + keyLabel('form') + '. On foot, throw the disc with ' + keyLabel('disc') + '.');
 }
 function startLesson() {
   generation++;
@@ -1209,6 +1262,7 @@ function startLesson() {
 
 function beginRound() {
   generation++;
+  fireSources.clear();
   if (sessionMode === 'shift') runBadgeEvents = new Set();
   round = sessionMode === 'shift' ? createShiftRound({ seed: randomSeed(), difficulty: difficultySelect.value })
     : sessionMode === 'operations'
@@ -1249,7 +1303,7 @@ function beginRound() {
   lessonHint.hidden = sessionMode !== 'lesson' && sessionMode !== 'shift';
   skipLesson.hidden = sessionMode !== 'lesson';
   if (sessionMode === 'lesson') showLessonStep('Step 1 / Turn left or right to carve a light wall.');
-  if (sessionMode === 'shift') showLessonStep('Grid Shift / ' + keyLabel('pulse') + ' cuts a wall; ' + keyLabel('form') + ' dismounts when clear.');
+  if (sessionMode === 'shift') showLessonStep('Grid Shift / ' + keyLabel('fire') + ' cuts a wall; ' + keyLabel('form') + ' dismounts when clear.');
   updateHud();
   drawRadar();
   hideOverlay();
@@ -1258,7 +1312,7 @@ function beginRound() {
   activateAudio();
   beep(440, 0.08, 'triangle', 0.03);
   syncAudioMix();
-  announce(sessionMode === 'lesson' ? 'Lesson starting. Turn left or right.' : sessionMode === 'shift' ? 'Grid Shift starting. Cut walls with ' + keyLabel('pulse') + ', dismount with ' + keyLabel('form') + ', and throw with ' + keyLabel('disc') + '.' : sessionMode === 'operations' ? getOperation(round.operation.id).name + '. ' + getOperation(round.operation.id).objective + ' Starting in three, two, one.' : 'Round starting. Three, two, one.');
+  announce(sessionMode === 'lesson' ? 'Lesson starting. Turn left or right.' : sessionMode === 'shift' ? 'Grid Shift starting. Cut walls with ' + keyLabel('fire') + ', dismount with ' + keyLabel('form') + ', and throw with ' + keyLabel('disc') + '.' : sessionMode === 'operations' ? getOperation(round.operation.id).name + '. ' + getOperation(round.operation.id).objective + ' Starting in three, two, one.' : 'Round starting. Three, two, one.');
 }
 
 function start() {
@@ -1300,6 +1354,8 @@ function start() {
 }
 function pause() {
   if (graphicsLost) return;
+  fireSources.clear();
+  syncFire();
   if (mode === 'running' || mode === 'countdown') {
     pausedFrom = mode;
     mode = 'paused';
@@ -1341,6 +1397,19 @@ function playerTurn(sign) {
   if (mode !== 'running') return;
   if (sessionMode === 'shift') queueShiftTurn(round, 'YOU', sign);
   else queueTurn(round, 'YOU', sign);
+}
+function syncFire() {
+  const held = mode === 'running' && fireSources.size > 0;
+  if (sessionMode === 'shift') setShiftFire(round, 'YOU', held);
+  else setCycleFire(round, 'YOU', held);
+  updateShiftHud();
+  updateCycleWeaponHud();
+}
+function setFireSource(source, held) {
+  if (held) fireSources.add(source);
+  else fireSources.delete(source);
+  syncFire();
+  handleEvents();
 }
 function syncShiftMove() {
   if (sessionMode !== 'shift' || mode !== 'running') return;
@@ -1442,7 +1511,8 @@ function captureReplayFrame(force=false) {
     operation:round.operation ? { ...round.operation,
       beam:round.operation.beam ? { ...round.operation.beam } : null } : null,
     shift:round.shift ? { discs:round.shift.discs.map(disc=>({ ...disc })),
-      pulses:round.shift.pulses.map(pulse=>({ ...pulse })) } : null,
+      bullets:round.shift.bullets.map(bullet=>({ ...bullet })) } : null,
+    bullets:round.bullets.map(bullet=>({ ...bullet })),
     riders:[...riderMap.values()],
     segments:round.segments.map(segment=>({
       id:segment.id,x1:segment.x1,z1:segment.z1,x2:segment.x2,z2:segment.z2,
@@ -1654,19 +1724,19 @@ function handleEvents() {
     } else if (event.type === 'shift-denied' && event.riderId === 'YOU') {
       showToast(event.reason.toUpperCase());
       announce(event.reason + '.');
-    } else if (event.type === 'pulse-fire') {
+    } else if (event.type === 'bullet-fire') {
       beep(event.riderId === 'YOU' ? 930 : 690, .1, 'sawtooth', .028);
-      if (event.riderId === 'YOU') announce('Wall cutter fired.');
-    } else if (event.type === 'pulse-cut') {
+      if (event.riderId === 'YOU') announce('Bullet fired. ' + event.ammo + ' left.');
+    } else if (event.type === 'bullet-cut') {
       showToast(event.riderId + ' CUT A WALL');
       effectMotif('wall');
       spawnImpact(event);
       showCaption('LIGHT WALL CUT');
       announce(event.riderId + ' cut a gap in ' + event.by + ' light wall.');
       updateHud();
-    } else if (event.type === 'pulse-blocked' && event.riderId === 'YOU') {
-      showToast('CUTTER BLOCKED / ' + event.reason.toUpperCase());
-      announce('Wall cutter blocked by ' + event.reason + '.');
+    } else if (event.type === 'bullet-blocked' && event.riderId === 'YOU') {
+      showToast('BULLET BLOCKED / ' + event.reason.toUpperCase());
+      announce('Bullet blocked by ' + event.reason + '.');
     } else if (event.type === 'disc-throw') {
       showToast(event.riderId + ' DISC OUT');
       beep(event.riderId === 'YOU' ? 780 : 580, .13, 'sawtooth', .035);
@@ -1706,39 +1776,50 @@ function handleEvents() {
       finish(event);
     }
   }
-}function trailMesh(out,s,elapsed){
-  const dx=s.x2-s.x1,dz=s.z2-s.z1,len=Math.hypot(dx,dz);
-  if(len<.06)return;
-  const x=(s.x1+s.x2)/2,z=(s.z1+s.z2)/2;
-  const sx=Math.abs(dx)>.01?len:.18,sz=Math.abs(dz)>.01?len:.18;
-  const remaining=round.rule==='decay' && !s.active
-    ? s.closedAt + round.trailLifetime - elapsed : Infinity;
-  const warning=remaining<=2;
-  const c=warning ? [1,.91,.48] : s.rider.color;
-  if (warning && Math.floor(elapsed*4)%2===0) {
-    box(out,x,.62,z,sx,1.22,sz,mixColor(c,.10));
-    box(out,x,1.26,z,sx+.03,.065,sz+.03,c,2);
-    return;
+}
+
+function trailMesh(out, segment, elapsed) {
+  const dx = segment.x2 - segment.x1, dz = segment.z2 - segment.z1;
+  const length = Math.hypot(dx, dz);
+  if (length < .06) return;
+  const remaining = round.rule === 'decay' && !segment.active
+    ? segment.closedAt + round.trailLifetime - elapsed : Infinity;
+  const warning = remaining <= 2;
+  const color = warning ? [1, .91, .48] : segment.rider.color;
+  const blink = warning && Math.floor(elapsed * 4) % 2 === 0;
+  const pieces = Math.max(1, Math.ceil(length / 3));
+  for (let i = 0; i < pieces; i++) {
+    const a = i / pieces, b = (i + 1) / pieces;
+    const x = segment.x1 + dx * (a + b) / 2;
+    const z = segment.z1 + dz * (a + b) / 2;
+    const floor = groundAt(x, z);
+    const span = length / pieces + .035;
+    const sx = Math.abs(dx) > .01 ? span : .18;
+    const sz = Math.abs(dz) > .01 ? span : .18;
+    box(out, x, floor + .62, z, sx, 1.22, sz, mixColor(color, blink ? .10 : .23));
+    box(out, x, floor + 1.26, z, sx + .03, .065, sz + .03, color, 2);
+    if (blink) continue;
+    box(out, x, floor + .09, z, sx + .04, .085, sz + .04, mixColor(color, .62), 2);
+    if (segment.rider.style === 'hunter')
+      box(out, x, floor + .84, z, sx + .02, .045, sz + .02, color, 2);
+    if (segment.rider.style === 'survivor')
+      box(out, x, floor + .55, z, sx + .03, .055, sz + .03, mixColor(color, .7), 2);
+    if (segment.rider.style === 'trapper') {
+      box(out, x, floor + .4, z, sx + .03, .045, sz + .03, mixColor(color, .8), 2);
+      box(out, x, floor + .9, z, sx + .03, .045, sz + .03, mixColor(color, .8), 2);
+    }
   }
-  box(out,x,.62,z,sx,1.22,sz,mixColor(c,.23));
-  box(out,x,1.26,z,sx+.03,.065,sz+.03,c,2);
-  box(out,x,.09,z,sx+.04,.085,sz+.04,mixColor(c,.62),2);
-  if (s.rider.style === 'hunter') box(out,x,.84,z,sx+.02,.045,sz+.02,c,2);
-  if (s.rider.style === 'survivor') box(out,x,.55,z,sx+.03,.055,sz+.03,mixColor(c,.7),2);
-  if (s.rider.style === 'trapper') {
-    box(out,x,.4,z,sx+.03,.045,sz+.03,mixColor(c,.8),2);
-    box(out,x,.9,z,sx+.03,.045,sz+.03,mixColor(c,.8),2);
-  }
-  if(s.active) {
-    // The bright advancing edge makes wall formation visible without a screen flash.
-    box(out,s.x2,.68,s.z2,.28,1.34,.28,mixColor(c,.88),2);
-  }
+  if (segment.active)
+    box(out, segment.x2, groundAt(segment.x2, segment.z2) + .68, segment.z2,
+      .28, 1.34, .28, mixColor(color, .88), 2);
 }
 const turnLean = new Map();
 function bikePoint(r, forward, side, y, lean=0) {
   const d=DIR[r.dir];
   const shifted=side+(y>.48 ? lean*(y-.48) : 0);
-  return [r.x+d[0]*forward-d[1]*shifted,y,r.z+d[1]*forward+d[0]*shifted];
+  const x = r.x+d[0]*forward-d[1]*shifted;
+  const z = r.z+d[1]*forward+d[0]*shifted;
+  return [x, groundAt(x, z) + y, z];
 }
 function bikeFace(out,r,points,color,kind=0,lean=0) {
   const world=points.map(p=>bikePoint(r,p[0],p[1],p[2],lean));
@@ -1840,33 +1921,36 @@ function bikeMesh(out,r) {
 }
 function footMesh(out, rider) {
   const c = rider.color, dark = [.025, .05, .07];
-  box(out, rider.x, .47, rider.z, .42, .75, .34, dark);
-  box(out, rider.x, .96, rider.z, .38, .28, .36, mixColor(c, .38));
-  box(out, rider.x, 1.04, rider.z - .17, .23, .10, .04, c, 2);
+  const x = rider.x, z = rider.z, y = groundAt(x, z);
+  box(out, x, y + .47, z, .42, .75, .34, dark);
+  box(out, x, y + .96, z, .38, .28, .36, mixColor(c, .38));
+  box(out, x, y + 1.04, z - .17, .23, .10, .04, c, 2);
   for (const side of [-1, 1]) {
-    box(out, rider.x + side * .16, .16, rider.z, .12, .32, .13, mixColor(c, .65), 2);
-    box(out, rider.x + side * .28, .65, rider.z, .10, .36, .12, mixColor(c, .48), 2);
+    box(out, x + side * .16, y + .16, z, .12, .32, .13, mixColor(c, .65), 2);
+    box(out, x + side * .28, y + .65, z, .10, .36, .12, mixColor(c, .48), 2);
   }
-  box(out, rider.x, .02, rider.z, .56, .04, .56, c, 2);
+  box(out, x, y + .02, z, .56, .04, .56, c, 2);
 }
 function shiftFormRing(out, rider, age) {
   const radius = .5 + age * 1.2;
-  const c = rider.color;
-  box(out, rider.x, .05, rider.z - radius, radius * 2, .045, .055, c, 2);
-  box(out, rider.x, .05, rider.z + radius, radius * 2, .045, .055, c, 2);
-  box(out, rider.x - radius, .05, rider.z, .055, .045, radius * 2, c, 2);
-  box(out, rider.x + radius, .05, rider.z, .055, .045, radius * 2, c, 2);
+  const c = rider.color, y = groundAt(rider.x, rider.z) + .05;
+  box(out, rider.x, y, rider.z - radius, radius * 2, .045, .055, c, 2);
+  box(out, rider.x, y, rider.z + radius, radius * 2, .045, .055, c, 2);
+  box(out, rider.x - radius, y, rider.z, .055, .045, radius * 2, c, 2);
+  box(out, rider.x + radius, y, rider.z, .055, .045, radius * 2, c, 2);
 }
 function discMesh(out, disc) {
   const c = disc.ownerId === 'YOU' ? [.48, .96, 1] : [1, .62, .28];
-  box(out, disc.x, .75, disc.z, .52, .08, .52, c, 2);
-  box(out, disc.x, .75, disc.z, .19, .11, .19, [.02, .06, .08]);
-  box(out, disc.x, .03, disc.z, .58, .03, .58, mixColor(c, .48), 2);
+  const y = groundAt(disc.x, disc.z);
+  box(out, disc.x, y + .75, disc.z, .52, .08, .52, c, 2);
+  box(out, disc.x, y + .75, disc.z, .19, .11, .19, [.02, .06, .08]);
+  box(out, disc.x, y + .03, disc.z, .58, .03, .58, mixColor(c, .48), 2);
 }
-function pulseMesh(out, pulse) {
-  const c = pulse.ownerId === 'YOU' ? [.56, 1, .96] : [1, .72, .36];
-  box(out, pulse.x, .54, pulse.z, .32, .2, .32, c, 2);
-  box(out, pulse.x, .04, pulse.z, .5, .04, .5, mixColor(c, .4), 2);
+function bulletMesh(out, bullet) {
+  const c = bullet.ownerId === 'YOU' ? [.56, 1, .96] : [1, .72, .36];
+  const y = groundAt(bullet.x, bullet.z);
+  box(out, bullet.x, y + .54, bullet.z, .18, .15, .18, c, 2);
+  box(out, bullet.x, y + .04, bullet.z, .28, .035, .28, mixColor(c, .4), 2);
 }
 function gateMesh(out) {
   const duration=match?.roundNumber>1 ? 1.5 : 3;
@@ -1964,6 +2048,9 @@ function cameraPose(player) {
       desired[2]+direction[0]*4*framing];
     aim=[player.x,.65,player.z];
   }
+  const elevation = groundAt(player.x, player.z);
+  desired[1] += elevation;
+  aim[1] += elevation;
   return {desired,aim};
 }
 function draw(renderDt) {
@@ -2001,7 +2088,7 @@ function draw(renderDt) {
       shiftFormRing(dynamic, rider, scene.elapsed - rider.formChangedAt);
   }
   if (scene.shift) for (const disc of scene.shift.discs) discMesh(dynamic, disc);
-  if (scene.shift) for (const pulse of scene.shift.pulses || []) pulseMesh(dynamic, pulse);
+  for (const bullet of scene.shift?.bullets || scene.bullets || []) bulletMesh(dynamic, bullet);
   if(mode==='highlight' && highlight && highlight.elapsed>highlight.duration-1.15) {
     const x=highlight.event.x,z=highlight.event.z;
     box(dynamic,x,.035,z,.8,.07,.11,[1,.86,.48],2);
@@ -2048,9 +2135,20 @@ function drawRadar() {
     ctx.strokeStyle='#ff6d53';
     ctx.strokeRect(at(-playLimit),at(-playLimit),playLimit*2*scale,playLimit*2*scale);
   }
+  for (const rise of map.terrain || []) {
+    ctx.strokeStyle = map.palette.radar;
+    ctx.globalAlpha = .45;
+    ctx.beginPath();
+    ctx.ellipse(at(rise.x),at(rise.z),rise.rx*scale,rise.rz*scale,0,0,Math.PI*2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
   ctx.fillStyle = map.palette.radar;
-  for (const o of map.obstacles)
-    ctx.fillRect(at(o.minX),at(o.minZ),(o.maxX-o.minX)*scale,(o.maxZ-o.minZ)*scale);
+  for (const o of map.obstacles) {
+    if (o.shape === 'circle') {
+      ctx.beginPath(); ctx.arc(at(o.x),at(o.z),o.radius*scale,0,Math.PI*2); ctx.fill();
+    } else ctx.fillRect(at(o.minX),at(o.minZ),(o.maxX-o.minX)*scale,(o.maxZ-o.minZ)*scale);
+  }
   if(scene.operation || round.operation) {
     const op=scene.operation || round.operation, mission=getOperation(op.id);
     if(mission.kind==='checkpoints') {
@@ -2098,9 +2196,9 @@ function drawRadar() {
     ctx.fillStyle = disc.ownerId === 'YOU' ? '#b7faff' : '#ffbc7b';
     ctx.fillRect(at(disc.x)-2, at(disc.z)-2, 4, 4);
   }
-  if (scene.shift) for (const pulse of scene.shift.pulses || []) {
-    ctx.fillStyle = pulse.ownerId === 'YOU' ? '#b7fff7' : '#ffd29a';
-    ctx.fillRect(at(pulse.x)-2, at(pulse.z)-2, 4, 4);
+  for (const bullet of scene.shift?.bullets || scene.bullets || []) {
+    ctx.fillStyle = bullet.ownerId === 'YOU' ? '#b7fff7' : '#ffd29a';
+    ctx.fillRect(at(bullet.x)-2, at(bullet.z)-2, 4, 4);
   }
   for (const rider of scene.riders) {
     if (!rider.alive) continue;
@@ -2154,6 +2252,7 @@ function pollGamepad() {
     } catch { pad = null; }
   }
   if (!pad) {
+    if (fireSources.delete('gamepad')) syncFire();
     if (gamepadMove.x || gamepadMove.z) {
       gamepadMove = { x: 0, z: 0 };
       syncShiftMove();
@@ -2184,16 +2283,24 @@ function pollGamepad() {
         if (fresh('right')) playerTurn(1);
       }
       if (fresh('confirm')) { requestShiftForm(round, 'YOU'); handleEvents(); }
-      if (fresh('disc')) {
-        if (round.riders[0].form === 'cycle') fireShiftPulse(round, 'YOU');
-        else throwShiftDisc(round, 'YOU');
+      if (round.riders[0].form === 'foot' && fresh('disc')) {
+        throwShiftDisc(round, 'YOU');
         handleEvents();
       }
+      if (round.riders[0].form === 'cycle' && active.has('disc') !== fireSources.has('gamepad'))
+        setFireSource('gamepad', active.has('disc'));
+      else if (round.riders[0].form !== 'cycle' && fireSources.has('gamepad'))
+        setFireSource('gamepad', false);
     } else {
       if (fresh('left')) playerTurn(-1);
       if (fresh('right')) playerTurn(1);
+      if (active.has('disc') !== fireSources.has('gamepad'))
+        setFireSource('gamepad', active.has('disc'));
     }
-  } else if (fresh('confirm') && ['ready', 'operation-brief', 'shift-brief', 'won', 'lost', 'paused'].includes(mode)) {
+  } else if (fireSources.has('gamepad')) {
+    setFireSource('gamepad', false);
+  }
+  if (fresh('confirm') && ['ready', 'operation-brief', 'shift-brief', 'won', 'lost', 'paused'].includes(mode)) {
     ui.start.click();
   } else if (fresh('confirm') && mode === 'countdown') launch();
   if (fresh('pause') && (mode === 'running' || mode === 'countdown' || mode === 'paused')) pause();
@@ -2244,6 +2351,7 @@ function frame(now) {
     if(highlight.elapsed>=highlight.duration) completeHighlight();
   }
   if (sessionMode === 'operations' && mode === 'running') updateOperationHud();
+  if (mode === 'running') updateCycleWeaponHud();
   if (sessionMode === 'shift' && mode === 'running') {
     updateShiftHud();
     ui['rival-intent'].textContent = 'ECHO / ' + round.shift.aiIntent.toUpperCase();
@@ -2353,6 +2461,8 @@ gamepadInput.addEventListener('change', () => {
   if (!gamepadEnabled) {
     gamepadMove = { x: 0, z: 0 };
     gamepadHeld.clear();
+    fireSources.delete('gamepad');
+    syncFire();
     syncShiftMove();
   }
 });
@@ -2373,7 +2483,7 @@ document.querySelector('#reset-settings').addEventListener('click', () => {
   try {
     for (const key of [MUTE_KEY, TOUCH_KEY, LOOK_KEY, VOLUME_KEY, MUSIC_VOLUME_KEY,
       CAMERA_KEY, CAMERA_MODE_KEY, REDUCE_FLASHES_KEY, QUALITY_KEY, BINDINGS_KEY,
-      OLD_BINDINGS_KEY,
+      OLD_BINDINGS_KEY, PREVIOUS_BINDINGS_KEY,
       TOUCH_SIZE_KEY, TOUCH_PLACEMENT_KEY, RENDER_SCALE_KEY, CAMERA_MOTION_KEY,
       FLASH_INTENSITY_KEY, GAMEPAD_KEY, CAPTIONS_KEY]) localStorage.removeItem(key);
     location.reload();
@@ -2464,11 +2574,9 @@ window.addEventListener('keydown', event => {
       handleEvents();
       return;
     }
-    if (action === 'pulse') {
+    if (action === 'fire') {
       event.preventDefault();
-      if (!fireShiftPulse(round, 'YOU'))
-        showToast(round.riders[0].form === 'foot' ? 'MOUNT TO CUT' : 'CUTTER NOT READY');
-      handleEvents();
+      if (round.riders[0].form === 'cycle') setFireSource('keyboard', true);
       return;
     }
     if (action === 'disc') {
@@ -2489,7 +2597,10 @@ window.addEventListener('keydown', event => {
       return;
     }
   }
-  if (mode === 'running' && !interactive && action === 'left') {
+  if (mode === 'running' && !interactive && action === 'fire') {
+    event.preventDefault();
+    setFireSource('keyboard', true);
+  } else if (mode === 'running' && !interactive && action === 'left') {
     event.preventDefault();
     playerTurn(-1);
   } else if (mode === 'running' && !interactive && action === 'right') {
@@ -2513,12 +2624,15 @@ window.addEventListener('keydown', event => {
 window.addEventListener('keyup', event => {
   const action = keyAction(event.key);
   if (action) shiftKeys.delete(action);
+  if (action === 'fire') setFireSource('keyboard', false);
   syncShiftMove();
 });
 window.addEventListener('blur', () => {
   shiftKeys.clear();
   gamepadMove = { x: 0, z: 0 };
   gamepadHeld.clear();
+  fireSources.clear();
+  syncFire();
   syncShiftMove();
 });
 for (const button of shiftTouch.querySelectorAll('[data-move]')) {
@@ -2543,14 +2657,25 @@ document.querySelector('#shift-transform').addEventListener('pointerdown', event
     handleEvents();
   }
 });
-document.querySelector('#shift-throw').addEventListener('pointerdown', event => {
-  event.preventDefault();
-  if (sessionMode === 'shift' && mode === 'running') {
-    if (round.riders[0].form === 'cycle') fireShiftPulse(round, 'YOU');
-    else throwShiftDisc(round, 'YOU');
-    handleEvents();
-  }
-});
+for (const [id, source] of [['cycle-fire', 'touch-cycle'], ['shift-throw', 'touch-shift']]) {
+  const button = document.querySelector('#' + id);
+  button.addEventListener('pointerdown', event => {
+    event.preventDefault();
+    if (mode !== 'running') return;
+    if (id === 'shift-throw' && round.riders[0].form === 'foot') {
+      throwShiftDisc(round, 'YOU');
+      handleEvents();
+      return;
+    }
+    if (id === 'cycle-fire' && sessionMode === 'shift') return;
+    setFireSource(source, true);
+    button.setPointerCapture?.(event.pointerId);
+  });
+  const release = () => setFireSource(source, false);
+  button.addEventListener('pointerup', release);
+  button.addEventListener('pointercancel', release);
+  button.addEventListener('lostpointercapture', release);
+}
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && (mode === 'running' || mode === 'countdown')) pause();
 });

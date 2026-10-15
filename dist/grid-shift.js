@@ -1,16 +1,17 @@
-import { createRound, STEP } from './simulation.js';
+﻿import { createRound, STEP } from './simulation.js';
 
 const DIR = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 const EPS = 1e-8;
-const SPEED = { cycle: 10.6, foot: 5.2, disc: 22, pulse: 32 };
+const SPEED = { cycle: 10.6, foot: 5.2, disc: 22, bullet: 48 };
 const RADIUS = { cycle: 0.36, foot: 0.28 };
 const TIME_LIMIT = 90;
 const FORM_COOLDOWN = 1.15;
 const FORM_RECOVERY = 0.36;
 const DISC_COOLDOWN = 1.45;
-const PULSE_COOLDOWN = 3.2;
-const PULSE_RANGE = 14;
-const PULSE_GAP = 1.35;
+const FIRE_INTERVAL = .12;
+const BULLET_RANGE = 20;
+const BULLET_GAP = 1.35;
+const ROUND_AMMO = 24;
 
 function random(round) {
   let x = round.randomState;
@@ -103,14 +104,16 @@ export function createShiftRound({ seed = 1, difficulty = 'standard' } = {}) {
         style: 'hunter', color: [1, .47, .18] },
     ],
   });
-  round.shift = { discs: [], pulses: [], timeLimit: TIME_LIMIT, aiIntent: 'reading lanes' };
+  round.shift = { discs: [], bullets: [], timeLimit: TIME_LIMIT, aiIntent: 'reading lanes' };
   for (const rider of round.riders) {
     rider.form = 'cycle';
     rider.hp = 2;
     rider.formReadyAt = 0;
     rider.recoveryUntil = 0;
     rider.discReadyAt = 0;
-    rider.pulseReadyAt = 0;
+    rider.ammo = ROUND_AMMO;
+    rider.nextShotAt = 0;
+    rider.fireHeld = false;
     rider.formChangedAt = -10;
     rider.input = { x: 0, z: 0 };
     rider.footTime = 0;
@@ -160,6 +163,7 @@ export function requestShiftForm(round, id) {
       return false;
     }
     closeTrail(round, rider);
+    rider.fireHeld = false;
     rider.x += dx; rider.z += dz;
     rider.form = 'foot';
     rider.segment = null;
@@ -202,17 +206,26 @@ export function throwShiftDisc(round, id) {
   round.actionLog.push({ tick: round.tick, riderId: id, action: 'throw' });
   return true;
 }
-export function fireShiftPulse(round, id) {
-  const rider = round.riders.find(r => r.id === id);
-  if (!rider || !rider.alive || rider.form !== 'cycle' || round.outcome ||
-      round.elapsed < rider.pulseReadyAt || round.elapsed < rider.recoveryUntil) return false;
+function shootBullet(round, rider) {
+  if (!rider.alive || rider.form !== 'cycle' || round.outcome ||
+      round.elapsed < rider.recoveryUntil || rider.ammo <= 0 ||
+      round.elapsed + EPS < rider.nextShotAt) return false;
   const [vx, vz] = DIR[rider.dir];
-  round.shift.pulses.push({ ownerId: id, x: rider.x + vx * .8,
+  round.shift.bullets.push({ ownerId: rider.id, x: rider.x + vx * .8,
     z: rider.z + vz * .8, vx, vz, traveled: 0 });
-  rider.pulseReadyAt = round.elapsed + PULSE_COOLDOWN;
-  round.events.push({ type: 'pulse-fire', riderId: id });
-  round.actionLog.push({ tick: round.tick, riderId: id, action: 'pulse' });
+  rider.ammo--;
+  rider.nextShotAt = round.elapsed + FIRE_INTERVAL;
+  if (!rider.ammo) rider.fireHeld = false;
+  round.events.push({ type: 'bullet-fire', riderId: rider.id, ammo: rider.ammo });
+  round.actionLog.push({ tick: round.tick, riderId: rider.id, action: 'fire' });
   return true;
+}
+export function setShiftFire(round, id, held) {
+  const rider = round.riders.find(r => r.id === id);
+  if (!rider || !rider.alive || round.outcome) return false;
+  rider.fireHeld = Boolean(held && rider.form === 'cycle' && rider.ammo > 0);
+  if (rider.fireHeld) shootBullet(round, rider);
+  return rider.fireHeld || !held;
 }
 function cutTrail(round, segment, x, z) {
   const dx = segment.x2 - segment.x1, dz = segment.z2 - segment.z1;
@@ -220,8 +233,8 @@ function cutTrail(round, segment, x, z) {
   if (length < EPS) return;
   const along = Math.max(0, Math.min(length,
     ((x - segment.x1) * dx + (z - segment.z1) * dz) / length));
-  const before = Math.max(0, along - PULSE_GAP);
-  const after = Math.min(length, along + PULSE_GAP);
+  const before = Math.max(0, along - BULLET_GAP);
+  const after = Math.min(length, along + BULLET_GAP);
   const point = distance => ({ x: segment.x1 + dx * distance / length,
     z: segment.z1 + dz * distance / length });
   const firstEnd = point(before), lastStart = point(after);
@@ -237,32 +250,31 @@ function cutTrail(round, segment, x, z) {
     } else round.segments.splice(round.segments.indexOf(segment), 1);
   }
 }
-function movePulse(round, pulse) {
-  const travel = Math.min(SPEED.pulse * STEP, PULSE_RANGE - pulse.traveled);
+function moveBullet(round, bullet) {
+  const travel = Math.min(SPEED.bullet * STEP, BULLET_RANGE - bullet.traveled);
   if (travel <= 0) return false;
-  const dx = pulse.vx * travel, dz = pulse.vz * travel;
-  const hit = worldHit(round, null, pulse.x, pulse.z, dx, dz, .12);
-  const target = round.riders.find(r => r.id !== pulse.ownerId && r.alive);
-  const riderHit = target && boxHit(pulse.x, pulse.z, dx, dz,
+  const dx = bullet.vx * travel, dz = bullet.vz * travel;
+  const hit = worldHit(round, null, bullet.x, bullet.z, dx, dz, .12);
+  const target = round.riders.find(r => r.id !== bullet.ownerId && r.alive);
+  const riderHit = target && boxHit(bullet.x, bullet.z, dx, dz,
     target.x - RADIUS[target.form] - .12, target.x + RADIUS[target.form] + .12,
     target.z - RADIUS[target.form] - .12, target.z + RADIUS[target.form] + .12);
   if (riderHit !== null && riderHit !== undefined && (!hit || riderHit < hit.t)) {
-    round.events.push({ type: 'pulse-blocked', riderId: pulse.ownerId, reason: 'rider' });
+    round.events.push({ type: 'bullet-blocked', riderId: bullet.ownerId, reason: 'rider' });
     return false;
   }
   if (hit) {
     if (hit.segment) {
-      const x = pulse.x + dx * hit.t, z = pulse.z + dz * hit.t;
+      const x = bullet.x + dx * hit.t, z = bullet.z + dz * hit.t;
       cutTrail(round, hit.segment, x, z);
-      round.events.push({ type: 'pulse-cut', riderId: pulse.ownerId,
+      round.events.push({ type: 'bullet-cut', riderId: bullet.ownerId,
         by: hit.segment.ownerId, x, z });
-      if (pulse.ownerId === 'YOU') round.score += 25;
-    } else round.events.push({ type: 'pulse-blocked', riderId: pulse.ownerId,
+    } else round.events.push({ type: 'bullet-blocked', riderId: bullet.ownerId,
       reason: hit.reason });
     return false;
   }
-  pulse.x += dx; pulse.z += dz; pulse.traveled += travel;
-  return pulse.traveled < PULSE_RANGE - EPS;
+  bullet.x += dx; bullet.z += dz; bullet.traveled += travel;
+  return bullet.traveled < BULLET_RANGE - EPS;
 }
 function turn(round, rider, sign) {
   closeTrail(round, rider);
@@ -291,11 +303,12 @@ function aiDecision(round, rider) {
     const front = forwardHit ? forwardHit.t * 10 : 10;
     const left = spaceAhead(round, rider, (rider.dir + 3) % 4, 10);
     const right = spaceAhead(round, rider, (rider.dir + 1) % 4, 10);
-    if (forwardHit?.reason === 'trail' && front > 3.7 && front < 9 &&
-        fireShiftPulse(round, rider.id)) {
-      round.shift.aiIntent = 'cutting a wall';
+    if (forwardHit?.reason === 'trail' && front > 3.7 && front < 10 &&
+        rider.ammo > 0 && setShiftFire(round, rider.id, true)) {
+      round.shift.aiIntent = 'firing at a wall';
       return;
     }
+    setShiftFire(round, rider.id, false);
     if (round.elapsed > rider.tactic.footAt + (rider.tactic.preferCycle ? 2.1 : 0) && dist < 29 &&
         (front < 8 || round.elapsed > rider.tactic.footAt + 1.3 ||
           random(round) < (target.form === 'foot' ? .55 : .38) + rider.tactic.aggression * .25) &&
@@ -310,6 +323,7 @@ function aiDecision(round, rider) {
     } else round.shift.aiIntent = 'riding for position';
     return;
   }
+  rider.fireHeld = false;
   rider.footTime += interval;
   if (!round.shift.discs.some(d => d.ownerId === rider.id) &&
       round.elapsed >= rider.discReadyAt && dist < 24 && random(round) < .58 + rider.tactic.aggression * .3) {
@@ -393,6 +407,8 @@ export function stepShiftRound(round) {
       turn(round, rider, sign);
     }
   }
+  for (const rider of round.riders) if (rider.fireHeld) shootBullet(round, rider);
+  round.shift.bullets = round.shift.bullets.filter(bullet => moveBullet(round, bullet));
   const moves = round.riders.filter(r => r.alive).map(rider => {
     const direction = rider.form === 'cycle' ? DIR[rider.dir] : [rider.input.x, rider.input.z];
     if (rider.form === 'foot' && Math.hypot(...direction) > .15) {
@@ -427,7 +443,6 @@ export function stepShiftRound(round) {
     }
   }
   round.shift.discs = round.shift.discs.filter(disc => moveDisc(round, disc));
-  round.shift.pulses = round.shift.pulses.filter(pulse => movePulse(round, pulse));
   round.tick++;
   round.elapsed = round.tick * STEP;
   const player = round.riders.find(r => r.isPlayer);

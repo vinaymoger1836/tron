@@ -1,13 +1,18 @@
-import { getOperation } from './operations.js';
+﻿import { getOperation } from './operations.js';
 import { getMap, spawnClear } from './maps.js';
 export const STEP = 1 / 120;
 export const SPEED = 10.6;
-export const LIMIT = 29;
+export const LIMIT = 34;
 export const RIDER_RADIUS = 0.3;
 
 const TRAIL_HALF_WIDTH = 0.09;
 const TURN_COOLDOWN = 0.16;
 const TURN_BUFFER = 0.22;
+const BULLET_SPEED = 48;
+const BULLET_RANGE = 20;
+const FIRE_INTERVAL = 0.12;
+const BULLET_GAP = 1.35;
+export const ROUND_AMMO = 24;
 const CORNER_CLEARANCE = RIDER_RADIUS + TRAIL_HALF_WIDTH + 0.02;
 const EPSILON = 1e-8;
 const DIR = [[0, -1], [1, 0], [0, 1], [-1, 0]];
@@ -138,6 +143,7 @@ export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles, diff
     outcome: null,
     riders: [],
     segments: [],
+    bullets: [],
     obstacles: (obstacles || layout.obstacles).map(o => ({ ...o })),
     dynamicObstacles: [],
     events: [],
@@ -164,6 +170,9 @@ export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles, diff
       ignoreSegmentId: null,
       distanceSinceTurn: Infinity,
       segment: null,
+      ammo: ROUND_AMMO,
+      nextShotAt: 0,
+      fireHeld: false,
     };
     rider.segment = newSegment(round, rider);
     round.riders.push(rider);
@@ -211,8 +220,20 @@ function sweptBox(x, z, dx, dz, minX, maxX, minZ, maxZ) {
   return exit >= 0 && enter <= 1 ? Math.max(0, enter) : null;
 }
 
-function boundaryHit(limitValue, x, z, dx, dz) {
-  const limit = limitValue - RIDER_RADIUS;
+function sweptCircle(x, z, dx, dz, cx, cz, radius) {
+  const px = x - cx, pz = z - cz;
+  const c = px * px + pz * pz - radius * radius;
+  if (c <= 0) return 0;
+  const a = dx * dx + dz * dz;
+  if (a < EPSILON) return null;
+  const b = 2 * (px * dx + pz * dz);
+  const discriminant = b * b - 4 * a * c;
+  if (discriminant < 0) return null;
+  const t = (-b - Math.sqrt(discriminant)) / (2 * a);
+  return t >= 0 && t <= 1 ? t : null;
+}
+function boundaryHit(limitValue, x, z, dx, dz, radius = RIDER_RADIUS) {
+  const limit = limitValue - radius;
   if (Math.abs(x) > limit || Math.abs(z) > limit) return 0;
   let t = null;
   if (dx > EPSILON && x + dx > limit) t = (limit - x) / dx;
@@ -222,17 +243,19 @@ function boundaryHit(limitValue, x, z, dx, dz) {
   return t;
 }
 
-function staticHit(round, rider, x, z, dx, dz) {
+function staticHit(round, rider, x, z, dx, dz, radius = RIDER_RADIUS) {
   let hit = null;
-  const boundaryTime = boundaryHit(round.limit, x, z, dx, dz);
+  const boundaryTime = boundaryHit(round.limit, x, z, dx, dz, radius);
   if (boundaryTime !== null) hit = { t: boundaryTime, reason: round.operation?.id === 'collapse' && round.limit < getMap(round.map).limit ? 'collapse' : 'boundary' };
 
   for (const obstacle of round.obstacles) {
-    const t = sweptBox(
-      x, z, dx, dz,
-      obstacle.minX - RIDER_RADIUS, obstacle.maxX + RIDER_RADIUS,
-      obstacle.minZ - RIDER_RADIUS, obstacle.maxZ + RIDER_RADIUS,
-    );
+    const t = obstacle.shape === 'circle'
+      ? sweptCircle(x, z, dx, dz, obstacle.x, obstacle.z, obstacle.radius + radius)
+      : sweptBox(
+        x, z, dx, dz,
+        obstacle.minX - radius, obstacle.maxX + radius,
+        obstacle.minZ - radius, obstacle.maxZ + radius,
+      );
     if (t !== null && (!hit || t < hit.t)) {
       hit = { t, reason: 'obstacle', by: obstacle.id };
     }
@@ -240,28 +263,101 @@ function staticHit(round, rider, x, z, dx, dz) {
 
   for (const obstacle of round.dynamicObstacles) {
     const t = sweptBox(x, z, dx, dz,
-      obstacle.minX - RIDER_RADIUS, obstacle.maxX + RIDER_RADIUS,
-      obstacle.minZ - RIDER_RADIUS, obstacle.maxZ + RIDER_RADIUS);
+      obstacle.minX - radius, obstacle.maxX + radius,
+      obstacle.minZ - radius, obstacle.maxZ + radius);
     if (t !== null && (!hit || t < hit.t))
       hit = { t, reason: 'hazard', by: obstacle.id };
   }
 
   for (const segment of round.segments) {
-    if (segment === rider.segment) continue;
-    if (segment.id === rider.ignoreSegmentId &&
+    if (segment === rider?.segment) continue;
+    if (segment.id === rider?.ignoreSegmentId &&
         rider.distanceSinceTurn < CORNER_CLEARANCE) continue;
-    const minX = Math.min(segment.x1, segment.x2) - TRAIL_HALF_WIDTH - RIDER_RADIUS;
-    const maxX = Math.max(segment.x1, segment.x2) + TRAIL_HALF_WIDTH + RIDER_RADIUS;
-    const minZ = Math.min(segment.z1, segment.z2) - TRAIL_HALF_WIDTH - RIDER_RADIUS;
-    const maxZ = Math.max(segment.z1, segment.z2) + TRAIL_HALF_WIDTH + RIDER_RADIUS;
+    const minX = Math.min(segment.x1, segment.x2) - TRAIL_HALF_WIDTH - radius;
+    const maxX = Math.max(segment.x1, segment.x2) + TRAIL_HALF_WIDTH + radius;
+    const minZ = Math.min(segment.z1, segment.z2) - TRAIL_HALF_WIDTH - radius;
+    const maxZ = Math.max(segment.z1, segment.z2) + TRAIL_HALF_WIDTH + radius;
     const t = sweptBox(x, z, dx, dz, minX, maxX, minZ, maxZ);
     if (t !== null && (!hit || t < hit.t)) {
-      hit = { t, reason: 'trail', by: segment.ownerId };
+      hit = { t, reason: 'trail', by: segment.ownerId, segment };
     }
   }
   return hit;
 }
 
+function shootBullet(round, rider) {
+  if (!rider.alive || rider.form === 'foot' || round.outcome ||
+      rider.ammo <= 0 || round.elapsed + EPSILON < rider.nextShotAt) return false;
+  const [vx, vz] = DIR[rider.dir];
+  round.bullets.push({ ownerId: rider.id, x: rider.x + vx * .8,
+    z: rider.z + vz * .8, vx, vz, traveled: 0 });
+  rider.ammo--;
+  rider.nextShotAt = round.elapsed + FIRE_INTERVAL;
+  if (!rider.ammo) rider.fireHeld = false;
+  round.events.push({ type: 'bullet-fire', riderId: rider.id, ammo: rider.ammo });
+  round.actionLog.push({ tick: round.tick, riderId: rider.id, action: 'fire' });
+  return true;
+}
+export function setCycleFire(round, riderId, held) {
+  const rider = round.riders.find(r => r.id === riderId);
+  if (!rider || !rider.alive || round.outcome) return false;
+  rider.fireHeld = Boolean(held && rider.ammo > 0);
+  if (rider.fireHeld) shootBullet(round, rider);
+  return rider.fireHeld || (held && rider.ammo === 0 ? false : !held);
+}
+function cutTrail(round, segment, x, z) {
+  const dx = segment.x2 - segment.x1, dz = segment.z2 - segment.z1;
+  const length = Math.hypot(dx, dz);
+  if (length < EPSILON) return;
+  const along = Math.max(0, Math.min(length,
+    ((x - segment.x1) * dx + (z - segment.z1) * dz) / length));
+  const before = Math.max(0, along - BULLET_GAP);
+  const after = Math.min(length, along + BULLET_GAP);
+  const point = distance => ({ x: segment.x1 + dx * distance / length,
+    z: segment.z1 + dz * distance / length });
+  const firstEnd = point(before), lastStart = point(after);
+  if (segment.active) {
+    if (before > EPSILON) round.segments.push({ ...segment, id: round.nextSegmentId++,
+      x2: firstEnd.x, z2: firstEnd.z, active: false, closedAt: round.elapsed });
+    segment.x1 = lastStart.x; segment.z1 = lastStart.z;
+  } else {
+    if (after < length - EPSILON) round.segments.push({ ...segment,
+      id: round.nextSegmentId++, x1: lastStart.x, z1: lastStart.z });
+    if (before > EPSILON) {
+      segment.x2 = firstEnd.x; segment.z2 = firstEnd.z;
+    } else round.segments.splice(round.segments.indexOf(segment), 1);
+  }
+}
+function moveBullet(round, bullet) {
+  const travel = Math.min(BULLET_SPEED * STEP, BULLET_RANGE - bullet.traveled);
+  if (travel <= 0) return false;
+  const dx = bullet.vx * travel, dz = bullet.vz * travel;
+  const hit = staticHit(round, null, bullet.x, bullet.z, dx, dz, .12);
+  let riderHit = null;
+  for (const rider of round.riders) {
+    if (!rider.alive || rider.id === bullet.ownerId) continue;
+    const t = sweptBox(bullet.x, bullet.z, dx, dz,
+      rider.x - RIDER_RADIUS - .12, rider.x + RIDER_RADIUS + .12,
+      rider.z - RIDER_RADIUS - .12, rider.z + RIDER_RADIUS + .12);
+    if (t !== null && (riderHit === null || t < riderHit)) riderHit = t;
+  }
+  if (riderHit !== null && (!hit || riderHit < hit.t)) {
+    round.events.push({ type: 'bullet-blocked', riderId: bullet.ownerId, reason: 'rider' });
+    return false;
+  }
+  if (hit) {
+    if (hit.segment) {
+      const x = bullet.x + dx * hit.t, z = bullet.z + dz * hit.t;
+      cutTrail(round, hit.segment, x, z);
+      round.events.push({ type: 'bullet-cut', riderId: bullet.ownerId,
+        by: hit.segment.ownerId, x, z });
+    } else round.events.push({ type: 'bullet-blocked', riderId: bullet.ownerId,
+      reason: hit.reason });
+    return false;
+  }
+  bullet.x += dx; bullet.z += dz; bullet.traveled += travel;
+  return bullet.traveled < BULLET_RANGE - EPSILON;
+}
 function movingRiderHit(a, b) {
   const px = a.rider.x - b.rider.x;
   const pz = a.rider.z - b.rider.z;
@@ -329,6 +425,12 @@ function decideAI(round, rider) {
   if (round.elapsed + EPSILON < rider.nextDecisionAt || rider.pendingTurn) return;
   const level = DIFFICULTIES[round.difficulty];
   rider.nextDecisionAt = round.elapsed + level.interval + nextRandom(round) * 0.05;
+  const [vx, vz] = DIR[rider.dir];
+  const forwardHit = staticHit(round, rider, rider.x, rider.z, vx * 10, vz * 10);
+  const front = forwardHit ? forwardHit.t * 10 : 10;
+  if (forwardHit?.reason === 'trail' && front > 3.7 && front < 10 &&
+      rider.ammo > 0 && setCycleFire(round, rider.id, true)) return;
+  setCycleFire(round, rider.id, false);
   const horizon = level.horizon + (round.elapsed > rider.tacticAt ? 2 : 0);
   const choices = [
     { sign: 0, direction: rider.dir },
@@ -482,6 +584,9 @@ export function stepRound(round) {
       applyTurn(round, rider, pending.sign);
     }
   }
+
+  for (const rider of round.riders) if (rider.fireHeld) shootBullet(round, rider);
+  round.bullets = round.bullets.filter(bullet => moveBullet(round, bullet));
 
   const distance = round.speed * STEP;
   const proposals = round.riders.filter(r => r.alive).map(rider => {
