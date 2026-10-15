@@ -137,6 +137,7 @@ let countdownRemaining = 0;
 let countdownNumber = 0;
 let generation = 0;
 let toastSequence = 0;
+let overlayFocusToken = 0;
 let graphicsLost = false;
 let camera = [7, 13, 31];
 let target = [0, 0, 0];
@@ -233,10 +234,20 @@ function setOverlay(eyebrow, title, deck, button) {
   overlay.inert = false;
   overlay.setAttribute('aria-hidden', 'false');
   overlay.classList.remove('hidden');
-  ui.start.focus({ preventScroll: true });
+  const token = ++overlayFocusToken;
+  let focusAttempts = 0;
+  function focusWhenVisible() {
+    if (token !== overlayFocusToken || overlay.classList.contains('hidden')) return;
+    ui.start.focus({ preventScroll: true });
+    if (document.activeElement !== ui.start && ++focusAttempts < 90) {
+      requestAnimationFrame(focusWhenVisible);
+    }
+  }
+  requestAnimationFrame(focusWhenVisible);
 }
 
 function hideOverlay() {
+  ++overlayFocusToken;
   overlay.classList.add('hidden');
   overlay.setAttribute('aria-hidden', 'true');
   overlay.inert = true;
@@ -359,6 +370,7 @@ function pause() {
     pausedFrom = mode;
     mode = 'paused';
     accumulator = 0;
+    countdown.classList.remove('show');
     ui.pause.textContent = '▶';
     ui.pause.setAttribute('aria-label', 'Resume game');
     setOverlay('CONNECTION HELD', 'GRID <span>PAUSED<small>01</small></span>',
@@ -369,6 +381,12 @@ function pause() {
     lastFrame = performance.now();
     accumulator = 0;
     hideOverlay();
+    if (mode === 'countdown') {
+      countdown.textContent = String(Math.max(1, Math.ceil(countdownRemaining)));
+      countdown.classList.add('show');
+    } else {
+      hideCountdown();
+    }
     ui.pause.textContent = 'Ⅱ';
     ui.pause.setAttribute('aria-label', 'Pause game');
     announce('Game resumed.');
