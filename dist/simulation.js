@@ -1,3 +1,4 @@
+import { getMap, spawnClear } from './maps.js';
 export const STEP = 1 / 120;
 export const SPEED = 10.6;
 export const LIMIT = 29;
@@ -33,15 +34,45 @@ export const DIFFICULTIES = Object.freeze({
   expert: { label: 'Expert', interval: 0.15, horizon: 15, margin: 0.2 },
 });
 
-export function createDuelRound({ seed = 1, rival = 'hunter', difficulty = 'standard' } = {}) {
+export function createDuelRound({ seed = 1, rival = 'hunter', difficulty = 'standard', map = 'classic', rule = 'classic' } = {}) {
   const profile = DUEL_RIVALS[rival] || DUEL_RIVALS.hunter;
+  const layout = getMap(map);
   const side = (seed >>> 0) & 1 ? 1 : -1;
-  const offset = ((seed >>> 4) % 5) - 2;
+  const offset = ((seed >>> 4) % 5 - 2) * 0.35;
+  const [player, opponent] = layout.spawns.duel;
+  const playerSpawn = { ...player, x: player.x * side + offset };
+  const rivalSpawn = { ...opponent, x: opponent.x * side - offset };
+  if (!spawnClear(layout, playerSpawn) || !spawnClear(layout, rivalSpawn))
+    throw new Error('Unsafe Duel spawn on ' + layout.id);
   return createRound({
-    seed, difficulty,
+    seed, difficulty, map: layout.id, rule,
     riders: [
-      { id: 'YOU', isPlayer: true, controller: 'none', x: side * (5 + offset * 0.5), z: 17, dir: 0 },
-      { id: profile.id, controller: 'ai', style: rival, x: -side * (5 - offset * 0.5), z: -17, dir: 2, color: profile.color },
+      { id: 'YOU', isPlayer: true, controller: 'none', ...playerSpawn },
+      { id: profile.id, controller: 'ai', style: rival, ...rivalSpawn, color: profile.color },
+    ],
+  });
+}
+
+export function createArenaRound({ seed = 1, difficulty = 'standard', map = 'classic', rule = 'classic' } = {}) {
+  const layout = getMap(map);
+  const names = ['AXIOM', 'HELIX', 'PULSE'];
+  const styles = ['hunter', 'survivor', 'trapper'];
+  const colors = [COLORS.orange, COLORS.violet, COLORS.gold];
+  const rotation = seed % 3;
+  const spawns = layout.spawns.arena.map((spawn, index) => {
+    const jitter = index === 0 ? 0 : (((seed >>> (index * 5)) % 5) - 2) * 0.35;
+    const candidate = { ...spawn, x: spawn.x + jitter };
+    if (!spawnClear(layout, candidate)) throw new Error('Unsafe Arena spawn on ' + layout.id);
+    return candidate;
+  });
+  return createRound({
+    seed, difficulty, map: layout.id, rule,
+    riders: [
+      { id: 'YOU', isPlayer: true, controller: 'none', ...spawns[0] },
+      ...names.map((id, index) => ({
+        id, controller: 'ai', style: styles[(index + rotation) % 3],
+        color: colors[index], ...spawns[index + 1],
+      })),
     ],
   });
 }
@@ -65,13 +96,18 @@ function newSegment(round, rider) {
   };
 }
 
-export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles = [], difficulty = 'standard' } = {}) {
+export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles, difficulty = 'standard', map = 'classic', rule = 'classic' } = {}) {
+  const layout = getMap(map);
   const round = {
     seed: seed >>> 0,
     randomState: (seed >>> 0) || 0x6d2b79f5,
     tick: 0,
     elapsed: 0,
     speed: SPEED,
+    map: layout.id,
+    limit: layout.limit,
+    rule: rule === 'decay' ? 'decay' : 'classic',
+    trailLifetime: rule === 'decay' ? 10 : Infinity,
     score: 0,
     scoreBreakdown: { derez: 0, closeCall: 0, trap: 0, win: 0 },
     difficulty: DIFFICULTIES[difficulty] ? difficulty : 'standard',
@@ -80,7 +116,7 @@ export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles = [],
     outcome: null,
     riders: [],
     segments: [],
-    obstacles: obstacles.map(o => ({ ...o })),
+    obstacles: (obstacles || layout.obstacles).map(o => ({ ...o })),
     events: [],
     actionLog: [],
     nextSegmentId: 1,
@@ -152,8 +188,8 @@ function sweptBox(x, z, dx, dz, minX, maxX, minZ, maxZ) {
   return exit >= 0 && enter <= 1 ? Math.max(0, enter) : null;
 }
 
-function boundaryHit(x, z, dx, dz) {
-  const limit = LIMIT - RIDER_RADIUS;
+function boundaryHit(limitValue, x, z, dx, dz) {
+  const limit = limitValue - RIDER_RADIUS;
   if (Math.abs(x) > limit || Math.abs(z) > limit) return 0;
   let t = null;
   if (dx > EPSILON && x + dx > limit) t = (limit - x) / dx;
@@ -165,7 +201,7 @@ function boundaryHit(x, z, dx, dz) {
 
 function staticHit(round, rider, x, z, dx, dz) {
   let hit = null;
-  const boundaryTime = boundaryHit(x, z, dx, dz);
+  const boundaryTime = boundaryHit(round.limit, x, z, dx, dz);
   if (boundaryTime !== null) hit = { t: boundaryTime, reason: 'boundary' };
 
   for (const obstacle of round.obstacles) {
@@ -299,6 +335,10 @@ function applyTurn(round, rider, sign) {
 
 export function stepRound(round) {
   if (round.outcome) return round;
+  if (round.rule === 'decay') {
+    round.segments = round.segments.filter(segment =>
+      segment.active || round.elapsed < segment.closedAt + round.trailLifetime);
+  }
   for (const rider of round.riders) {
     if (!rider.alive) continue;
     if (rider.controller === 'ai') decideAI(round, rider);

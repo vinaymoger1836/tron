@@ -1,4 +1,6 @@
-import { createRound, createDuelRound, DUEL_RIVALS, DIFFICULTIES, drainEvents, queueTurn, stepRound, STEP, LIMIT } from './simulation.js';
+import { createRound, createDuelRound, createArenaRound, DUEL_RIVALS, DIFFICULTIES, drainEvents, queueTurn, stepRound, STEP } from './simulation.js';
+import { MAPS, getMap } from './maps.js';
+import { createArenaMatch, recordArenaRound, nextArenaRound, arenaWon } from './arena.js';
 import { createMatch, recordRound, nextRound, roundSeed } from './match.js';
 
 const canvas = document.querySelector('#game');
@@ -14,6 +16,10 @@ const skipLesson = document.querySelector('#skip-lesson');
 const modeSelect = document.querySelector('#mode-select');
 const rivalSelect = document.querySelector('#rival-select');
 const difficultySelect = document.querySelector('#difficulty-select');
+const mapSelect = document.querySelector('#map-select');
+const ruleSelect = document.querySelector('#rule-select');
+const mapPreview = document.querySelector('#map-preview');
+const mapTip = document.querySelector('#map-tip');
 const volumeInput = document.querySelector('#volume');
 const musicVolumeInput = document.querySelector('#music-volume');
 const cameraSelect = document.querySelector('#camera-distance');
@@ -79,6 +85,8 @@ const FRAGMENT = `
 precision mediump float;
 uniform float uTime;
 uniform float uFlash;
+uniform vec3 uGridColor;
+uniform vec3 uFogColor;
 varying vec3 vColor;
 varying vec3 vWorld;
 varying float vKind;
@@ -91,11 +99,11 @@ void main(){
     vec2 major=abs(fract(vWorld.xz/16.0)-0.5);
     float majorLine=1.0-smoothstep(0.488,0.5,max(major.x,major.y));
     float glow=0.65+0.15*sin(uTime*1.4);
-    color+=vec3(0.005,0.17,0.23)*line*glow+vec3(0.005,0.12,0.17)*majorLine;
+    color+=uGridColor*line*glow+uGridColor*majorLine*0.72;
   }
   if(vKind>1.5) color*=1.12+uFlash*0.12*sin(uTime*4.0+vWorld.x*0.7+vWorld.z*0.5);
   float fog=smoothstep(22.0,85.0,vDistance);
-  color=mix(color,vec3(0.006,0.025,0.045),fog*0.75);
+  color=mix(color,uFogColor,fog*0.75);
   gl_FragColor=vec4(color,1.0);
 }`;
 
@@ -115,7 +123,9 @@ const loc = {
   position: gl.getAttribLocation(program, 'aPosition'), color: gl.getAttribLocation(program, 'aColor'),
   kind: gl.getAttribLocation(program, 'aKind'), matrix: gl.getUniformLocation(program, 'uMatrix'),
   camera: gl.getUniformLocation(program, 'uCamera'), time: gl.getUniformLocation(program, 'uTime'),
-  flash: gl.getUniformLocation(program, 'uFlash')
+  flash: gl.getUniformLocation(program, 'uFlash'),
+  gridColor: gl.getUniformLocation(program, 'uGridColor'),
+  fogColor: gl.getUniformLocation(program, 'uFogColor')
 };
 gl.enable(gl.DEPTH_TEST);
 gl.clearColor(0.003, 0.013, 0.027, 1);
@@ -137,6 +147,8 @@ const TOUCH_KEY = 'tron-grid-run-touch';
 const MODE_KEY = 'tron-grid-run-mode';
 const RIVAL_KEY = 'tron-grid-run-rival';
 const DIFFICULTY_KEY = 'tron-grid-run-difficulty';
+const MAP_KEY = 'tron-grid-run-map';
+const RULE_KEY = 'tron-grid-run-rule';
 const VOLUME_KEY = 'tron-grid-run-volume';
 const MUSIC_VOLUME_KEY = 'tron-grid-run-music-volume';
 const CAMERA_KEY = 'tron-grid-run-camera';
@@ -151,7 +163,8 @@ function writeLocal(key, value) {
   try { localStorage.setItem(key, value); } catch { /* Storage can be unavailable. */ }
 }
 const savedBest = Number(readLocal(SCORE_KEY));
-let best = Number.isFinite(savedBest) && savedBest >= 0 ? savedBest : 0;
+const legacyBest = Number.isFinite(savedBest) && savedBest >= 0 ? savedBest : 0;
+let best = 0;
 let muted = readLocal(MUTE_KEY) === 'true';
 let touchChoice = readLocal(TOUCH_KEY) || 'auto';
 let sessionMode = 'duel';
@@ -207,14 +220,20 @@ function box(out,x,y,z,sx,sy,sz,color,kind=0) {
   quad(out,[x1,y0,z1],[x1,y1,z1],[x1,y1,z0],[x1,y0,z0],mixColor(color,.55),kind);
   quad(out,[x0,y0,z0],[x0,y1,z0],[x0,y1,z1],[x0,y0,z1],mixColor(color,.9),kind);
 }
-const staticData = [];
-quad(staticData,[-32,0,-32],[32,0,-32],[32,0,32],[-32,0,32],C.floor,1);
+let staticData = [];
+const staticBuffer = gl.createBuffer();
+function rebuildStatic(map) {
+  const LIMIT = map.limit;
+  C.floor = map.palette.floor;
+  C.wall = map.palette.wall;
+  staticData = [];
+quad(staticData,[-LIMIT-3,0,-LIMIT-3],[LIMIT+3,0,-LIMIT-3],[LIMIT+3,0,LIMIT+3],[-LIMIT-3,0,LIMIT+3],C.floor,1);
 for (const side of [-1, 1]) {
   // All scenery stays outside the playable bounds; the luminous top rail marks the real edge.
   box(staticData, side*LIMIT,.62,0,.34,1.24,LIMIT*2+.5,C.wall);
   box(staticData, 0,.62,side*LIMIT,LIMIT*2+.5,1.24,.34,C.wall);
-  box(staticData, side*LIMIT,1.26,0,.18,.10,LIMIT*2+.5,[.06,.66,.82],2);
-  box(staticData, 0,1.26,side*LIMIT,LIMIT*2+.5,.10,.18,[.06,.66,.82],2);
+  box(staticData, side*LIMIT,1.26,0,.18,.10,LIMIT*2+.5,map.palette.rail,2);
+  box(staticData, 0,1.26,side*LIMIT,LIMIT*2+.5,.10,.18,map.palette.rail,2);
   for (let i=-3; i<=3; i++) {
     box(staticData,side*LIMIT,1.2,i*8,.48,2.4,.48,[.025,.18,.25]);
     box(staticData,i*8,1.2,side*LIMIT,.48,2.4,.48,[.025,.18,.25]);
@@ -253,9 +272,16 @@ box(staticData,0,6.76,-LIMIT-.65,10.4,.11,.12,[.10,.68,.79],2);
 for (let i=-4; i<=4; i++) {
   box(staticData,i*2.7,8.9,-LIMIT-3.4,.09,2.7,.09,[.055,.29,.36],2);
 }
-const staticBuffer = gl.createBuffer();
+for (const obstacle of map.obstacles) {
+  const x=(obstacle.minX+obstacle.maxX)/2, z=(obstacle.minZ+obstacle.maxZ)/2;
+  const sx=obstacle.maxX-obstacle.minX, sz=obstacle.maxZ-obstacle.minZ;
+  box(staticData,x,.7,z,sx,1.4,sz,map.palette.obstacle);
+  box(staticData,x,1.43,z,sx+.08,.07,sz+.08,map.palette.rail,2);
+}
 gl.bindBuffer(gl.ARRAY_BUFFER, staticBuffer);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(staticData), gl.STATIC_DRAW);
+}
+rebuildStatic(getMap('classic'));
 const dynamicBuffer = gl.createBuffer();
 
 function perspective(fov,aspect,near,far) {
@@ -293,19 +319,31 @@ function announce(message) {
   if (statusLive) statusLive.textContent = message;
 }
 
+function scoreKey() {
+  return 'tron-grid-run-best:v2:' + sessionMode + ':' + round.map + ':' +
+    round.difficulty + ':' + round.rule;
+}
+function loadBest() {
+  const value = Number(readLocal(scoreKey()));
+  best = Number.isFinite(value) && value >= 0 ? value : 0;
+}
 function updateHud() {
-  const points = sessionMode === 'duel' && match
+  const points = match && sessionMode !== 'lesson'
     ? match.points + (match.resultRecorded ? 0 : round.score) : round.score;
   ui.score.textContent = String(points).padStart(5, '0');
   if (sessionMode === 'duel' && match) {
-    ui.matchline.textContent = 'DUEL / YOU ' + match.wins.player + ' — ' + match.wins.rival + ' ' + DUEL_RIVALS[match.rival].id + ' / R' + match.roundNumber;
+    ui.matchline.textContent = 'DUEL / YOU ' + match.wins.player + ' ? ' + match.wins.rival +
+      ' ' + DUEL_RIVALS[match.rival].id + ' / R' + match.roundNumber + ' / ' + getMap(round.map).name.toUpperCase();
+  } else if (sessionMode === 'arena' && match) {
+    ui.matchline.textContent = 'ARENA / HEAT ' + match.roundNumber + '/3 / SURVIVE 2 / ' +
+      getMap(round.map).name.toUpperCase();
   } else if (sessionMode === 'lesson') ui.matchline.textContent = 'LESSON / GRID BASICS';
-  else ui.matchline.textContent = sessionMode === 'duel' ? 'DUEL / FIRST TO 3' : 'ARENA / SURVIVE';
-  document.querySelector('.radar-wrap .label').textContent = sessionMode === 'duel' ? 'DUEL / 01' : sessionMode === 'lesson' ? 'LESSON / 01' : 'ARENA / 01';
+  else ui.matchline.textContent = sessionMode === 'duel' ? 'DUEL / FIRST TO 3' : 'ARENA / SURVIVE 2 OF 3';
+  document.querySelector('.radar-wrap .label').textContent =
+    getMap(round.map).name.toUpperCase() + ' / ' + (match?.roundNumber || '01');
   ui.best.textContent = String(best).padStart(5, '0');
   ui.rivals.textContent = String(round.riders.filter(r => !r.isPlayer && r.alive).length).padStart(2, '0');
 }
-
 function setBackgroundInert(inert) {
   canvas.inert = inert;
   document.querySelector('.hud').inert = inert;
@@ -507,10 +545,38 @@ function launch() {
   setTimeout(() => { if (token === generation && mode === 'running') hideCountdown(); }, 420);
 }
 
+function drawMapPreview() {
+  const map = getMap(mapSelect.value);
+  const ctx = mapPreview.getContext('2d');
+  const size = mapPreview.height;
+  const scale = (size - 14) / (map.limit * 2);
+  const at = value => size / 2 + value * scale;
+  ctx.fillStyle = '#06131d';
+  ctx.fillRect(0, 0, mapPreview.width, size);
+  ctx.strokeStyle = map.palette.radar;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(at(-map.limit), at(-map.limit), map.limit * 2 * scale, map.limit * 2 * scale);
+  ctx.fillStyle = map.palette.radar;
+  for (const o of map.obstacles)
+    ctx.fillRect(at(o.minX), at(o.minZ), (o.maxX-o.minX)*scale, (o.maxZ-o.minZ)*scale);
+  map.spawns.arena.forEach((spawn, index) => {
+    ctx.fillStyle = index === 0 ? '#73eaff' : ['#ffa353','#c78aff','#ffdf72'][index-1];
+    ctx.beginPath(); ctx.arc(at(spawn.x),at(spawn.z),3.5,0,Math.PI*2); ctx.fill();
+  });
+  ctx.fillStyle = '#b9dce6';
+  ctx.font = '600 12px Rajdhani, sans-serif';
+  ctx.fillText(map.name.toUpperCase(), size + 12, 23);
+  ctx.font = '12px Rajdhani, sans-serif';
+  ctx.fillText(map.obstacles.length ? map.obstacles.length + ' fixed barriers' : 'Open circuit', size + 12, 45);
+  ctx.fillText('CYAN = YOU', size + 12, 68);
+  mapTip.textContent = map.cue + (ruleSelect.value === 'decay' && modeSelect.value === 'arena'
+    ? ' Advanced: closed walls pulse before fading after 10 seconds.' : ' Light walls remain until the heat ends.') +
+    (legacyBest ? ' Legacy best ' + legacyBest + ' is preserved.' : '');
+}
 function syncSetup() {
   const duel = modeSelect.value === 'duel';
   document.querySelector('#rival-field').hidden = !duel;
-  document.querySelector('#difficulty-field').hidden = !duel;
+  document.querySelector('#rule-field').hidden = duel;
   const profile = DUEL_RIVALS[rivalSelect.value];
   const difficultyHint = {
     rookie: 'Reacts later; speed stays equal.',
@@ -518,14 +584,17 @@ function syncSetup() {
     expert: 'Reacts sooner; speed stays equal.',
   };
   ui['rival-preview'].textContent = duel
-    ? profile.id + ' / ' + profile.style.toUpperCase() + ' · ' + profile.cue + '. ' + difficultyHint[difficultySelect.value]
-    : 'Three rivals. One persistent light-wall arena.';
+    ? profile.id + ' / ' + profile.style.toUpperCase() + ' ? ' + profile.cue + '. ' + difficultyHint[difficultySelect.value]
+    : 'Three different AI styles per heat. Survive at least 2 of 3 heats; each heat adds to your score.';
   ui.start.textContent = duel ? 'ENTER DUEL' : 'ENTER ARENA';
+  drawMapPreview();
   if (mode === 'ready') {
     sessionMode = modeSelect.value;
     round = duel
-      ? createDuelRound({ seed: 1, rival: rivalSelect.value, difficulty: difficultySelect.value })
-      : createRound({ seed: 1 });
+      ? createDuelRound({ seed: 1, rival: rivalSelect.value, difficulty: difficultySelect.value, map: mapSelect.value })
+      : createArenaRound({ seed: 1, difficulty: difficultySelect.value, map: mapSelect.value, rule: ruleSelect.value });
+    rebuildStatic(getMap(round.map));
+    loadBest();
     updateHud();
     drawRadar();
   }
@@ -553,7 +622,7 @@ function showMenu() {
   updateHud();
   syncSetup();
   setOverlay('CHOOSE YOUR CIRCUIT', 'ENTER THE <span>GRID<small>01</small></span>',
-    'Duel is first to three against one rival. Arena is the original survival run. Turn with arrows or the touch controls; every turn leaves a lethal wall.', ui.start.textContent);
+    'Duel is first to three against one rival. Arena is three scored heats: survive at least two. Every turn leaves a lethal wall.', ui.start.textContent);
   announce('Choose Duel or Arena, then enter the Grid. A short playable lesson is available.');
 }
 
@@ -574,16 +643,18 @@ function startLesson() {
 function beginRound() {
   generation++;
   round = sessionMode === 'duel'
-    ? createDuelRound({ seed: roundSeed(match), rival: match.rival, difficulty: match.difficulty })
+    ? createDuelRound({ seed: roundSeed(match), rival: match.rival, difficulty: match.difficulty, map: match.map })
     : sessionMode === 'lesson'
       ? createRound({ seed: randomSeed(), riders: [{ id: 'YOU', x: 0, z: 16, dir: 0, isPlayer: true, controller: 'none' }] })
-      : createRound({ seed: randomSeed() });
+      : createArenaRound({ seed: roundSeed(match), difficulty: match.difficulty, map: match.map, rule: match.rule });
+  rebuildStatic(getMap(round.map));
+  loadBest();
   replayFrames=[];
   highlight=null;
   highlightCard.hidden=true;
   captureReplayFrame(true);
   mode = 'countdown';
-  countdownRemaining = sessionMode === 'duel' && match.roundNumber > 1 ? 1.5 : 3;
+  countdownRemaining = match && match.roundNumber > 1 ? 1.5 : 3;
   countdownNumber = Math.ceil(countdownRemaining);
   accumulator = 0;
   lastFrame = performance.now();
@@ -594,12 +665,13 @@ function beginRound() {
   nextMusicBeat=0;
   ++toastSequence;
   ui.toast.classList.remove('show');
-  ui.pause.textContent = 'Ⅱ';
+  ui.pause.textContent = '?';
   ui.pause.setAttribute('aria-label', 'Pause game');
   setup.hidden = true;
   ui['lesson-start'].hidden = true;
   ui['change-mode'].hidden = true;
-  ui['rival-intent'].textContent = sessionMode === 'duel' ? DUEL_RIVALS[match.rival].cue : '';
+  ui['rival-intent'].textContent = sessionMode === 'duel' ? DUEL_RIVALS[match.rival].cue :
+    sessionMode === 'arena' ? getMap(round.map).cue : '';
   lessonHint.hidden = sessionMode !== 'lesson';
   skipLesson.hidden = sessionMode !== 'lesson';
   if (sessionMode === 'lesson') showLessonStep('Step 1 / Turn left or right to carve a light wall.');
@@ -615,13 +687,16 @@ function beginRound() {
 }
 
 function start() {
-  if (mode === 'ready' || (sessionMode === 'duel' && match?.completed)) {
+  if (mode === 'ready' || match?.completed) {
     sessionMode = modeSelect.value;
     match = sessionMode === 'duel'
       ? createMatch({ seed: randomSeed(), rival: rivalSelect.value, difficulty: difficultySelect.value })
-      : null;
-  } else if (sessionMode === 'duel' && match?.resultRecorded) {
-    nextRound(match);
+      : createArenaMatch({ seed: randomSeed(), map: mapSelect.value,
+          difficulty: difficultySelect.value, rule: ruleSelect.value });
+    if (sessionMode === 'duel') match.map = mapSelect.value;
+  } else if (match?.resultRecorded) {
+    if (sessionMode === 'duel') nextRound(match);
+    else nextArenaRound(match);
   }
   beginRound();
 }
@@ -751,7 +826,7 @@ function captureReplayFrame(force=false) {
     riders:[...riderMap.values()],
     segments:round.segments.map(segment=>({
       id:segment.id,x1:segment.x1,z1:segment.z1,x2:segment.x2,z2:segment.z2,
-      active:segment.active,rider:riderMap.get(segment.ownerId),
+      active:segment.active,closedAt:segment.closedAt,rider:riderMap.get(segment.ownerId),
     })),
   });
   while(replayFrames.length>2 && replayFrames[0].time<round.elapsed-6)
@@ -764,13 +839,15 @@ function showRoundResult(result) {
   hideCountdown();
   setup.hidden=true;
   ui['change-mode'].hidden=false;
-  const complete=result.duel && match.completed;
+  const complete=match.completed;
+  const success=complete ? result.matchWon : result.won;
   setOverlay(
-    complete ? result.won ? 'DUEL WON' : 'DUEL LOST' : result.won ? 'ROUND WON' : 'ROUND LOST',
-    complete ? result.won ? 'GRID <span>MASTER</span>' : 'END OF <span>LINE</span>'
+    complete ? success ? (result.duel ? 'DUEL WON' : 'ARENA CLEARED') : (result.duel ? 'DUEL LOST' : 'ARENA FAILED')
+      : result.won ? 'HEAT WON' : 'HEAT LOST',
+    complete ? success ? 'GRID <span>MASTER</span>' : 'END OF <span>LINE</span>'
       : result.won ? 'ROUND <span>SECURED</span>' : 'ROUND <span>LOST</span>',
     result.deck,
-    complete || !result.duel ? 'REMATCH' : 'NEXT ROUND',
+    complete ? 'FAST RETRY' : 'NEXT ROUND',
   );
 }
 function completeHighlight() {
@@ -788,10 +865,13 @@ function finish(event) {
   const duel=sessionMode==='duel';
   ui['rival-intent'].textContent='';
   if(duel) recordRound(match,event.kind,round.score,round.actionLog);
-  const total=duel ? match.points : round.score;
+  else recordArenaRound(match,event.kind,round.score,round.actionLog);
+  const total=match.points;
   if(total>best) {
     best=total;
-    writeLocal(SCORE_KEY,String(best));
+    writeLocal(scoreKey(),String(best));
+  } else if (match.completed && readLocal(scoreKey()) === null) {
+    writeLocal(scoreKey(), String(total));
   }
   updateHud();
   const won=event.kind==='won';
@@ -799,12 +879,18 @@ function finish(event) {
   const cause=won
     ? duel ? DUEL_RIVALS[match.rival].id+' derezzed.' : 'All rivals derezzed.'
     : crashMessage(event);
-  const scoreText='Round +'+round.score+' ('+scoreExplanation()+').';
-  const scoreline=duel ? ' Duel '+match.wins.player+'?'+match.wins.rival+'.' : '';
+  const scoreText='Heat +'+round.score+' ('+scoreExplanation()+').';
+  const scoreline=duel
+    ? ' Duel '+match.wins.player+'?'+match.wins.rival+'.'
+    : ' Arena '+match.wins.player+' of '+match.roundNumber+' heats survived.';
+  const summary=match.completed
+    ? duel ? ' Match total '+total+' points.'
+      : ' Three-heat total '+total+' points. '+(arenaWon(match) ? 'Objective complete.' : 'Survive two heats to clear Arena.')
+    : '';
   const tip=won ? 'Your route held.' : event.reason==='trail'
     ? 'Look for open space before your next turn.' : 'Leave room to escape at the arena edge.';
-  const deck=cause+' '+scoreText+scoreline+' '+tip;
-  const result={event,deck,won,duel};
+  const deck=cause+' '+scoreText+scoreline+summary+' '+tip;
+  const result={event,deck,won,duel,matchWon:duel ? match.wins.player>=3 : arenaWon(match)};
   announce((won ? 'Round won. ' : 'Round lost. ')+deck);
   if(!won && !reducedMotion.matches && replayFrames.length>2) {
     highlight={
@@ -866,12 +952,20 @@ function handleEvents() {
       finish(event);
     }
   }
-}function trailMesh(out,s){
+}function trailMesh(out,s,elapsed){
   const dx=s.x2-s.x1,dz=s.z2-s.z1,len=Math.hypot(dx,dz);
   if(len<.06)return;
   const x=(s.x1+s.x2)/2,z=(s.z1+s.z2)/2;
   const sx=Math.abs(dx)>.01?len:.18,sz=Math.abs(dz)>.01?len:.18;
-  const c=s.rider.color;
+  const remaining=round.rule==='decay' && !s.active
+    ? s.closedAt + round.trailLifetime - elapsed : Infinity;
+  const warning=remaining<=2;
+  const c=warning ? [1,.91,.48] : s.rider.color;
+  if (warning && Math.floor(elapsed*4)%2===0) {
+    box(out,x,.62,z,sx,1.22,sz,mixColor(c,.10));
+    box(out,x,1.26,z,sx+.03,.065,sz+.03,c,2);
+    return;
+  }
   box(out,x,.62,z,sx,1.22,sz,mixColor(c,.23));
   box(out,x,1.26,z,sx+.03,.065,sz+.03,c,2);
   box(out,x,.09,z,sx+.04,.085,sz+.04,mixColor(c,.62),2);
@@ -991,14 +1085,15 @@ function bikeMesh(out,r) {
     [.36,0,1.03],[.91,0,.84]],c,2);
 }
 function gateMesh(out) {
-  const duration=sessionMode==='duel' && match?.roundNumber>1 ? 1.5 : 3;
+  const duration=match?.roundNumber>1 ? 1.5 : 3;
   const progress=mode==='ready' ? 0 : reducedMotion.matches ? 1 : mode==='countdown'
     ? Math.max(0,Math.min(1,1-countdownRemaining/duration)) : 1;
+  const LIMIT=round.limit;
   for(const side of [-1,1]) {
     const x=side*(1.48+progress*2.30);
     box(out,x,3.35,-LIMIT-1.15,2.8,5.45,.28,[.016,.056,.073]);
-    box(out,x-side*1.32,3.35,-LIMIT-.94,.075,5.20,.08,[.11,.66,.77],2);
-    box(out,x,5.89,-LIMIT-.94,2.55,.07,.08,[.08,.44,.54],2);
+    box(out,x-side*1.32,3.35,-LIMIT-.94,.075,5.20,.08,getMap(round.map).palette.rail,2);
+    box(out,x,5.89,-LIMIT-.94,2.55,.07,.08,getMap(round.map).palette.rail,2);
   }
 }
 function displayRound() {
@@ -1020,7 +1115,7 @@ function cameraPose(player) {
     aim=[player.x+direction[0]*5,.55,player.z+direction[1]*5];
   }
   if(mode==='countdown' && !reducedMotion.matches) {
-    const duration=sessionMode==='duel' && match?.roundNumber>1 ? 1.5 : 3;
+    const duration=match?.roundNumber>1 ? 1.5 : 3;
     const intro=Math.max(0,Math.min(1,(countdownRemaining-.45)/(duration-.45)));
     const side=[player.x-direction[0]*7-direction[1]*15,8.3,
       player.z-direction[1]*7+direction[0]*15];
@@ -1054,11 +1149,14 @@ function draw(renderDt) {
   gl.uniform3fv(loc.camera, camera);
   gl.uniform1f(loc.time, visualTime);
   gl.uniform1f(loc.flash, flashReduced() || graphicsQuality === 'low' ? 0 : 1);
+  const palette=getMap(round.map).palette;
+  gl.uniform3fv(loc.gridColor,palette.rail.map(value=>value*.23));
+  gl.uniform3fv(loc.fogColor,palette.floor);
   bind(staticBuffer);
   gl.drawArrays(gl.TRIANGLES, 0, staticData.length / 7);
   const dynamic = [];
   gateMesh(dynamic);
-  for (const segment of scene.segments) trailMesh(dynamic, segment);
+  for (const segment of scene.segments) trailMesh(dynamic, segment, scene.time ?? scene.elapsed);
   for (const rider of scene.riders) if (rider.alive) bikeMesh(dynamic, rider);
   if(mode==='highlight' && highlight && highlight.elapsed>highlight.duration-1.15) {
     const x=highlight.event.x,z=highlight.event.z;
@@ -1082,8 +1180,10 @@ function drawRadar() {
   if (!ctx) return;
   const width = radar.width;
   const height = radar.height;
-  const scale = width / 64;
-  const at = value => (value + 32) * scale;
+  const map=getMap(round.map);
+  const limit=map.limit;
+  const scale = width / (limit*2+6);
+  const at = value => (value + limit + 3) * scale;
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = '#07121d';
   ctx.fillRect(0, 0, width, height);
@@ -1096,20 +1196,30 @@ function drawRadar() {
     ctx.moveTo(0, p); ctx.lineTo(width, p);
     ctx.stroke();
   }
-  ctx.strokeStyle = 'rgba(94,223,243,.5)';
+  ctx.strokeStyle = map.palette.radar;
   ctx.lineWidth = 3;
-  ctx.strokeRect(at(-LIMIT), at(-LIMIT), LIMIT * 2 * scale, LIMIT * 2 * scale);
+  ctx.strokeRect(at(-limit), at(-limit), limit * 2 * scale, limit * 2 * scale);
+  ctx.fillStyle = map.palette.radar;
+  for (const o of map.obstacles)
+    ctx.fillRect(at(o.minX),at(o.minZ),(o.maxX-o.minX)*scale,(o.maxZ-o.minZ)*scale);
   for (const segment of scene.segments) {
     const color = segment.rider.color;
     ctx.strokeStyle = 'rgba(' +
       Math.round(color[0] * 255) + ',' +
       Math.round(color[1] * 255) + ',' +
       Math.round(color[2] * 255) + ',.7)';
+    const remaining=round.rule==='decay' && !segment.active
+      ? segment.closedAt+round.trailLifetime-(scene.time ?? scene.elapsed) : Infinity;
+    if(remaining<=2) {
+      ctx.strokeStyle='#ffe879';
+      ctx.setLineDash([5,4]);
+    } else ctx.setLineDash([]);
     ctx.lineWidth = 2.5;
     ctx.beginPath();
     ctx.moveTo(at(segment.x1), at(segment.z1));
     ctx.lineTo(at(segment.x2), at(segment.z2));
     ctx.stroke();
+    ctx.setLineDash([]);
   }
   for (const rider of scene.riders) {
     if (!rider.alive) continue;
@@ -1236,6 +1346,8 @@ skipHighlightButton.addEventListener('click', completeHighlight);
 modeSelect.addEventListener('change', () => { writeLocal(MODE_KEY, modeSelect.value); syncSetup(); });
 rivalSelect.addEventListener('change', () => { writeLocal(RIVAL_KEY, rivalSelect.value); syncSetup(); });
 difficultySelect.addEventListener('change', () => { writeLocal(DIFFICULTY_KEY, difficultySelect.value); syncSetup(); });
+mapSelect.addEventListener('change', () => { writeLocal(MAP_KEY, mapSelect.value); syncSetup(); });
+ruleSelect.addEventListener('change', () => { writeLocal(RULE_KEY, ruleSelect.value); syncSetup(); });
 volumeInput.addEventListener('input', () => {
   volume = Number(volumeInput.value);
   writeLocal(VOLUME_KEY, String(volume));
@@ -1350,6 +1462,8 @@ window.addEventListener('resize', resize);
 modeSelect.value = ['duel', 'arena'].includes(readLocal(MODE_KEY)) ? readLocal(MODE_KEY) : 'duel';
 rivalSelect.value = DUEL_RIVALS[readLocal(RIVAL_KEY)] ? readLocal(RIVAL_KEY) : 'hunter';
 difficultySelect.value = DIFFICULTIES[readLocal(DIFFICULTY_KEY)] ? readLocal(DIFFICULTY_KEY) : 'standard';
+mapSelect.value = MAPS[readLocal(MAP_KEY)] ? readLocal(MAP_KEY) : 'classic';
+ruleSelect.value = readLocal(RULE_KEY) === 'decay' ? 'decay' : 'classic';
 volumeInput.value = String(volume);
 musicVolumeInput.value=String(musicVolume);
 cameraSelect.value = cameraDistance;
