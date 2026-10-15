@@ -1,11 +1,10 @@
-// Collision, spawn, presentation and navigation data share these definitions.
+﻿// Collision, spawn, presentation and navigation data share these definitions.
 export const MAPS = Object.freeze({
   classic: {
     id: 'classic', name: 'Classic Grid', limit: 34,
     cue: 'Open square. Read every wall and keep an exit in reserve.',
     palette: { floor: [0.008, 0.026, 0.045], wall: [0.018, 0.072, 0.10], rail: [0.06, 0.66, 0.82], obstacle: [0.03, 0.13, 0.17], radar: '#5edff3' },
     obstacles: [],
-    terrain: [{ id: 'CENTRAL RISE', x: 0, z: 0, rx: 12, rz: 15, height: 2.2 }],
     spawns: {
       duel: [{ x: -5, z: 17, dir: 0 }, { x: 5, z: -17, dir: 2 }],
       arena: [{ x: 0, z: 16, dir: 0 }, { x: -17, z: -16, dir: 1 }, { x: 17, z: -14, dir: 3 }, { x: 16, z: 14, dir: 0 }],
@@ -20,10 +19,6 @@ export const MAPS = Object.freeze({
       { id: 'EAST REACTOR', shape: 'circle', x: 14, z: 0, radius: 3.1 },
       { id: 'NORTH SPARK', shape: 'circle', x: 0, z: -12, radius: 1.8 },
       { id: 'SOUTH SPARK', shape: 'circle', x: 0, z: 12, radius: 1.8 },
-    ],
-    terrain: [
-      { id: 'WEST BANK', x: -21, z: 0, rx: 8, rz: 22, height: 3.5 },
-      { id: 'EAST BANK', x: 21, z: 0, rx: 8, rz: 22, height: 3.5 },
     ],
     spawns: {
       duel: [{ x: -5, z: 19, dir: 0 }, { x: 5, z: -19, dir: 2 }],
@@ -41,12 +36,6 @@ export const MAPS = Object.freeze({
       { id: 'SOUTHWEST NODE', shape: 'circle', x: -11, z: 9, radius: 2.8 },
       { id: 'VAULT CORE', shape: 'circle', x: 0, z: 0, radius: 3.3 },
     ],
-    terrain: [
-      { id: 'NORTH APPROACH', x: 0, z: -18, rx: 8, rz: 10, height: 3.2 },
-      { id: 'SOUTH APPROACH', x: 0, z: 18, rx: 8, rz: 10, height: 3.2 },
-      { id: 'EAST CREST', x: 22, z: 0, rx: 7, rz: 15, height: 2.6 },
-      { id: 'WEST CREST', x: -22, z: 0, rx: 7, rz: 15, height: 2.6 },
-    ],
     spawns: {
       duel: [{ x: -3, z: 18, dir: 0 }, { x: 3, z: -18, dir: 2 }],
       arena: [{ x: 0, z: 19, dir: 0 }, { x: -18, z: -18, dir: 1 }, { x: 18, z: -18, dir: 3 }, { x: 18, z: 18, dir: 0 }],
@@ -55,15 +44,6 @@ export const MAPS = Object.freeze({
 });
 
 export function getMap(id) { return MAPS[id] || MAPS.classic; }
-export function terrainHeight(map, x, z) {
-  let height = 0;
-  for (const rise of map.terrain || []) {
-    const dx = (x - rise.x) / rise.rx, dz = (z - rise.z) / rise.rz;
-    const distance2 = dx * dx + dz * dz;
-    if (distance2 < 1) height += rise.height * (1 - distance2) ** 2;
-  }
-  return height;
-}
 export function obstacleContains(obstacle, x, z, radius = 0) {
   return obstacle.shape === 'circle'
     ? Math.hypot(x - obstacle.x, z - obstacle.z) <= obstacle.radius + radius
@@ -92,12 +72,6 @@ export function validateMap(map) {
       : o.minX < o.maxX && o.minZ < o.maxZ &&
         Math.max(Math.abs(o.minX), Math.abs(o.maxX), Math.abs(o.minZ), Math.abs(o.maxZ)) < map.limit - 1;
     if (!valid) throw new Error('Invalid obstacle ' + o.id);
-  }
-  for (const rise of map.terrain || []) {
-    if (!(rise.rx > 0 && rise.rz > 0 && rise.height >= 0) ||
-        Math.abs(rise.x) + rise.rx >= map.limit ||
-        Math.abs(rise.z) + rise.rz >= map.limit)
-      throw new Error('Invalid terrain ' + rise.id);
   }
   for (const [mode, spawns] of Object.entries(map.spawns)) {
     if (!spawns.every(s => spawnClear(map, s))) throw new Error('Blocked ' + mode + ' spawn on ' + map.id);

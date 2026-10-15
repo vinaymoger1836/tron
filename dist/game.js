@@ -1,5 +1,5 @@
 ﻿import { createRound, createDuelRound, createArenaRound, createOperationRound, DUEL_RIVALS, DIFFICULTIES, drainEvents, queueTurn, stepRound, setCycleFire, STEP } from './simulation.js';
-import { MAPS, getMap, terrainHeight } from './maps.js';
+import { MAPS, getMap } from './maps.js';
 import { createArenaMatch, recordArenaRound, nextArenaRound, arenaWon } from './arena.js';
 import { createMatch, recordRound, nextRound, roundSeed } from './match.js';
 import { OPERATIONS, JOURNEY, getOperation } from './operations.js';
@@ -393,7 +393,6 @@ function cylinder(out, x, y, z, radius, height, color, rail) {
       [bx,top+.10,bz],[ax,top+.10,az],rail,2);
   }
 }
-function groundAt(x, z) { return terrainHeight(getMap(round.map), x, z); }
 let staticData = [];
 const staticBuffer = gl.createBuffer();
 function rebuildStatic(map) {
@@ -401,15 +400,8 @@ function rebuildStatic(map) {
   C.floor = map.palette.floor;
   C.wall = map.palette.wall;
   staticData = [];
-quad(staticData,[-LIMIT-3,-.08,-LIMIT-3],[LIMIT+3,-.08,-LIMIT-3],
-  [LIMIT+3,-.08,LIMIT+3],[-LIMIT-3,-.08,LIMIT+3],C.floor,1);
-for (let x = -LIMIT; x < LIMIT; x += 2) for (let z = -LIMIT; z < LIMIT; z += 2) {
-  const x2 = Math.min(LIMIT, x + 2), z2 = Math.min(LIMIT, z + 2);
-  quad(staticData,[x,terrainHeight(map,x,z),z],
-    [x2,terrainHeight(map,x2,z),z],
-    [x2,terrainHeight(map,x2,z2),z2],
-    [x,terrainHeight(map,x,z2),z2],C.floor,1);
-}
+quad(staticData,[-LIMIT-3,0,-LIMIT-3],[LIMIT+3,0,-LIMIT-3],
+  [LIMIT+3,0,LIMIT+3],[-LIMIT-3,0,LIMIT+3],C.floor,1);
 for (const side of [-1, 1]) {
   // All scenery stays outside the playable bounds; the luminous top rail marks the real edge.
   box(staticData, side*LIMIT,.62,0,.34,1.24,LIMIT*2+.5,C.wall);
@@ -456,14 +448,13 @@ for (let i=-4; i<=4; i++) {
 }
 for (const obstacle of map.obstacles) {
   if (obstacle.shape === 'circle') {
-    cylinder(staticData, obstacle.x, terrainHeight(map,obstacle.x,obstacle.z),
+    cylinder(staticData, obstacle.x, 0,
       obstacle.z, obstacle.radius, 1.8, map.palette.obstacle, map.palette.rail);
   } else {
     const x=(obstacle.minX+obstacle.maxX)/2, z=(obstacle.minZ+obstacle.maxZ)/2;
     const sx=obstacle.maxX-obstacle.minX, sz=obstacle.maxZ-obstacle.minZ;
-    const y=terrainHeight(map,x,z);
-    box(staticData,x,y+.7,z,sx,1.4,sz,map.palette.obstacle);
-    box(staticData,x,y+1.43,z,sx+.08,.07,sz+.08,map.palette.rail,2);
+    box(staticData,x,.7,z,sx,1.4,sz,map.palette.obstacle);
+    box(staticData,x,1.43,z,sx+.08,.07,sz+.08,map.palette.rail,2);
   }
 }
 gl.bindBuffer(gl.ARRAY_BUFFER, staticBuffer);
@@ -1041,14 +1032,6 @@ function drawMapPreview() {
   ctx.strokeStyle = map.palette.radar;
   ctx.lineWidth = 2;
   ctx.strokeRect(at(-map.limit), at(-map.limit), map.limit * 2 * scale, map.limit * 2 * scale);
-  for (const rise of map.terrain || []) {
-    ctx.strokeStyle = map.palette.radar;
-    ctx.globalAlpha = .45;
-    ctx.beginPath();
-    ctx.ellipse(at(rise.x),at(rise.z),rise.rx*scale,rise.rz*scale,0,0,Math.PI*2);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-  }
   ctx.fillStyle = map.palette.radar;
   for (const o of map.obstacles) {
     if (o.shape === 'circle') {
@@ -1792,7 +1775,7 @@ function trailMesh(out, segment, elapsed) {
     const a = i / pieces, b = (i + 1) / pieces;
     const x = segment.x1 + dx * (a + b) / 2;
     const z = segment.z1 + dz * (a + b) / 2;
-    const floor = groundAt(x, z);
+    const floor = 0;
     const span = length / pieces + .035;
     const sx = Math.abs(dx) > .01 ? span : .18;
     const sz = Math.abs(dz) > .01 ? span : .18;
@@ -1810,16 +1793,14 @@ function trailMesh(out, segment, elapsed) {
     }
   }
   if (segment.active)
-    box(out, segment.x2, groundAt(segment.x2, segment.z2) + .68, segment.z2,
+    box(out, segment.x2, .68, segment.z2,
       .28, 1.34, .28, mixColor(color, .88), 2);
 }
 const turnLean = new Map();
 function bikePoint(r, forward, side, y, lean=0) {
   const d=DIR[r.dir];
   const shifted=side+(y>.48 ? lean*(y-.48) : 0);
-  const x = r.x+d[0]*forward-d[1]*shifted;
-  const z = r.z+d[1]*forward+d[0]*shifted;
-  return [x, groundAt(x, z) + y, z];
+  return [r.x+d[0]*forward-d[1]*shifted,y,r.z+d[1]*forward+d[0]*shifted];
 }
 function bikeFace(out,r,points,color,kind=0,lean=0) {
   const world=points.map(p=>bikePoint(r,p[0],p[1],p[2],lean));
@@ -1921,7 +1902,7 @@ function bikeMesh(out,r) {
 }
 function footMesh(out, rider) {
   const c = rider.color, dark = [.025, .05, .07];
-  const x = rider.x, z = rider.z, y = groundAt(x, z);
+  const x = rider.x, z = rider.z, y = 0;
   box(out, x, y + .47, z, .42, .75, .34, dark);
   box(out, x, y + .96, z, .38, .28, .36, mixColor(c, .38));
   box(out, x, y + 1.04, z - .17, .23, .10, .04, c, 2);
@@ -1933,7 +1914,7 @@ function footMesh(out, rider) {
 }
 function shiftFormRing(out, rider, age) {
   const radius = .5 + age * 1.2;
-  const c = rider.color, y = groundAt(rider.x, rider.z) + .05;
+  const c = rider.color, y = .05;
   box(out, rider.x, y, rider.z - radius, radius * 2, .045, .055, c, 2);
   box(out, rider.x, y, rider.z + radius, radius * 2, .045, .055, c, 2);
   box(out, rider.x - radius, y, rider.z, .055, .045, radius * 2, c, 2);
@@ -1941,14 +1922,14 @@ function shiftFormRing(out, rider, age) {
 }
 function discMesh(out, disc) {
   const c = disc.ownerId === 'YOU' ? [.48, .96, 1] : [1, .62, .28];
-  const y = groundAt(disc.x, disc.z);
+  const y = 0;
   box(out, disc.x, y + .75, disc.z, .52, .08, .52, c, 2);
   box(out, disc.x, y + .75, disc.z, .19, .11, .19, [.02, .06, .08]);
   box(out, disc.x, y + .03, disc.z, .58, .03, .58, mixColor(c, .48), 2);
 }
 function bulletMesh(out, bullet) {
   const c = bullet.ownerId === 'YOU' ? [.56, 1, .96] : [1, .72, .36];
-  const y = groundAt(bullet.x, bullet.z);
+  const y = 0;
   box(out, bullet.x, y + .54, bullet.z, .18, .15, .18, c, 2);
   box(out, bullet.x, y + .04, bullet.z, .28, .035, .28, mixColor(c, .4), 2);
 }
@@ -2048,9 +2029,6 @@ function cameraPose(player) {
       desired[2]+direction[0]*4*framing];
     aim=[player.x,.65,player.z];
   }
-  const elevation = groundAt(player.x, player.z);
-  desired[1] += elevation;
-  aim[1] += elevation;
   return {desired,aim};
 }
 function draw(renderDt) {
@@ -2134,14 +2112,6 @@ function drawRadar() {
   if(playLimit < limit) {
     ctx.strokeStyle='#ff6d53';
     ctx.strokeRect(at(-playLimit),at(-playLimit),playLimit*2*scale,playLimit*2*scale);
-  }
-  for (const rise of map.terrain || []) {
-    ctx.strokeStyle = map.palette.radar;
-    ctx.globalAlpha = .45;
-    ctx.beginPath();
-    ctx.ellipse(at(rise.x),at(rise.z),rise.rx*scale,rise.rz*scale,0,0,Math.PI*2);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
   }
   ctx.fillStyle = map.palette.radar;
   for (const o of map.obstacles) {
