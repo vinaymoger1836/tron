@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#050b13">
+  <meta name="description" content="A cinematic 3D light-cycle survival game. Enter the Grid, leave a trail, and outlast the rival riders.">
+  <title>TRON: Grid Run</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@400;500;600;700;800&display=swap');
+    :root{font-family:Rajdhani,Arial,sans-serif;color:#dffaff;background:#030912;font-synthesis:none}
+    *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}button{font:inherit;cursor:pointer}
+    #game{display:block;width:100vw;height:100dvh;touch-action:none;background:radial-gradient(circle at 50% 75%,#10253b,#030912 65%)}
+    .vignette{pointer-events:none;position:fixed;inset:0;background:linear-gradient(180deg,rgba(1,6,14,.72),transparent 25%,transparent 67%,rgba(1,6,14,.63)),radial-gradient(circle,transparent 37%,rgba(0,0,0,.38));z-index:1}
+    .scanlines{pointer-events:none;position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(0,0,0,.1) 3px 4px);opacity:.3;z-index:1}
+    .hud{position:fixed;inset:0;z-index:2;pointer-events:none;padding:24px 32px;display:flex;flex-direction:column;justify-content:space-between}
+    .topline,.bottomline{display:flex;align-items:flex-start;justify-content:space-between;gap:20px}
+    .brand{font:700 13px Orbitron,monospace;letter-spacing:.34em;color:#85dded;text-shadow:0 0 14px #00d9ff;white-space:nowrap}
+    .brand b{color:#fff}.brand::before{content:'';display:inline-block;width:17px;height:17px;border:2px solid #54e9ff;transform:rotate(45deg);margin-right:16px;vertical-align:-4px;box-shadow:0 0 12px #00dfff,inset 0 0 8px #00dfff}
+    .status{display:flex;gap:30px;align-items:center}.metric{display:flex;flex-direction:column;align-items:flex-end;gap:2px}.metric small,.label{font:500 10px Orbitron,monospace;letter-spacing:.2em;color:#79a5b3;text-transform:uppercase}.metric strong{font:600 21px Orbitron,monospace;letter-spacing:.04em;color:#e5fcff}
+    .pill{border:1px solid #4ec6dd88;background:#061723bb;color:#9deeff;padding:8px 12px;font:600 10px Orbitron,monospace;letter-spacing:.12em;text-transform:uppercase;box-shadow:inset 0 0 12px #00a8ca15}
+    .bottomline{align-items:flex-end}.controls-hint{font:600 12px Rajdhani,sans-serif;letter-spacing:.08em;color:#b4d2d8}.controls-hint kbd{font:600 10px Orbitron,monospace;color:#dcfbff;border:1px solid #85bfcd88;padding:5px 7px;margin:0 5px 0 11px;background:#10212a99}.controls-hint kbd:first-child{margin-left:0}
+    .radar-wrap{position:fixed;right:32px;top:95px;z-index:2;width:156px;height:156px;border:1px solid #3a71888a;background:#06111bcc;box-shadow:0 0 24px #00bcf11c,inset 0 0 25px #00b9e612;padding:7px;pointer-events:none}.radar-wrap::before,.radar-wrap::after{content:'';position:absolute;width:12px;height:12px;border-color:#58ecff}.radar-wrap::before{left:-1px;top:-1px;border-left:2px solid;border-top:2px solid}.radar-wrap::after{right:-1px;bottom:-1px;border-right:2px solid;border-bottom:2px solid}.radar-wrap .label{position:absolute;bottom:-20px;right:0}#radar{width:140px;height:140px}
+    .button-row{display:flex;gap:8px;pointer-events:auto}.icon-btn{width:37px;height:37px;display:grid;place-items:center;background:#061723ba;border:1px solid #3b879899;color:#b5f5ff;font:700 17px Rajdhani;transition:background .2s,border-color .2s}.icon-btn:hover,.icon-btn:focus-visible{background:#10364c;border-color:#65e9ff;outline:none}
+    .overlay{position:fixed;inset:0;z-index:4;display:grid;place-items:center;background:linear-gradient(90deg,#020710cb,transparent 75%),linear-gradient(0deg,#030912aa,#03091255);padding:24px;transition:opacity .3s,visibility .3s}.overlay.hidden{opacity:0;visibility:hidden;pointer-events:none}.panel{width:min(640px,100%);text-align:left;margin-left:max(-20vw,-290px);position:relative}.eyebrow{font:600 12px Orbitron,monospace;letter-spacing:.32em;color:#54daf5;text-shadow:0 0 14px #26b8ee;margin-bottom:18px}.title{margin:0;font:800 clamp(54px,8vw,112px)/.88 Orbitron,monospace;letter-spacing:-.075em;color:#f0fdff;text-shadow:0 0 35px #3edbff44}.title span{display:block;color:#4cdeff;text-shadow:0 0 20px #00a9ff9e,0 0 65px #009fdb6b}.title small{font-size:.27em;letter-spacing:.45em;vertical-align:middle;color:#e1faff;text-shadow:none;margin-left:.1em}.rule{height:2px;width:min(420px,90%);background:linear-gradient(90deg,#62eaff,transparent);box-shadow:0 0 16px #00d7ff;margin:28px 0 22px}.deck{max-width:450px;font-size:19px;line-height:1.38;color:#b9d9e1;margin:0 0 25px;letter-spacing:.015em}.primary{position:relative;border:1px solid #67e9ff;background:#61eaff;color:#03131b;padding:14px 27px;font:800 13px Orbitron,monospace;letter-spacing:.15em;text-transform:uppercase;box-shadow:0 0 22px #00cfff73,inset 0 0 13px #fff8;transition:transform .2s,box-shadow .2s}.primary:hover,.primary:focus-visible{transform:translateY(-2px);box-shadow:0 0 34px #00cfffad;outline:none}.primary:after{content:'↗';margin-left:20px;font-size:18px}.panel-footer{margin-top:25px;font:600 11px Orbitron,monospace;letter-spacing:.12em;color:#7796a2}.panel-footer span{color:#6ce8f7}
+    .toast{position:fixed;z-index:3;left:50%;top:22%;transform:translate(-50%,-12px);font:700 15px Orbitron,monospace;letter-spacing:.18em;color:#eaffff;text-shadow:0 0 16px #00dcff;opacity:0;transition:opacity .25s,transform .25s;pointer-events:none;white-space:nowrap}.toast.show{opacity:1;transform:translate(-50%,0)}
+    .touch-controls{display:none;position:fixed;z-index:3;bottom:max(26px,env(safe-area-inset-bottom));left:0;right:0;justify-content:space-between;padding:0 24px;pointer-events:none}.touch-btn{pointer-events:auto;width:84px;height:72px;border:1px solid #61e2f5a8;background:#071a2abe;color:#baf8ff;font:700 30px Orbitron;box-shadow:inset 0 0 24px #00b8e723,0 0 20px #00a6d620}.touch-btn:active{background:#1e5d74}
+    .webgl-error{position:fixed;inset:0;display:grid;place-items:center;z-index:9;background:#02060e;padding:24px;text-align:center;color:#e7faff;font:600 18px Rajdhani}
+    @media(max-width:760px){.hud{padding:18px}.brand{font-size:10px}.brand::before{width:12px;height:12px;margin-right:10px}.status{gap:12px}.metric strong{font-size:14px}.metric small{font-size:8px}.radar-wrap{top:75px;right:18px;width:116px;height:116px;padding:5px}#radar{width:104px;height:104px}.radar-wrap .label{font-size:8px}.panel{margin:0;align-self:center}.eyebrow{font-size:10px}.title{font-size:clamp(52px,15vw,86px)}.deck{font-size:17px}.controls-hint{display:none}.bottomline{justify-content:flex-end;padding-bottom:85px}.touch-controls{display:flex}.toast{top:17%;font-size:11px}.pill{font-size:8px;padding:7px}}
+    @media(max-height:560px){.panel-footer{display:none}.eyebrow{margin-bottom:9px}.rule{margin:17px 0}.deck{margin-bottom:16px}.radar-wrap{display:none}}
+  </style>
+</head>
+<body>
+  <canvas id="game" aria-label="3D light cycle arena"></canvas><div class="vignette"></div><div class="scanlines"></div>
+  <div class="hud">
+    <div class="topline"><div class="brand">TRON <b>/</b> GRID RUN</div><div class="status"><div class="metric"><small>Score</small><strong id="score">00000</strong></div><div class="metric"><small>Best</small><strong id="best">00000</strong></div><div class="metric"><small>Rivals</small><strong id="rivals">03</strong></div></div></div>
+    <div class="bottomline"><div class="controls-hint"><kbd>←</kbd><kbd>→</kbd> TURN <kbd>P</kbd> PAUSE <kbd>M</kbd> SOUND</div><div class="button-row"><button class="icon-btn" id="sound" type="button" aria-label="Mute sound" title="Toggle sound">♫</button><button class="icon-btn" id="pause" type="button" aria-label="Pause game" title="Pause">Ⅱ</button></div></div>
+  </div>
+  <div class="radar-wrap"><canvas id="radar" width="280" height="280" aria-label="Arena radar"></canvas><span class="label">ARENA / 01</span></div>
+  <div class="toast" id="toast"></div>
+  <div class="touch-controls"><button class="touch-btn" id="left" type="button" aria-label="Turn left">↶</button><button class="touch-btn" id="right" type="button" aria-label="Turn right">↷</button></div>
+  <div class="overlay" id="overlay"><div class="panel"><div class="eyebrow" id="eyebrow">END OF LINE? NOT YET.</div><h1 class="title" id="title">ENTER THE<span>GRID<small>RUN</small></span></h1><div class="rule"></div><p class="deck" id="deck">Carve a wall of light behind your cycle. Turn sharply, trap the rival programs, and be the last rider on the Grid.</p><button class="primary" id="start" type="button">ENTER THE GRID</button><div class="panel-footer">KEYBOARD <span>← → / A D</span> &nbsp;·&nbsp; TOUCH <span>TURN BUTTONS</span></div></div></div>
+  <script type="module" src="./game.js"></script>
+</body>
+</html>
