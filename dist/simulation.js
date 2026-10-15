@@ -17,11 +17,34 @@ const COLORS = {
 };
 const DEFAULT_RIDERS = [
   { id: 'YOU', x: 0, z: 16, dir: 0, color: COLORS.player, isPlayer: true },
-  { id: 'RINZLER', x: -17, z: -16, dir: 1, color: COLORS.orange },
-  { id: 'SIREN', x: 17, z: -14, dir: 3, color: COLORS.violet },
-  { id: 'GOLD', x: 16, z: 14, dir: 0, color: COLORS.gold },
+  { id: 'AXIOM', x: -17, z: -16, dir: 1, color: COLORS.orange },
+  { id: 'HELIX', x: 17, z: -14, dir: 3, color: COLORS.violet },
+  { id: 'PULSE', x: 16, z: 14, dir: 0, color: COLORS.gold },
 ];
 
+export const DUEL_RIVALS = Object.freeze({
+  survivor: { id: 'AEGIS', label: 'Aegis', style: 'Survivor', cue: 'Protects open lanes', color: COLORS.violet },
+  hunter: { id: 'VANTA', label: 'Vanta', style: 'Hunter', cue: 'Pressures your route', color: COLORS.orange },
+  trapper: { id: 'KNOT', label: 'Knot', style: 'Trapper', cue: 'Closes exits with light walls', color: COLORS.gold },
+});
+export const DIFFICULTIES = Object.freeze({
+  rookie: { label: 'Rookie', interval: 0.42, horizon: 8, margin: 1.3 },
+  standard: { label: 'Standard', interval: 0.26, horizon: 11, margin: 0.65 },
+  expert: { label: 'Expert', interval: 0.15, horizon: 15, margin: 0.2 },
+});
+
+export function createDuelRound({ seed = 1, rival = 'hunter', difficulty = 'standard' } = {}) {
+  const profile = DUEL_RIVALS[rival] || DUEL_RIVALS.hunter;
+  const side = (seed >>> 0) & 1 ? 1 : -1;
+  const offset = ((seed >>> 4) % 5) - 2;
+  return createRound({
+    seed, difficulty,
+    riders: [
+      { id: 'YOU', isPlayer: true, controller: 'none', x: side * (5 + offset * 0.5), z: 17, dir: 0 },
+      { id: profile.id, controller: 'ai', style: rival, x: -side * (5 - offset * 0.5), z: -17, dir: 2, color: profile.color },
+    ],
+  });
+}
 function nextRandom(round) {
   let x = round.randomState;
   x ^= x << 13;
@@ -42,7 +65,7 @@ function newSegment(round, rider) {
   };
 }
 
-export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles = [] } = {}) {
+export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles = [], difficulty = 'standard' } = {}) {
   const round = {
     seed: seed >>> 0,
     randomState: (seed >>> 0) || 0x6d2b79f5,
@@ -50,6 +73,10 @@ export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles = [] 
     elapsed: 0,
     speed: SPEED,
     score: 0,
+    scoreBreakdown: { derez: 0, closeCall: 0, trap: 0, win: 0 },
+    difficulty: DIFFICULTIES[difficulty] ? difficulty : 'standard',
+    nearMissAwarded: false,
+    trapAwarded: false,
     outcome: null,
     riders: [],
     segments: [],
@@ -68,6 +95,9 @@ export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles = [] 
       color: source.color || (source.isPlayer ? COLORS.player : COLORS.orange),
       isPlayer: Boolean(source.isPlayer),
       controller: source.controller || (source.isPlayer ? 'none' : 'ai'),
+      style: source.style || (source.isPlayer ? 'player' : 'survivor'),
+      tacticBias: nextRandom(round) * 2 - 1,
+      tacticAt: 5 + nextRandom(round) * 7,
       alive: true,
       lastTurnAt: -Infinity,
       pendingTurn: null,
@@ -197,24 +227,56 @@ function freeDistance(round, rider, dir, maxDistance = 10) {
   return distance;
 }
 
-function decideAI(round, rider) {
-  if (round.elapsed + EPSILON < rider.nextDecisionAt) return;
-  rider.nextDecisionAt = round.elapsed + 0.16 + nextRandom(round) * 0.1;
-  const ahead = freeDistance(round, rider, rider.dir);
-  if (ahead < 4.5) {
-    const left = freeDistance(round, rider, (rider.dir + 3) % 4);
-    const right = freeDistance(round, rider, (rider.dir + 1) % 4);
-    if (left > 1.4 || right > 1.4) {
-      queueTurn(round, rider.id, left === right ? (nextRandom(round) < 0.5 ? -1 : 1) : (left > right ? -1 : 1));
-    }
-  } else if (ahead < 8 && nextRandom(round) < 0.035) {
-    const sign = nextRandom(round) < 0.5 ? -1 : 1;
-    if (freeDistance(round, rider, (rider.dir + sign + 4) % 4) > 7) {
-      queueTurn(round, rider.id, sign);
-    }
+function routeScore(round, rider, direction, horizon, sign) {
+  const distance = freeDistance(round, rider, direction, horizon);
+  const [vx, vz] = DIR[direction];
+  const probe = Math.min(distance, 4);
+  const future = { ...rider, x: rider.x + vx * probe, z: rider.z + vz * probe };
+  const left = freeDistance(round, future, (direction + 3) % 4, 6);
+  const right = freeDistance(round, future, (direction + 1) % 4, 6);
+  const escape = Math.max(left, right);
+  const opponent = round.riders.find(other => other.isPlayer && other.alive);
+  const targetDistance = opponent
+    ? Math.hypot(future.x - opponent.x, future.z - opponent.z) : 20;
+  const crowded = round.segments.reduce((count, segment) => {
+    if (segment.ownerId === rider.id && segment === rider.segment) return count;
+    const cx = (segment.x1 + segment.x2) * 0.5;
+    const cz = (segment.z1 + segment.z2) * 0.5;
+    return count + (Math.hypot(future.x - cx, future.z - cz) < 5 ? 1 : 0);
+  }, 0);
+  let score = distance + escape * 0.34 - crowded * 0.35 - (sign ? 0.55 : 0);
+  const playerTurnedRecently = opponent && round.elapsed - opponent.lastTurnAt < 1.5;
+  if (rider.style === 'hunter') {
+    score -= targetDistance * (round.elapsed > rider.tacticAt ? 0.35 : 0.24);
+    if (playerTurnedRecently && direction === opponent.dir && targetDistance < 12) score += 1.5;
   }
+  else if (rider.style === 'trapper') {
+    score -= targetDistance * 0.16;
+    if (opponent && direction % 2 !== opponent.dir % 2 && targetDistance < 14) score += playerTurnedRecently ? 3.4 : 2.2;
+  } else score += targetDistance * 0.23;
+  score += rider.tacticBias * sign * (round.elapsed > rider.tacticAt ? 1.15 : 0.55);
+  return { score, distance };
 }
 
+function decideAI(round, rider) {
+  if (round.elapsed + EPSILON < rider.nextDecisionAt || rider.pendingTurn) return;
+  const level = DIFFICULTIES[round.difficulty];
+  rider.nextDecisionAt = round.elapsed + level.interval + nextRandom(round) * 0.05;
+  const horizon = level.horizon + (round.elapsed > rider.tacticAt ? 2 : 0);
+  const choices = [
+    { sign: 0, direction: rider.dir },
+    { sign: -1, direction: (rider.dir + 3) % 4 },
+    { sign: 1, direction: (rider.dir + 1) % 4 },
+  ].map(choice => ({ ...choice, ...routeScore(round, rider, choice.direction, horizon, choice.sign) }));
+  const forward = choices[0];
+  const safeDistance = round.speed * (level.interval + 0.18);
+  const safeTurns = choices.slice(1).filter(choice => choice.distance > safeDistance);
+  const best = safeTurns.sort((a, b) => b.score - a.score)[0];
+  if (best && (forward.distance < safeDistance || best.score > forward.score + level.margin)) {
+    queueTurn(round, rider.id, best.sign);
+    round.events.push({ type: 'ai-intent', riderId: rider.id, style: rider.style, sign: best.sign });
+  }
+}
 function applyTurn(round, rider, sign) {
   const priorFree = freeDistance(round, rider, rider.dir, 3);
   rider.segment.active = false;
@@ -225,7 +287,14 @@ function applyTurn(round, rider, sign) {
   rider.segment = newSegment(round, rider);
   round.segments.push(rider.segment);
   rider.lastTurnAt = round.elapsed;
-  round.events.push({ type: 'turn', riderId: rider.id, sign, nearMiss: priorFree < 2.4 });
+  const nearMiss = priorFree < 2.4;
+  round.events.push({ type: 'turn', riderId: rider.id, sign, nearMiss });
+  if (rider.isPlayer && nearMiss && !round.nearMissAwarded) {
+    round.nearMissAwarded = true;
+    round.score += 75;
+    round.scoreBreakdown.closeCall = 75;
+    round.events.push({ type: 'skill', kind: 'close-call', points: 75 });
+  }
 }
 
 export function stepRound(round) {
@@ -288,7 +357,16 @@ export function stepRound(round) {
         reason: hit.reason, by: hit.by,
         x: rider.x, z: rider.z,
       });
-      if (!rider.isPlayer) round.score += 250;
+      if (!rider.isPlayer) {
+        round.score += 250;
+        round.scoreBreakdown.derez += 250;
+        if (hit.reason === 'trail' && hit.by === 'YOU' && !round.trapAwarded) {
+          round.trapAwarded = true;
+          round.score += 150;
+          round.scoreBreakdown.trap = 150;
+          round.events.push({ type: 'skill', kind: 'clean-trap', points: 150 });
+        }
+      }
     }
   }
 
@@ -300,6 +378,7 @@ export function stepRound(round) {
     round.outcome = { kind: 'lost', reason: crash?.reason || 'unknown', by: crash?.by };
   } else if (round.hasOpponents && round.riders.every(r => r.isPlayer || !r.alive)) {
     round.score += 1000;
+    round.scoreBreakdown.win = 1000;
     round.outcome = { kind: 'won' };
   }
   if (round.outcome) round.events.push({ type: 'round-end', ...round.outcome, score: round.score });

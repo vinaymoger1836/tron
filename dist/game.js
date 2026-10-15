@@ -1,4 +1,5 @@
-import { createRound, drainEvents, queueTurn, stepRound, STEP, LIMIT } from './simulation.js';
+import { createRound, createDuelRound, DUEL_RIVALS, DIFFICULTIES, drainEvents, queueTurn, stepRound, STEP, LIMIT } from './simulation.js';
+import { createMatch, recordRound, nextRound, roundSeed } from './match.js';
 
 const canvas = document.querySelector('#game');
 const radar = document.querySelector('#radar');
@@ -7,8 +8,17 @@ const countdown = document.querySelector('#countdown');
 const statusLive = document.querySelector('#status-live');
 const touchControls = document.querySelector('.touch-controls');
 const touchToggle = document.querySelector('#touch-toggle');
+const setup = document.querySelector('#setup');
+const lessonHint = document.querySelector('#lesson-hint');
+const skipLesson = document.querySelector('#skip-lesson');
+const modeSelect = document.querySelector('#mode-select');
+const rivalSelect = document.querySelector('#rival-select');
+const difficultySelect = document.querySelector('#difficulty-select');
+const volumeInput = document.querySelector('#volume');
+const cameraSelect = document.querySelector('#camera-distance');
+const qualitySelect = document.querySelector('#graphics-quality');
 const ui = Object.fromEntries(
-  ['score', 'best', 'rivals', 'eyebrow', 'title', 'deck', 'start', 'toast', 'sound', 'pause']
+  ['score', 'best', 'rivals', 'eyebrow', 'title', 'deck', 'start', 'toast', 'sound', 'pause', 'matchline', 'rival-intent', 'rival-preview', 'lesson-start', 'change-mode']
     .map(id => [id, document.getElementById(id)]),
 );
 
@@ -116,6 +126,12 @@ const DIR = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 const SCORE_KEY = 'tron-grid-run-best';
 const MUTE_KEY = 'tron-grid-run-muted';
 const TOUCH_KEY = 'tron-grid-run-touch';
+const MODE_KEY = 'tron-grid-run-mode';
+const RIVAL_KEY = 'tron-grid-run-rival';
+const DIFFICULTY_KEY = 'tron-grid-run-difficulty';
+const VOLUME_KEY = 'tron-grid-run-volume';
+const CAMERA_KEY = 'tron-grid-run-camera';
+const QUALITY_KEY = 'tron-grid-run-quality';
 
 function readLocal(key) {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -127,6 +143,13 @@ const savedBest = Number(readLocal(SCORE_KEY));
 let best = Number.isFinite(savedBest) && savedBest >= 0 ? savedBest : 0;
 let muted = readLocal(MUTE_KEY) === 'true';
 let touchChoice = readLocal(TOUCH_KEY) || 'auto';
+let sessionMode = 'duel';
+let match = null;
+let lessonStage = 0;
+const storedVolume = Number(readLocal(VOLUME_KEY) ?? 70);
+let volume = Number.isFinite(storedVolume) ? Math.max(0, Math.min(100, storedVolume)) : 70;
+let cameraDistance = ['close', 'standard', 'far'].includes(readLocal(CAMERA_KEY)) ? readLocal(CAMERA_KEY) : 'standard';
+let graphicsQuality = ['low', 'high'].includes(readLocal(QUALITY_KEY)) ? readLocal(QUALITY_KEY) : 'high';
 let round = createRound();
 let mode = 'ready';
 let pausedFrom = 'running';
@@ -204,7 +227,7 @@ function bind(buffer) {
   gl.enableVertexAttribArray(loc.kind);gl.vertexAttribPointer(loc.kind,1,gl.FLOAT,false,stride,24);
 }
 function resize() {
-  const dpr=Math.min(devicePixelRatio||1,1.75),w=Math.round(innerWidth*dpr),h=Math.round(innerHeight*dpr);
+  const dpr=Math.min(devicePixelRatio||1,graphicsQuality === 'low' ? 1 : 1.75),w=Math.round(innerWidth*dpr),h=Math.round(innerHeight*dpr);
   if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);}
 }
 
@@ -214,7 +237,14 @@ function announce(message) {
 }
 
 function updateHud() {
-  ui.score.textContent = String(round.score).padStart(5, '0');
+  const points = sessionMode === 'duel' && match
+    ? match.points + (match.resultRecorded ? 0 : round.score) : round.score;
+  ui.score.textContent = String(points).padStart(5, '0');
+  if (sessionMode === 'duel' && match) {
+    ui.matchline.textContent = 'DUEL / YOU ' + match.wins.player + ' — ' + match.wins.rival + ' ' + DUEL_RIVALS[match.rival].id + ' / R' + match.roundNumber;
+  } else if (sessionMode === 'lesson') ui.matchline.textContent = 'LESSON / GRID BASICS';
+  else ui.matchline.textContent = sessionMode === 'duel' ? 'DUEL / FIRST TO 3' : 'ARENA / SURVIVE';
+  document.querySelector('.radar-wrap .label').textContent = sessionMode === 'duel' ? 'DUEL / 01' : sessionMode === 'lesson' ? 'LESSON / 01' : 'ARENA / 01';
   ui.best.textContent = String(best).padStart(5, '0');
   ui.rivals.textContent = String(round.riders.filter(r => !r.isPlayer && r.alive).length).padStart(2, '0');
 }
@@ -282,7 +312,7 @@ function beep(freq, duration = 0.11, type = 'sawtooth', gain = 0.035) {
   oscillator.type = type;
   oscillator.frequency.setValueAtTime(freq, now);
   oscillator.frequency.exponentialRampToValueAtTime(Math.max(50, freq * 0.57), now + duration);
-  envelope.gain.setValueAtTime(gain, now);
+  envelope.gain.setValueAtTime(gain * volume / 100, now);
   envelope.gain.exponentialRampToValueAtTime(0.0001, now + duration);
   oscillator.connect(envelope).connect(audio.destination);
   oscillator.start(now);
@@ -339,12 +369,75 @@ function launch() {
   setTimeout(() => { if (token === generation && mode === 'running') hideCountdown(); }, 420);
 }
 
-function start() {
+function syncSetup() {
+  const duel = modeSelect.value === 'duel';
+  document.querySelector('#rival-field').hidden = !duel;
+  document.querySelector('#difficulty-field').hidden = !duel;
+  const profile = DUEL_RIVALS[rivalSelect.value];
+  const difficultyHint = {
+    rookie: 'Reacts later; speed stays equal.',
+    standard: 'Balanced reactions; speed stays equal.',
+    expert: 'Reacts sooner; speed stays equal.',
+  };
+  ui['rival-preview'].textContent = duel
+    ? profile.id + ' / ' + profile.style.toUpperCase() + ' · ' + profile.cue + '. ' + difficultyHint[difficultySelect.value]
+    : 'Three rivals. One persistent light-wall arena.';
+  ui.start.textContent = duel ? 'ENTER DUEL' : 'ENTER ARENA';
+  if (mode === 'ready') {
+    sessionMode = modeSelect.value;
+    round = duel
+      ? createDuelRound({ seed: 1, rival: rivalSelect.value, difficulty: difficultySelect.value })
+      : createRound({ seed: 1 });
+    updateHud();
+    drawRadar();
+  }
+}
+
+function showMenu() {
   generation++;
-  round = createRound({ seed: randomSeed() });
+  match = null;
+  sessionMode = modeSelect.value;
+  mode = 'ready';
+  round = createRound({ seed: 1 });
+  particles = [];
+  hideCountdown();
+  lessonHint.hidden = true;
+  skipLesson.hidden = true;
+  setup.hidden = false;
+  ui['lesson-start'].hidden = false;
+  ui['change-mode'].hidden = true;
+  ui['rival-intent'].textContent = '';
+  updateHud();
+  syncSetup();
+  setOverlay('CHOOSE YOUR CIRCUIT', 'ENTER THE <span>GRID<small>01</small></span>',
+    'Duel is first to three against one rival. Arena is the original survival run. Turn with arrows or the touch controls; every turn leaves a lethal wall.', ui.start.textContent);
+  announce('Choose Duel or Arena, then enter the Grid. A short playable lesson is available.');
+}
+
+function showLessonStep(message) {
+  lessonHint.hidden = false;
+  lessonHint.textContent = message;
+  announce(message);
+}
+
+function startLesson() {
+  generation++;
+  sessionMode = 'lesson';
+  match = null;
+  lessonStage = 0;
+  beginRound();
+}
+
+function beginRound() {
+  generation++;
+  round = sessionMode === 'duel'
+    ? createDuelRound({ seed: roundSeed(match), rival: match.rival, difficulty: match.difficulty })
+    : sessionMode === 'lesson'
+      ? createRound({ seed: randomSeed(), riders: [{ id: 'YOU', x: 0, z: 16, dir: 0, isPlayer: true, controller: 'none' }] })
+      : createRound({ seed: randomSeed() });
   mode = 'countdown';
-  countdownRemaining = 3;
-  countdownNumber = 0;
+  countdownRemaining = sessionMode === 'duel' && match.roundNumber > 1 ? 1.5 : 3;
+  countdownNumber = Math.ceil(countdownRemaining);
   accumulator = 0;
   lastFrame = performance.now();
   camera = [7, 13, 31];
@@ -354,16 +447,33 @@ function start() {
   ui.toast.classList.remove('show');
   ui.pause.textContent = 'Ⅱ';
   ui.pause.setAttribute('aria-label', 'Pause game');
+  setup.hidden = true;
+  ui['lesson-start'].hidden = true;
+  ui['change-mode'].hidden = true;
+  ui['rival-intent'].textContent = sessionMode === 'duel' ? DUEL_RIVALS[match.rival].cue : '';
+  lessonHint.hidden = sessionMode !== 'lesson';
+  skipLesson.hidden = sessionMode !== 'lesson';
+  if (sessionMode === 'lesson') showLessonStep('Step 1 / Turn left or right to carve a light wall.');
   updateHud();
   drawRadar();
   hideOverlay();
   countdown.classList.add('show');
-  countdown.textContent = '3';
-  countdownNumber = 3;
+  countdown.textContent = String(countdownNumber);
   beep(440, 0.08, 'triangle', 0.03);
-  announce('Round starting. Three, two, one.');
+  announce(sessionMode === 'lesson' ? 'Lesson starting. Turn left or right.' : 'Round starting. Three, two, one.');
 }
 
+function start() {
+  if (mode === 'ready' || (sessionMode === 'duel' && match?.completed)) {
+    sessionMode = modeSelect.value;
+    match = sessionMode === 'duel'
+      ? createMatch({ seed: randomSeed(), rival: rivalSelect.value, difficulty: difficultySelect.value })
+      : null;
+  } else if (sessionMode === 'duel' && match?.resultRecorded) {
+    nextRound(match);
+  }
+  beginRound();
+}
 function pause() {
   if (graphicsLost) return;
   if (mode === 'running' || mode === 'countdown') {
@@ -440,33 +550,67 @@ function updateParticles(dt) {
   particles = particles.filter(particle => particle.age < particle.life);
 }
 
+function scoreExplanation() {
+  const labels = { derez: 'rival derez', closeCall: 'close escape', trap: 'clean trap', win: 'round win' };
+  const parts = Object.entries(round.scoreBreakdown)
+    .filter(([, points]) => points > 0)
+    .map(([kind, points]) => labels[kind] + ' +' + points);
+  return parts.length ? parts.join(' · ') : 'No score this round';
+}
+
+function finishLesson(success, outcome) {
+  generation++;
+  mode = success ? 'lesson-complete' : 'lesson-lost';
+  accumulator = 0;
+  lessonHint.hidden = true;
+  skipLesson.hidden = true;
+  ui['change-mode'].hidden = false;
+  const message = success
+    ? 'You turned, built a light wall, and stayed clear of it. You are ready for Duel.'
+    : crashMessage(outcome || round.outcome) + ' Your own trail stays dangerous. Try another route.';
+  setOverlay(success ? 'LESSON COMPLETE' : 'LESSON RESET',
+    success ? 'READY FOR <span>THE GRID</span>' : 'STAY <span>ALIVE</span>',
+    message, success ? 'PLAY AGAIN' : 'TRY LESSON');
+  announce(message);
+}
+
 function finish(event) {
+  if (sessionMode === 'lesson') { finishLesson(false, event); return; }
   mode = event.kind;
   accumulator = 0;
-  if (round.score > best) {
-    best = round.score;
+  const duel = sessionMode === 'duel';
+  ui['rival-intent'].textContent = '';
+  if (duel) recordRound(match, event.kind, round.score, round.actionLog);
+  const total = duel ? match.points : round.score;
+  if (total > best) {
+    best = total;
     writeLocal(SCORE_KEY, String(best));
   }
   updateHud();
   const won = event.kind === 'won';
-  if (won) {
-    beep(740, 0.2, 'triangle', 0.06);
-  } else {
-    beep(140, 0.3, 'sawtooth', 0.07);
-  }
-  const reason = won
-    ? 'All rivals derezzed. You scored ' + round.score.toLocaleString() + ' points.'
-    : crashMessage(event) + ' You scored ' + round.score.toLocaleString() + ' points.';
-  announce(won ? 'Round won. ' + reason : 'Round lost. ' + reason);
+  beep(won ? 740 : 140, won ? 0.2 : 0.3, won ? 'triangle' : 'sawtooth', 0.065);
+  const cause = won
+    ? duel ? DUEL_RIVALS[match.rival].id + ' derezzed.' : 'All rivals derezzed.'
+    : crashMessage(event);
+  const scoreText = 'Round +' + round.score + ' (' + scoreExplanation() + ').';
+  const scoreline = duel ? ' Duel ' + match.wins.player + '–' + match.wins.rival + '.' : '';
+  const tip = won ? 'Your route held.' : event.reason === 'trail'
+    ? 'Look for open space before your next turn.' : 'Leave room to escape at the arena edge.';
+  const deck = cause + ' ' + scoreText + scoreline + ' ' + tip;
+  announce((won ? 'Round won. ' : 'Round lost. ') + deck);
   const token = generation;
   setTimeout(() => {
     if (token !== generation || (mode !== 'won' && mode !== 'lost')) return;
     hideCountdown();
+    setup.hidden = true;
+    ui['change-mode'].hidden = false;
+    const complete = duel && match.completed;
     setOverlay(
-      won ? 'ALL RIVALS DEREZZED' : 'YOUR TRAIL ENDS HERE',
-      won ? 'GRID <span>MASTER<small>01</small></span>' : 'END OF <span>LINE<small>01</small></span>',
-      reason,
-      'RUN AGAIN',
+      complete ? won ? 'DUEL WON' : 'DUEL LOST' : won ? 'ROUND WON' : 'ROUND LOST',
+      complete ? won ? 'GRID <span>MASTER</span>' : 'END OF <span>LINE</span>'
+        : won ? 'ROUND <span>SECURED</span>' : 'ROUND <span>LOST</span>',
+      deck,
+      complete || !duel ? 'REMATCH' : 'NEXT ROUND',
     );
   }, reducedMotion.matches ? 0 : 240);
 }
@@ -482,10 +626,22 @@ function handleEvents() {
         showToast('CLOSE CALL');
         beep(980, 0.14, 'sine', 0.025);
       }
+      if (sessionMode === 'lesson' && lessonStage < 2) {
+        lessonStage++;
+        showLessonStep(lessonStage === 1
+          ? 'Step 2 / Your glowing wall stays behind you. Turn once more.'
+          : 'Step 3 / Keep clear of every wall until the lesson ends.');
+      }
+    } else if (event.type === 'ai-intent' && sessionMode === 'duel') {
+      const side = event.sign < 0 ? 'left' : 'right';
+      ui['rival-intent'].textContent = event.riderId + ' / ' + event.style.toUpperCase() + ' / turning ' + side;
+    } else if (event.type === 'skill') {
+      showToast(event.kind === 'clean-trap' ? 'CLEAN TRAP +' + event.points : 'CLOSE ESCAPE +' + event.points);
+      updateHud();
     } else if (event.type === 'crash') {
       spawnDerez(event);
       if (event.riderId !== 'YOU') {
-        showToast(event.riderId + ' DEREZZED  +250');
+        showToast(event.riderId + ' DEREZZED +250');
         beep(190, 0.18, 'sawtooth', 0.038);
         updateHud();
       }
@@ -493,8 +649,7 @@ function handleEvents() {
       finish(event);
     }
   }
-}
-function trailMesh(out,s){
+}function trailMesh(out,s){
   const dx=s.x2-s.x1,dz=s.z2-s.z1,len=Math.hypot(dx,dz);
   if(len<.06)return;
   const x=(s.x1+s.x2)/2,z=(s.z1+s.z2)/2;
@@ -503,6 +658,12 @@ function trailMesh(out,s){
   box(out,x,.62,z,sx,1.22,sz,mixColor(c,.23));
   box(out,x,1.26,z,sx+.03,.065,sz+.03,c,2);
   box(out,x,.09,z,sx+.04,.085,sz+.04,mixColor(c,.62),2);
+  if (s.rider.style === 'hunter') box(out,x,.84,z,sx+.02,.045,sz+.02,c,2);
+  if (s.rider.style === 'survivor') box(out,x,.55,z,sx+.03,.055,sz+.03,mixColor(c,.7),2);
+  if (s.rider.style === 'trapper') {
+    box(out,x,.4,z,sx+.03,.045,sz+.03,mixColor(c,.8),2);
+    box(out,x,.9,z,sx+.03,.045,sz+.03,mixColor(c,.8),2);
+  }
 }
 function bikePart(out,r,forward,side,y,w,h,length,color,kind=0){
   const d=DIR[r.dir],x=r.x+d[0]*forward-d[1]*side,z=r.z+d[1]*forward+d[0]*side;
@@ -524,6 +685,13 @@ function bikeMesh(out,r){
     bikePart(out,r,0,side*.35,.24,.10,.09,1.48,mixColor(c,.55),2);
   }
   bikePart(out,r,-1.0,0,.8,.20,.47,.11,c,2);
+  if (r.style === 'survivor') {
+    bikePart(out,r,.55,0,.85,1.05,.18,.26,c,2);
+  } else if (r.style === 'hunter') {
+    for (const side of [-1,1]) bikePart(out,r,1.02,side*.39,.73,.13,.16,.7,c,2);
+  } else if (r.style === 'trapper') {
+    for (const side of [-1,1]) bikePart(out,r,-.88,side*.39,.86,.18,.52,.32,c,2);
+  }
 }
 
 function draw(renderDt) {
@@ -533,9 +701,9 @@ function draw(renderDt) {
   if (!player) return;
   const direction = DIR[player.dir];
   const desired = [
-    player.x - direction[0] * 14 - direction[1] * 5,
+    player.x - direction[0] * (cameraDistance === 'close' ? 11 : cameraDistance === 'far' ? 18 : 14) - direction[1] * 5,
     10.2,
-    player.z - direction[1] * 14 + direction[0] * 5,
+    player.z - direction[1] * (cameraDistance === 'close' ? 11 : cameraDistance === 'far' ? 18 : 14) + direction[0] * 5,
   ];
   const aim = [
     player.x + direction[0] * 5,
@@ -625,12 +793,23 @@ function drawRadar() {
       ctx.stroke();
       ctx.restore();
     } else {
+      ctx.save();
+      ctx.translate(at(rider.x), at(rider.z));
+      ctx.rotate(rider.dir * Math.PI / 2);
       ctx.beginPath();
-      ctx.arc(at(rider.x), at(rider.z), 3.5, 0, Math.PI * 2);
+      if (rider.style === 'hunter') {
+        ctx.moveTo(0, -6); ctx.lineTo(5, 5); ctx.lineTo(-5, 5);
+      } else if (rider.style === 'trapper') {
+        ctx.moveTo(0, -6); ctx.lineTo(5, 0); ctx.lineTo(0, 6); ctx.lineTo(-5, 0);
+      } else {
+        ctx.rect(-4, -4, 8, 8);
+      }
+      ctx.closePath();
       ctx.fill();
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 1;
       ctx.stroke();
+      ctx.restore();
     }
   }
 }
@@ -672,9 +851,15 @@ function frame(now) {
 }
 
 overlay.addEventListener('keydown', event => {
-  if (event.key === 'Tab' && !overlay.classList.contains('hidden')) {
+  if (event.key !== 'Tab' || overlay.classList.contains('hidden')) return;
+  const items = [...overlay.querySelectorAll('button, select, input, summary')]
+    .filter(item => !item.hidden && !item.closest('[hidden]') && item.getClientRects().length > 0 && getComputedStyle(item).visibility === 'visible');
+  if (!items.length) return;
+  const first = items[0], last = items[items.length - 1];
+  if ((event.shiftKey && document.activeElement === first) ||
+      (!event.shiftKey && document.activeElement === last)) {
     event.preventDefault();
-    ui.start.focus({ preventScroll: true });
+    (event.shiftKey ? last : first).focus({ preventScroll: true });
   }
 });
 ui.start.addEventListener('click', () => {
@@ -682,7 +867,24 @@ ui.start.addEventListener('click', () => {
   else if (mode === 'paused') pause();
   else start();
 });
-ui.pause.addEventListener('click', pause);
+ui['lesson-start'].addEventListener('click', startLesson);
+ui['change-mode'].addEventListener('click', showMenu);
+skipLesson.addEventListener('click', showMenu);
+modeSelect.addEventListener('change', () => { writeLocal(MODE_KEY, modeSelect.value); syncSetup(); });
+rivalSelect.addEventListener('change', () => { writeLocal(RIVAL_KEY, rivalSelect.value); syncSetup(); });
+difficultySelect.addEventListener('change', () => { writeLocal(DIFFICULTY_KEY, difficultySelect.value); syncSetup(); });
+volumeInput.addEventListener('input', () => {
+  volume = Number(volumeInput.value);
+  writeLocal(VOLUME_KEY, String(volume));
+});
+cameraSelect.addEventListener('change', () => {
+  cameraDistance = cameraSelect.value;
+  writeLocal(CAMERA_KEY, cameraDistance);
+});
+qualitySelect.addEventListener('change', () => {
+  graphicsQuality = qualitySelect.value;
+  writeLocal(QUALITY_KEY, graphicsQuality);
+});ui.pause.addEventListener('click', pause);
 ui.sound.addEventListener('click', () => {
   muted = !muted;
   writeLocal(MUTE_KEY, String(muted));
@@ -757,12 +959,16 @@ canvas.addEventListener('webglcontextrestored', () => {
 });
 window.addEventListener('resize', resize);
 
+modeSelect.value = ['duel', 'arena'].includes(readLocal(MODE_KEY)) ? readLocal(MODE_KEY) : 'duel';
+rivalSelect.value = DUEL_RIVALS[readLocal(RIVAL_KEY)] ? readLocal(RIVAL_KEY) : 'hunter';
+difficultySelect.value = DIFFICULTIES[readLocal(DIFFICULTY_KEY)] ? readLocal(DIFFICULTY_KEY) : 'standard';
+volumeInput.value = String(volume);
+cameraSelect.value = cameraDistance;
+qualitySelect.value = graphicsQuality;
 syncSoundButton();
 syncTouchControls();
-updateHud();
+showMenu();
 drawRadar();
-setBackgroundInert(true);
-ui.start.focus({ preventScroll: true });
 requestAnimationFrame(frame);
 } catch (error) {
   console.error('Grid graphics initialization failed:', error);
