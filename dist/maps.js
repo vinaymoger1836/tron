@@ -17,8 +17,8 @@ export const MAPS = Object.freeze({
     obstacles: [
       { id: 'WEST REACTOR', shape: 'circle', x: -14, z: 0, radius: 3.1 },
       { id: 'EAST REACTOR', shape: 'circle', x: 14, z: 0, radius: 3.1 },
-      { id: 'NORTH SPARK', shape: 'circle', x: 0, z: -12, radius: 1.8 },
-      { id: 'SOUTH SPARK', shape: 'circle', x: 0, z: 12, radius: 1.8 },
+      { id: 'NORTH SPARK', shape: 'circle', x: 9, z: -12, radius: 1.8 },
+      { id: 'SOUTH SPARK', shape: 'circle', x: -9, z: 12, radius: 1.8 },
     ],
     spawns: {
       duel: [{ x: -5, z: 19, dir: 0 }, { x: 5, z: -19, dir: 2 }],
