@@ -1,3 +1,6 @@
+# Local planning
+/phase-planning.md
+
 # Secrets and local configuration
 .env
 .env.*
@@ -37,12 +40,14 @@ screenshots/
 traces/
 chrome-profile/
 .playwright/
+*.har
 
 # Site and archive scratch output (keep tracked .openai/hosting.json)
 .openai/*
 !.openai/hosting.json
 .agents/
 .codex/
+.vercel/
 .sites-runtime/
 .sites-checkout/
 .sites-checkout-*/
