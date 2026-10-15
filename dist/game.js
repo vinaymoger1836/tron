@@ -233,14 +233,38 @@ function readHistory() {
   if (!Array.isArray(saved)) return [];
   return saved.filter(item => item && typeof item === 'object' &&
     ['duel','arena','operations','shift'].includes(item.mode) &&
-    Number.isFinite(item.score) && item.score >= 0 && typeof item.date === 'string')
-    .slice(0, 8);
+    ['won','lost','draw'].includes(item.outcome) &&
+    Number.isFinite(item.score) && item.score >= 0 &&
+    typeof item.date === 'string' && typeof item.map === 'string' && MAPS[item.map])
+    .slice(0, 8).map(item => ({
+      ...item, highlight: Array.isArray(item.highlight?.frames) &&
+        item.highlight.frames.length > 1 && item.highlight.frames.length <= 40 &&
+        item.highlight.frames.every(frame => Array.isArray(frame.riders) &&
+          Array.isArray(frame.segments) && frame.riders.length <= 4 &&
+          frame.segments.length <= 300) ? item.highlight : null,
+    }));
 }
 function readJsonObject(key) {
   try {
     const value = JSON.parse(readLocal(key) || '{}');
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   } catch { return {}; }
+}
+function readRecordBook() {
+  const records = readJsonObject(RECORDS_KEY);
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      const match = /^tron-grid-run-best:v2:(duel|arena|shift):/.exec(key || '');
+      if (!match) continue;
+      const value = Number(localStorage.getItem(key));
+      if (Number.isFinite(value) && value >= 0)
+        records[match[1]] = Math.max(Number(records[match[1]]) || 0, value);
+    }
+  } catch { storageAvailable = false; }
+  records.operations = Math.max(Number(records.operations) || 0,
+    ...Object.values(operationProgress).map(entry => entry.best || 0));
+  return records;
 }
 function dailyForDate(date = new Date()) {
   const day = date.toISOString().slice(0, 10);
@@ -273,7 +297,7 @@ let cameraMode = ['chase', 'tactical'].includes(readLocal(CAMERA_MODE_KEY)) ? re
 let reduceFlashes = readLocal(REDUCE_FLASHES_KEY) === 'true';
 let graphicsQuality = ['low', 'high'].includes(readLocal(QUALITY_KEY)) ? readLocal(QUALITY_KEY) : 'high';
 let runHistory = readHistory();
-let recordBook = readJsonObject(RECORDS_KEY);
+let recordBook = readRecordBook();
 let earnedBadges = readJsonObject(BADGES_KEY);
 let runBadgeEvents = new Set();
 let bindings = readBindings();
@@ -496,13 +520,13 @@ const BADGE_LABELS = {
 function renderHistory() {
   const best = mode => Number(recordBook[mode]) || 0;
   historyRecords.textContent = 'Personal records / Duel ' + best('duel') +
-    ' ? Arena ' + best('arena') + ' ? Operations ' + best('operations') +
-    ' ? Grid Shift ' + best('shift') +
+    ' / Arena ' + best('arena') + ' / Operations ' + best('operations') +
+    ' / Grid Shift ' + best('shift') +
     (recordBook['daily:' + dailyForDate().day] !== undefined
-      ? ' ? Today ' + recordBook['daily:' + dailyForDate().day] : '');
+      ? ' / Today ' + recordBook['daily:' + dailyForDate().day] : '');
   const badges = Object.keys(BADGE_LABELS).filter(id => earnedBadges[id] === true);
   historyBadges.textContent = badges.length ? 'Badges / ' +
-    badges.map(id => BADGE_LABELS[id]).join(' ? ') :
+    badges.map(id => BADGE_LABELS[id]).join(' / ') :
     'Badges / Win a match, escape closely, trap a rival, or clear a journey.';
   historyList.replaceChildren();
   if (!runHistory.length) {
@@ -518,8 +542,8 @@ function renderHistory() {
       item.mode === 'operations' ? (item.operation || 'Operation') :
       item.mode === 'shift' ? 'Grid Shift' :
       item.mode.toUpperCase() + ' / ' + (getMap(item.map)?.name || item.map);
-    summary.textContent = item.date.slice(0, 10) + ' ? ' + label +
-      ' ? ' + item.outcome.toUpperCase() + ' ? ' + item.score + ' pts';
+    summary.textContent = item.date.slice(0, 10) + ' / ' + label +
+      ' / ' + item.outcome.toUpperCase() + ' / ' + item.score + ' pts';
     row.append(summary);
     if (Array.isArray(item.highlight?.frames) && item.highlight.frames.length > 1) {
       const watch = document.createElement('button');
@@ -1060,6 +1084,8 @@ function showMenu() {
   operationFlow = null;
   sessionMode = modeSelect.value === 'daily' ? 'duel' : modeSelect.value;
   mode = 'ready';
+  ui.pause.textContent = 'II';
+  ui.pause.setAttribute('aria-label', 'Pause game');
   syncAudioMix();
   round = createRound({ seed: 1 });
   replayFrames=[];
@@ -1863,8 +1889,9 @@ function cameraPose(player) {
   const direction=DIR[player.dir];
   const distance=cameraDistance==='close' ? 11 : cameraDistance==='far' ? 18 : 14;
   let desired, aim;
-  if (sessionMode === 'shift' && player.form === 'foot') {
-    // Keep arena north at the top of the screen as facing changes with WASD.
+  if ((sessionMode === 'shift' && player.form === 'foot') ||
+      cameraMotion === 'steady' || reducedMotion.matches) {
+    // A fixed north-up view avoids camera rotation during directional input.
     desired=[player.x, cameraDistance==='far' ? 30 : cameraDistance==='close' ? 23 : 27,
       player.z+12];
     aim=[player.x,.2,player.z-2];
