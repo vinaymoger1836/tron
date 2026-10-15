@@ -27,7 +27,7 @@ export const MAPS = Object.freeze({
   },
   vault: {
     id: 'vault', name: 'Data Vault', limit: 36,
-    cue: 'Violet gates split the center. Plan your turn before each narrow passage.',
+    cue: 'Round violet nodes split the center. Plan your turn before each narrow passage.',
     palette: { floor: [0.018, 0.014, 0.044], wall: [0.075, 0.035, 0.13], rail: [0.67, 0.34, 1], obstacle: [0.11, 0.05, 0.19], radar: '#b891ff' },
     obstacles: [
       { id: 'NORTHWEST NODE', shape: 'circle', x: -11, z: -9, radius: 2.8 },

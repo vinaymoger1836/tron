@@ -1761,40 +1761,33 @@ function handleEvents() {
   }
 }
 
-function trailMesh(out, segment, elapsed) {
-  const dx = segment.x2 - segment.x1, dz = segment.z2 - segment.z1;
-  const length = Math.hypot(dx, dz);
-  if (length < .06) return;
-  const remaining = round.rule === 'decay' && !segment.active
-    ? segment.closedAt + round.trailLifetime - elapsed : Infinity;
-  const warning = remaining <= 2;
-  const color = warning ? [1, .91, .48] : segment.rider.color;
-  const blink = warning && Math.floor(elapsed * 4) % 2 === 0;
-  const pieces = Math.max(1, Math.ceil(length / 3));
-  for (let i = 0; i < pieces; i++) {
-    const a = i / pieces, b = (i + 1) / pieces;
-    const x = segment.x1 + dx * (a + b) / 2;
-    const z = segment.z1 + dz * (a + b) / 2;
-    const floor = 0;
-    const span = length / pieces + .035;
-    const sx = Math.abs(dx) > .01 ? span : .18;
-    const sz = Math.abs(dz) > .01 ? span : .18;
-    box(out, x, floor + .62, z, sx, 1.22, sz, mixColor(color, blink ? .10 : .23));
-    box(out, x, floor + 1.26, z, sx + .03, .065, sz + .03, color, 2);
-    if (blink) continue;
-    box(out, x, floor + .09, z, sx + .04, .085, sz + .04, mixColor(color, .62), 2);
-    if (segment.rider.style === 'hunter')
-      box(out, x, floor + .84, z, sx + .02, .045, sz + .02, color, 2);
-    if (segment.rider.style === 'survivor')
-      box(out, x, floor + .55, z, sx + .03, .055, sz + .03, mixColor(color, .7), 2);
-    if (segment.rider.style === 'trapper') {
-      box(out, x, floor + .4, z, sx + .03, .045, sz + .03, mixColor(color, .8), 2);
-      box(out, x, floor + .9, z, sx + .03, .045, sz + .03, mixColor(color, .8), 2);
-    }
+function trailMesh(out,s,elapsed){
+  const dx=s.x2-s.x1,dz=s.z2-s.z1,len=Math.hypot(dx,dz);
+  if(len<.06)return;
+  const x=(s.x1+s.x2)/2,z=(s.z1+s.z2)/2;
+  const sx=Math.abs(dx)>.01?len:.18,sz=Math.abs(dz)>.01?len:.18;
+  const remaining=round.rule==='decay' && !s.active
+    ? s.closedAt + round.trailLifetime - elapsed : Infinity;
+  const warning=remaining<=2;
+  const c=warning ? [1,.91,.48] : s.rider.color;
+  if (warning && Math.floor(elapsed*4)%2===0) {
+    box(out,x,.62,z,sx,1.22,sz,mixColor(c,.10));
+    box(out,x,1.26,z,sx+.03,.065,sz+.03,c,2);
+    return;
   }
-  if (segment.active)
-    box(out, segment.x2, .68, segment.z2,
-      .28, 1.34, .28, mixColor(color, .88), 2);
+  box(out,x,.62,z,sx,1.22,sz,mixColor(c,.23));
+  box(out,x,1.26,z,sx+.03,.065,sz+.03,c,2);
+  box(out,x,.09,z,sx+.04,.085,sz+.04,mixColor(c,.62),2);
+  if (s.rider.style === 'hunter') box(out,x,.84,z,sx+.02,.045,sz+.02,c,2);
+  if (s.rider.style === 'survivor') box(out,x,.55,z,sx+.03,.055,sz+.03,mixColor(c,.7),2);
+  if (s.rider.style === 'trapper') {
+    box(out,x,.4,z,sx+.03,.045,sz+.03,mixColor(c,.8),2);
+    box(out,x,.9,z,sx+.03,.045,sz+.03,mixColor(c,.8),2);
+  }
+  if(s.active) {
+    // The bright advancing edge makes wall formation visible without a screen flash.
+    box(out,s.x2,.68,s.z2,.28,1.34,.28,mixColor(c,.88),2);
+  }
 }
 const turnLean = new Map();
 function bikePoint(r, forward, side, y, lean=0) {
