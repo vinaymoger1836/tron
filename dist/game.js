@@ -43,6 +43,19 @@ const highlightCard = document.querySelector('#highlight-card');
 const highlightLabel = document.querySelector('#highlight-label');
 const skipHighlightButton = document.querySelector('#skip-highlight');
 const qualitySelect = document.querySelector('#graphics-quality');
+const historyList = document.querySelector('#run-history-list');
+const historyRecords = document.querySelector('#run-records');
+const historyBadges = document.querySelector('#run-badges');
+const storageStatus = document.querySelector('#storage-status');
+const touchSizeSelect = document.querySelector('#touch-size');
+const touchPlacementSelect = document.querySelector('#touch-placement');
+const renderScaleSelect = document.querySelector('#render-scale');
+const cameraMotionSelect = document.querySelector('#camera-motion');
+const flashIntensitySelect = document.querySelector('#flash-intensity');
+const gamepadInput = document.querySelector('#gamepad-enabled');
+const bindingStatus = document.querySelector('#binding-status');
+const captionsInput = document.querySelector('#captions-enabled');
+const cueCaption = document.querySelector('#cue-caption');
 const ui = Object.fromEntries(
   ['score', 'best', 'rivals', 'eyebrow', 'title', 'deck', 'start', 'toast', 'sound', 'pause', 'matchline', 'rival-intent', 'rival-preview', 'lesson-start', 'change-mode']
     .map(id => [id, document.getElementById(id)]),
@@ -173,12 +186,72 @@ const CAMERA_KEY = 'tron-grid-run-camera';
 const CAMERA_MODE_KEY = 'tron-grid-run-camera-mode';
 const REDUCE_FLASHES_KEY = 'tron-grid-run-reduce-flashes';
 const QUALITY_KEY = 'tron-grid-run-quality';
+const HISTORY_KEY = 'tron-grid-run-history:v1';
+const RECORDS_KEY = 'tron-grid-run-records:v1';
+const BADGES_KEY = 'tron-grid-run-badges:v1';
+const BINDINGS_KEY = 'tron-grid-run-bindings:v1';
+const TOUCH_SIZE_KEY = 'tron-grid-run-touch-size';
+const TOUCH_PLACEMENT_KEY = 'tron-grid-run-touch-placement';
+const RENDER_SCALE_KEY = 'tron-grid-run-render-scale';
+const CAMERA_MOTION_KEY = 'tron-grid-run-camera-motion';
+const FLASH_INTENSITY_KEY = 'tron-grid-run-flash-intensity';
+const GAMEPAD_KEY = 'tron-grid-run-gamepad';
+const CAPTIONS_KEY = 'tron-grid-run-captions';
+const DAILY_RULES_VERSION = 1;
+const DEFAULT_BINDINGS = Object.freeze({ left: 'a', right: 'd', up: 'w', down: 's', form: 'e', disc: 'space', pause: 'p', sound: 'm' });
+let storageAvailable = true;
 
 function readLocal(key) {
-  try { return localStorage.getItem(key); } catch { return null; }
+  try { return localStorage.getItem(key); } catch { storageAvailable = false; return null; }
 }
 function writeLocal(key, value) {
-  try { localStorage.setItem(key, value); } catch { /* Storage can be unavailable. */ }
+  try { localStorage.setItem(key, value); storageAvailable = true; syncStorageStatus(); return true; }
+  catch { storageAvailable = false; syncStorageStatus(); return false; }
+}
+function syncStorageStatus() {
+  if (storageStatus) storageStatus.textContent = storageAvailable ? '' :
+    'Local storage is unavailable or full. New settings and runs may not survive a reload.';
+}
+function optionValue(key, options, fallback) {
+  const value = readLocal(key);
+  return options.includes(value) ? value : fallback;
+}
+function validBinding(key) { return key === 'space' || /^[a-z0-9]$/.test(key); }
+function readBindings() {
+  let saved;
+  try { saved = JSON.parse(readLocal(BINDINGS_KEY) || '{}'); } catch { saved = {}; }
+  const next = { ...DEFAULT_BINDINGS };
+  for (const action of Object.keys(next)) {
+    if (typeof saved?.[action] === 'string' && validBinding(saved[action])) next[action] = saved[action];
+  }
+  if (new Set(Object.values(next)).size !== Object.keys(next).length) return { ...DEFAULT_BINDINGS };
+  return next;
+}
+function readHistory() {
+  let saved;
+  try { saved = JSON.parse(readLocal(HISTORY_KEY) || '[]'); } catch { return []; }
+  if (!Array.isArray(saved)) return [];
+  return saved.filter(item => item && typeof item === 'object' &&
+    ['duel','arena','operations','shift'].includes(item.mode) &&
+    Number.isFinite(item.score) && item.score >= 0 && typeof item.date === 'string')
+    .slice(0, 8);
+}
+function readJsonObject(key) {
+  try {
+    const value = JSON.parse(readLocal(key) || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch { return {}; }
+}
+function dailyForDate(date = new Date()) {
+  const day = date.toISOString().slice(0, 10);
+  let seed = 2166136261;
+  for (const char of 'grid-run:daily:v' + DAILY_RULES_VERSION + ':' + day) {
+    seed = Math.imul(seed ^ char.charCodeAt(0), 16777619) >>> 0;
+  }
+  const maps = ['classic', 'solar', 'vault'];
+  const rivals = ['hunter', 'survivor', 'trapper'];
+  return { day, seed, version: DAILY_RULES_VERSION, map: maps[seed % maps.length],
+    rival: rivals[(seed >>> 8) % rivals.length], difficulty: 'standard' };
 }
 const savedBest = Number(readLocal(SCORE_KEY));
 const legacyBest = Number.isFinite(savedBest) && savedBest >= 0 ? savedBest : 0;
@@ -199,6 +272,23 @@ let cameraDistance = ['close', 'standard', 'far'].includes(readLocal(CAMERA_KEY)
 let cameraMode = ['chase', 'tactical'].includes(readLocal(CAMERA_MODE_KEY)) ? readLocal(CAMERA_MODE_KEY) : 'chase';
 let reduceFlashes = readLocal(REDUCE_FLASHES_KEY) === 'true';
 let graphicsQuality = ['low', 'high'].includes(readLocal(QUALITY_KEY)) ? readLocal(QUALITY_KEY) : 'high';
+let runHistory = readHistory();
+let recordBook = readJsonObject(RECORDS_KEY);
+let earnedBadges = readJsonObject(BADGES_KEY);
+let runBadgeEvents = new Set();
+let bindings = readBindings();
+let captureBinding = null;
+let dailyChallenge = null;
+let touchSize = optionValue(TOUCH_SIZE_KEY, ['normal', 'large'], 'normal');
+let touchPlacement = optionValue(TOUCH_PLACEMENT_KEY, ['edge', 'compact', 'raised'], 'edge');
+let renderScale = optionValue(RENDER_SCALE_KEY, ['auto', '0.75', '0.5'], 'auto');
+let cameraMotion = optionValue(CAMERA_MOTION_KEY, ['cinematic', 'steady'], 'cinematic');
+let flashIntensity = optionValue(FLASH_INTENSITY_KEY, ['full', 'soft', 'off'], 'full');
+let gamepadEnabled = readLocal(GAMEPAD_KEY) === 'true';
+let captionsEnabled = readLocal(CAPTIONS_KEY) !== 'false';
+let captionToken = 0;
+let gamepadMove = { x: 0, z: 0 };
+let gamepadHeld = new Set();
 let round = createRound();
 let mode = 'ready';
 let pausedFrom = 'running';
@@ -224,8 +314,11 @@ let nextMusicBeat = 0;
 let musicStep = 0;
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const reducedFlashMedia = window.matchMedia('(prefers-reduced-motion: reduce)');
-function flashReduced() { return reduceFlashes || reducedFlashMedia.matches; }
-function syncFlashSetting() { document.body.classList.toggle('reduce-flashes', flashReduced()); }
+function flashReduced() { return reduceFlashes || flashIntensity === 'off' || reducedFlashMedia.matches; }
+function syncFlashSetting() {
+  document.body.classList.toggle('reduce-flashes', flashReduced());
+  document.body.classList.toggle('soft-flashes', !flashReduced() && flashIntensity === 'soft');
+}
 function mixColor(color, shade) { return color.map(v => Math.min(1, v * shade)); }
 function vertex(out, p, color, kind) { out.push(p[0],p[1],p[2],color[0],color[1],color[2],kind); }
 function quad(out, a,b,c,d,color,kind=0) {
@@ -331,7 +424,10 @@ function bind(buffer) {
   gl.enableVertexAttribArray(loc.kind);gl.vertexAttribPointer(loc.kind,1,gl.FLOAT,false,stride,24);
 }
 function resize() {
-  const dpr=Math.min(devicePixelRatio||1,graphicsQuality === 'low' ? 1 : 1.75),w=Math.round(innerWidth*dpr),h=Math.round(innerHeight*dpr);
+  const scale = renderScale === 'auto' ? 1 : Number(renderScale);
+  const dpr = Math.min(devicePixelRatio || 1, graphicsQuality === 'low' ? 1 : 1.75) * scale;
+  const w = Math.max(1, Math.round(innerWidth * dpr));
+  const h = Math.max(1, Math.round(innerHeight * dpr));
   if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);}
 }
 
@@ -389,8 +485,120 @@ function applyPlayerLook() {
   if (player) player.color = [...colors[lookChoice]];
 }
 function scoreKey() {
+  if (dailyChallenge) return 'tron-grid-run-daily:v' + dailyChallenge.version + ':' + dailyChallenge.day;
   return 'tron-grid-run-best:v2:' + sessionMode + ':' + round.map + ':' +
     round.difficulty + ':' + round.rule;
+}
+const BADGE_LABELS = {
+  victor: 'GRID VICTOR', trap: 'CLEAN TRAP', escape: 'CLOSE ESCAPE',
+  journey: 'JOURNEY CLEAR', shift: 'FORM MASTER', daily: 'DAILY CLEAR',
+};
+function renderHistory() {
+  const best = mode => Number(recordBook[mode]) || 0;
+  historyRecords.textContent = 'Personal records / Duel ' + best('duel') +
+    ' ? Arena ' + best('arena') + ' ? Operations ' + best('operations') +
+    ' ? Grid Shift ' + best('shift') +
+    (recordBook['daily:' + dailyForDate().day] !== undefined
+      ? ' ? Today ' + recordBook['daily:' + dailyForDate().day] : '');
+  const badges = Object.keys(BADGE_LABELS).filter(id => earnedBadges[id] === true);
+  historyBadges.textContent = badges.length ? 'Badges / ' +
+    badges.map(id => BADGE_LABELS[id]).join(' ? ') :
+    'Badges / Win a match, escape closely, trap a rival, or clear a journey.';
+  historyList.replaceChildren();
+  if (!runHistory.length) {
+    const empty = document.createElement('li');
+    empty.textContent = 'No completed runs yet. Finish a match to save its last moments.';
+    historyList.append(empty);
+    return;
+  }
+  for (const item of runHistory) {
+    const row = document.createElement('li');
+    const summary = document.createElement('span');
+    const label = item.challenge ? 'Daily ' + item.challenge.day :
+      item.mode === 'operations' ? (item.operation || 'Operation') :
+      item.mode === 'shift' ? 'Grid Shift' :
+      item.mode.toUpperCase() + ' / ' + (getMap(item.map)?.name || item.map);
+    summary.textContent = item.date.slice(0, 10) + ' ? ' + label +
+      ' ? ' + item.outcome.toUpperCase() + ' ? ' + item.score + ' pts';
+    row.append(summary);
+    if (Array.isArray(item.highlight?.frames) && item.highlight.frames.length > 1) {
+      const watch = document.createElement('button');
+      watch.className = 'secondary';
+      watch.type = 'button';
+      watch.textContent = 'WATCH HIGHLIGHT';
+      watch.setAttribute('aria-label', 'Watch finish highlight for ' + label + ' on ' + item.date.slice(0, 10));
+      watch.addEventListener('click', () => playHistoryHighlight(item));
+      row.append(watch);
+    }
+    historyList.append(row);
+  }
+}
+function recordRun(outcome, score) {
+  const player = round.riders.find(r => r.isPlayer);
+  const badges = [];
+  if (outcome === 'won') badges.push('victor');
+  if (runBadgeEvents.has('clean-trap')) badges.push('trap');
+  if (runBadgeEvents.has('close-call')) badges.push('escape');
+  if (sessionMode === 'operations' && operationFlow.kind === 'journey' && outcome === 'won') badges.push('journey');
+  if (sessionMode === 'shift' && outcome === 'won' && runBadgeEvents.has('form-switch')) badges.push('shift');
+  if (dailyChallenge && outcome === 'won') badges.push('daily');
+  for (const badge of badges) earnedBadges[badge] = true;
+  const frames = replayFrames.filter((_, index) => index % 2 === 0 || index === replayFrames.length - 1);
+  const item = {
+    date: new Date().toISOString(), mode: sessionMode, map: round.map,
+    operation: round.operation?.id || null, difficulty: round.difficulty,
+    outcome, score: Math.max(0, Math.floor(score)), seed: dailyChallenge?.seed ??
+      operationFlow?.seed ?? match?.seed ?? round.seed,
+    challenge: dailyChallenge ? { ...dailyChallenge } : null, badges,
+    highlight: frames.length > 1 ? { frames,
+      event: { x: player?.x ?? 0, z: player?.z ?? 0, riderId: 'YOU' } } : null,
+  };
+  runHistory.unshift(item);
+  runHistory = runHistory.slice(0, 8);
+  recordBook[sessionMode] = Math.max(Number(recordBook[sessionMode]) || 0, item.score);
+  if (dailyChallenge) recordBook['daily:' + dailyChallenge.day] =
+    Math.max(Number(recordBook['daily:' + dailyChallenge.day]) || 0, item.score);
+  writeLocal(RECORDS_KEY, JSON.stringify(recordBook));
+  writeLocal(BADGES_KEY, JSON.stringify(earnedBadges));
+  if (!writeLocal(HISTORY_KEY, JSON.stringify(runHistory))) {
+    // Keep the newest finish; older highlights are the first data to shed at quota.
+    for (const older of runHistory.slice(1)) older.highlight = null;
+    if (!writeLocal(HISTORY_KEY, JSON.stringify(runHistory))) {
+      runHistory = runHistory.slice(0, 4).map(entry => ({ ...entry, highlight: null }));
+      writeLocal(HISTORY_KEY, JSON.stringify(runHistory));
+    }
+  }
+  renderHistory();
+}
+function playHistoryHighlight(item) {
+  const frames = item.highlight?.frames;
+  if (!Array.isArray(frames) || frames.length < 2 || !frames.every(frame =>
+    Array.isArray(frame.riders) && Array.isArray(frame.segments))) return;
+  generation++;
+  match = null;
+  operationFlow = null;
+  dailyChallenge = null;
+  sessionMode = item.mode;
+  round = item.mode === 'operations' && OPERATIONS[item.operation]
+    ? createOperationRound({ id: item.operation, seed: item.seed, difficulty: item.difficulty })
+    : item.mode === 'shift'
+    ? createShiftRound({ seed: item.seed, difficulty: item.difficulty })
+    : createRound({ seed: item.seed, map: item.map });
+  rebuildStatic(getMap(round.map));
+  mode = 'highlight';
+  particles = [];
+  turnLean.clear();
+  highlight = { history: true, frames, index: 0, elapsed: 0, duration: 6,
+    event: item.highlight.event || { x: 0, z: 0, riderId: 'YOU' },
+    impactShown: true };
+  hideOverlay();
+  setBackgroundInert(true);
+  highlightLabel.textContent = 'RUN ARCHIVE / ' + item.outcome.toUpperCase() +
+    ' / ' + item.score + ' POINTS';
+  skipHighlightButton.textContent = 'EXIT HIGHLIGHT';
+  highlightCard.hidden = false;
+  skipHighlightButton.focus({ preventScroll: true });
+  announce('Run archive highlight. Press Escape or Exit Highlight to return.');
 }
 function loadBest() {
   if (sessionMode === 'operations') {
@@ -440,9 +648,11 @@ function updateShiftHud() {
     'Echo ' + rival.hp + '/2 integrity / ' + rival.form.toUpperCase();
   document.querySelector('#shift-throw').disabled = player.form !== 'foot' || disc || cooldown > 0 || mode !== 'running';
   document.querySelector('#shift-tip').textContent =
-    player.form === 'cycle' ? 'E dismount / A D turn / ' +
+    player.form === 'cycle' ? keyLabel('form') + ' dismount / ' +
+      keyLabel('left') + ' ' + keyLabel('right') + ' turn / ' +
       Math.max(0, Math.ceil(round.shift.timeLimit - round.elapsed)) + 's'
-      : 'W A S D move / Space throw / E remount / ' +
+      : [keyLabel('up'), keyLabel('left'), keyLabel('down'), keyLabel('right')].join(' ') +
+        ' move / ' + keyLabel('disc') + ' throw / ' + keyLabel('form') + ' remount / ' +
       Math.max(0, Math.ceil(round.shift.timeLimit - round.elapsed)) + 's';
 }
 function updateHud() {
@@ -452,7 +662,7 @@ function updateHud() {
       ? match.points + (match.resultRecorded ? 0 : round.score) : round.score;
   ui.score.textContent = String(points).padStart(5, '0');
   if (sessionMode === 'duel' && match) {
-    ui.matchline.textContent = 'DUEL / YOU ' + match.wins.player + ' - ' + match.wins.rival +
+    ui.matchline.textContent = (dailyChallenge ? 'DAILY ' + dailyChallenge.day + ' / ' : 'DUEL / ') + 'YOU ' + match.wins.player + ' - ' + match.wins.rival +
       ' ' + DUEL_RIVALS[match.rival].id + ' / R' + match.roundNumber + ' / ' + getMap(round.map).name.toUpperCase();
   } else if (sessionMode === 'arena' && match) {
     ui.matchline.textContent = 'ARENA / HEAT ' + match.roundNumber + '/3 / SURVIVE 2 / ' +
@@ -573,6 +783,8 @@ function beep(freq,duration=.11,type='sawtooth',gain=.035) {
   synth(effectBus,freq,audio.currentTime,duration,type,gain,freq*.57);
 }
 function effectMotif(kind) {
+  const captions = { near: 'CLOSE CALL', crash: 'IMPACT', derez: 'RIDER DEREZZED', win: 'VICTORY' };
+  if (captions[kind]) showCaption(captions[kind]);
   if (muted || volume===0) return;
   ensureAudio();
   if (!audio) return;
@@ -632,8 +844,50 @@ function syncSoundButton() {
   ui.sound.setAttribute('aria-label', muted ? 'Unmute sound' : 'Mute sound');
 }
 
+function keyLabel(action) { return bindings[action] === 'space' ? 'SPACE' : bindings[action].toUpperCase(); }
+function keyAction(key) {
+  const normalized = key === ' ' ? 'space' : key.toLowerCase();
+  const custom = Object.keys(bindings).find(action => bindings[action] === normalized);
+  if (custom) return custom;
+  return { arrowleft: 'left', arrowright: 'right', arrowup: 'up', arrowdown: 'down' }[normalized] || null;
+}
+function syncControlHints(shift = modeSelect.value === 'shift') {
+  const key = action => '<kbd>' + keyLabel(action) + '</kbd>';
+  document.querySelector('#controls-hint').innerHTML = shift
+    ? key('left') + key('right') + ' TURN ' + key('form') + ' FORM ' +
+      key('disc') + ' DISC ' + key('pause') + ' PAUSE'
+    : key('left') + key('right') + ' TURN ' + key('pause') + ' PAUSE ' +
+      key('sound') + ' SOUND';
+  document.querySelector('#panel-footer').innerHTML = shift
+    ? 'CYCLE <span>' + keyLabel('left') + ' ' + keyLabel('right') +
+      ' TURN</span> &nbsp;?&nbsp; FOOT <span>' +
+      [keyLabel('up'),keyLabel('left'),keyLabel('down'),keyLabel('right')].join(' ') +
+      ' MOVE</span> &nbsp;?&nbsp; <span>' + keyLabel('form') + ' FORM / ' +
+      keyLabel('disc') + ' DISC</span>'
+    : 'KEYBOARD <span>ARROWS / ' + keyLabel('left') + ' ' + keyLabel('right') +
+      '</span> &nbsp;?&nbsp; TOUCH <span>TURN BUTTONS</span>';
+}
+function syncBindingButtons() {
+  for (const button of document.querySelectorAll('[data-bind]')) {
+    const action = button.dataset.bind;
+    button.textContent = action.toUpperCase() + ' / ' + keyLabel(action);
+    button.setAttribute('aria-label', 'Remap ' + action + ', currently ' + keyLabel(action));
+    button.setAttribute('aria-pressed', String(captureBinding === action));
+  }
+  syncControlHints();
+}
+function showCaption(message) {
+  if (!captionsEnabled) return;
+  const token = ++captionToken;
+  cueCaption.textContent = message;
+  cueCaption.hidden = false;
+  setTimeout(() => { if (token === captionToken) cueCaption.hidden = true; }, 1400);
+}
 function syncTouchControls() {
   const coarse = window.matchMedia('(any-pointer: coarse)').matches;
+  document.body.classList.toggle('touch-large', touchSize === 'large');
+  document.body.classList.toggle('touch-compact', touchPlacement === 'compact');
+  document.body.classList.toggle('touch-raised', touchPlacement === 'raised');
   touchControls.classList.remove('force-show', 'force-hide');
   if (touchChoice === 'show') touchControls.classList.add('force-show');
   if (touchChoice === 'hide') touchControls.classList.add('force-hide');
@@ -701,7 +955,8 @@ function drawMapPreview() {
   for (const o of map.obstacles)
     ctx.fillRect(at(o.minX), at(o.minZ), (o.maxX-o.minX)*scale, (o.maxZ-o.minZ)*scale);
   const spawns = operations ? [mission.spawn, ...(mission.rivalSpawn ? [mission.rivalSpawn] : [])]
-    : modeSelect.value === 'shift' ? [{x:-8,z:16},{x:8,z:-16}] : map.spawns[modeSelect.value];
+    : modeSelect.value === 'shift' ? [{x:-8,z:16},{x:8,z:-16}]
+      : map.spawns[modeSelect.value === 'daily' ? 'duel' : modeSelect.value];
   spawns.forEach((spawn, index) => {
     ctx.fillStyle = index === 0 ? '#73eaff' : ['#ffa353','#c78aff','#ffdf72'][index-1];
     ctx.beginPath(); ctx.arc(at(spawn.x),at(spawn.z),3.5,0,Math.PI*2); ctx.fill();
@@ -730,7 +985,21 @@ function drawMapPreview() {
       (legacyBest ? ' Legacy best ' + legacyBest + ' is preserved.' : '');
 }
 function syncSetup() {
-  const duel = modeSelect.value === 'duel';
+  const daily = modeSelect.value === 'daily';
+  dailyChallenge = daily ? dailyForDate() : null;
+  if (daily) {
+    rivalSelect.value = dailyChallenge.rival;
+    difficultySelect.value = dailyChallenge.difficulty;
+    mapSelect.value = dailyChallenge.map;
+  } else {
+    rivalSelect.value = DUEL_RIVALS[readLocal(RIVAL_KEY)] ? readLocal(RIVAL_KEY) : 'hunter';
+    difficultySelect.value = DIFFICULTIES[readLocal(DIFFICULTY_KEY)] ? readLocal(DIFFICULTY_KEY) : 'standard';
+    mapSelect.value = MAPS[readLocal(MAP_KEY)] ? readLocal(MAP_KEY) : 'classic';
+  }
+  rivalSelect.disabled = daily;
+  difficultySelect.disabled = daily;
+  mapSelect.disabled = daily;
+  const duel = modeSelect.value === 'duel' || daily;
   const operations = modeSelect.value === 'operations';
   const shift = modeSelect.value === 'shift';
   document.querySelector('#rival-field').hidden = !duel;
@@ -744,7 +1013,9 @@ function syncSetup() {
     standard: 'Balanced reactions; speed stays equal.',
     expert: 'Reacts sooner; speed stays equal.',
   };
-  ui['rival-preview'].textContent = shift
+  ui['rival-preview'].textContent = daily
+    ? 'UTC ' + dailyChallenge.day + ' / rules v' + dailyChallenge.version + ' / seed ' + dailyChallenge.seed + '. Same map, rival, and Standard rules on every replay today.'
+    : shift
     ? 'Echo obeys the same cycle, foot, disc, and mounting rules. Read its form before closing distance.'
     : operations
     ? operationSelect.value === 'journey'
@@ -753,18 +1024,22 @@ function syncSetup() {
     : duel
       ? profile.id + ' / ' + profile.style.toUpperCase() + ' / ' + profile.cue + '. ' + difficultyHint[difficultySelect.value]
       : 'Three different AI styles per heat. Survive at least 2 of 3 heats; each heat adds to your score.';
-  ui.start.textContent = operations ? 'OPEN OPERATIONS' : shift ? 'ENTER GRID SHIFT' : duel ? 'ENTER DUEL' : 'ENTER ARENA';
+  ui.start.textContent = operations ? 'OPEN OPERATIONS' : shift ? 'ENTER GRID SHIFT'
+    : daily ? 'START DAILY SIGNAL' : duel ? 'ENTER DUEL' : 'ENTER ARENA';
+  document.querySelector('#mode-guide').textContent = daily
+    ? 'Offline challenge / First to three. Your best for this UTC day is stored only in this browser.'
+    : shift ? 'Two forms / Ride to build walls, then dismount to dodge and throw. Your walls remain lethal.'
+    : operations ? 'Solo mission / Follow the objective and watch its warning panel.'
+    : duel ? 'First to three / Turn into open space and trap one rival.'
+    : 'Three heats / Survive at least two against three rivals. Trails: solid you, dashed Hunter, dotted Survivor, paired Trapper.';
+  if (gamepadEnabled) document.querySelector('#mode-guide').textContent +=
+    ' Gamepad: left stick or D-pad steers, A confirms or changes form, B throws, Start pauses.';
   canvas.setAttribute('aria-label', shift ? '3D Grid Shift cycle and disc arena' : '3D light cycle arena');
-  document.querySelector('#controls-hint').innerHTML = shift
-    ? '<kbd>A</kbd><kbd>D</kbd> TURN <kbd>E</kbd> FORM <kbd>SPACE</kbd> DISC <kbd>P</kbd> PAUSE'
-    : '<kbd>&larr;</kbd><kbd>&rarr;</kbd> TURN <kbd>P</kbd> PAUSE <kbd>M</kbd> SOUND';
-  document.querySelector('#panel-footer').innerHTML = shift
-    ? 'CYCLE <span>A D TURN</span> &nbsp;&middot;&nbsp; FOOT <span>W A S D MOVE</span> &nbsp;&middot;&nbsp; <span>E FORM / SPACE DISC</span>'
-    : 'KEYBOARD <span>&larr; &rarr; / A D</span> &nbsp;&middot;&nbsp; TOUCH <span>TURN BUTTONS</span>';
+  syncControlHints(shift);
   drawMapPreview();
   updateArchive();
   if (mode === 'ready') {
-    sessionMode = modeSelect.value;
+    sessionMode = daily ? 'duel' : modeSelect.value;
     round = shift ? createShiftRound({ seed: 1, difficulty: difficultySelect.value })
       : operations
       ? createOperationRound({ id: selectedOperationId(), seed: 1, difficulty: difficultySelect.value })
@@ -783,7 +1058,7 @@ function showMenu() {
   generation++;
   match = null;
   operationFlow = null;
-  sessionMode = modeSelect.value;
+  sessionMode = modeSelect.value === 'daily' ? 'duel' : modeSelect.value;
   mode = 'ready';
   syncAudioMix();
   round = createRound({ seed: 1 });
@@ -802,9 +1077,10 @@ function showMenu() {
   ui['change-mode'].hidden = true;
   ui['rival-intent'].textContent = '';
   syncSetup();
+  renderHistory();
   setOverlay('CHOOSE YOUR CIRCUIT', 'ENTER THE <span>GRID<small>01</small></span>',
-    'Choose Duel, Arena, Operations, or Grid Shift. In Grid Shift, dismount to use a disc and remount when the lane is clear.', ui.start.textContent);
-  announce('Choose Duel, Arena, Operations, or Grid Shift. A short playable cycle lesson is available.');
+    'Choose Duel, Arena, Operations, Grid Shift, or the offline Daily Signal. Grid Shift lets you dismount, throw a disc, and remount in clear space.', ui.start.textContent);
+  announce('Choose a mode, including the offline Daily Signal. A short playable cycle lesson is available.');
 }
 
 function showLessonStep(message) {
@@ -843,6 +1119,7 @@ function showOperationBrief() {
 }
 function startOperationFlow() {
   const journey = operationSelect.value === 'journey';
+  runBadgeEvents = new Set();
   operationFlow = {
     kind: journey ? 'journey' : 'single',
     sequence: journey
@@ -862,7 +1139,11 @@ function showShiftBrief() {
   ui['change-mode'].hidden = false;
   skipBriefButton.hidden = true;
   setOverlay('GRID SHIFT / TRAINING', 'TWO <span>FORMS</span>',
-    'Derez Echo before the 90-second lockout. Cycle: A/D or Left/Right turns and leaves a lethal wall. E dismounts into clear space. On foot: W/A/S/D or arrows move freely, Space throws a returning disc, E remounts when clear. Two disc hits derez either rider. Your own walls remain lethal.',
+    'Derez Echo before the 90-second lockout. Cycle: ' + keyLabel('left') + '/' +
+    keyLabel('right') + ' or Left/Right turns and leaves a lethal wall. ' +
+    keyLabel('form') + ' dismounts into clear space. On foot: movement keys or arrows move freely, ' +
+    keyLabel('disc') + ' throws a returning disc, ' + keyLabel('form') +
+    ' remounts when clear. Two disc hits derez either rider. Your own walls remain lethal.',
     'START GRID SHIFT');
   announce('Grid Shift briefing. Cycle to draw walls; dismount with E, move on foot, and throw with Space. Both riders have two integrity.');
 }
@@ -876,6 +1157,7 @@ function startLesson() {
 
 function beginRound() {
   generation++;
+  if (sessionMode === 'shift') runBadgeEvents = new Set();
   round = sessionMode === 'shift' ? createShiftRound({ seed: randomSeed(), difficulty: difficultySelect.value })
     : sessionMode === 'operations'
     ? createOperationRound({ id: operationFlow.sequence[operationFlow.index],
@@ -948,12 +1230,16 @@ function start() {
     return;
   }
   if (mode === 'ready' || match?.completed) {
-    sessionMode = modeSelect.value;
+    dailyChallenge = modeSelect.value === 'daily' ? dailyForDate() : null;
+    sessionMode = dailyChallenge ? 'duel' : modeSelect.value;
+    runBadgeEvents = new Set();
     match = sessionMode === 'duel'
-      ? createMatch({ seed: randomSeed(), rival: rivalSelect.value, difficulty: difficultySelect.value })
+      ? createMatch({ seed: dailyChallenge?.seed ?? randomSeed(),
+          rival: dailyChallenge?.rival ?? rivalSelect.value,
+          difficulty: dailyChallenge?.difficulty ?? difficultySelect.value })
       : createArenaMatch({ seed: randomSeed(), map: mapSelect.value,
           difficulty: difficultySelect.value, rule: ruleSelect.value });
-    if (sessionMode === 'duel') match.map = mapSelect.value;
+    if (sessionMode === 'duel') match.map = dailyChallenge?.map ?? mapSelect.value;
   } else if (match?.resultRecorded) {
     if (sessionMode === 'duel') nextRound(match);
     else nextArenaRound(match);
@@ -968,12 +1254,14 @@ function pause() {
     accumulator = 0;
     if (sessionMode === 'shift') {
       shiftKeys.clear();
+      gamepadMove = { x: 0, z: 0 };
       setShiftMove(round, 'YOU', 0, 0);
     }
     syncAudioMix();
     countdown.classList.remove('show');
     ui.pause.textContent = '▶';
     ui.pause.setAttribute('aria-label', 'Resume game');
+    ui['change-mode'].hidden = false;
     setOverlay('CONNECTION HELD', 'GRID <span>PAUSED<small>01</small></span>',
       'The Grid is waiting. Resume when you are ready.', 'RESUME');
     announce('Game paused.');
@@ -983,6 +1271,7 @@ function pause() {
     syncAudioMix();
     lastFrame = performance.now();
     accumulator = 0;
+    ui['change-mode'].hidden = true;
     hideOverlay();
     if (mode === 'countdown') {
       countdown.textContent = String(Math.max(1, Math.ceil(countdownRemaining)));
@@ -1003,11 +1292,9 @@ function playerTurn(sign) {
 }
 function syncShiftMove() {
   if (sessionMode !== 'shift' || mode !== 'running') return;
-  const x = Number(shiftKeys.has('d') || shiftKeys.has('arrowright')) -
-    Number(shiftKeys.has('a') || shiftKeys.has('arrowleft'));
-  const z = Number(shiftKeys.has('s') || shiftKeys.has('arrowdown')) -
-    Number(shiftKeys.has('w') || shiftKeys.has('arrowup'));
-  setShiftMove(round, 'YOU', x, z);
+  const x = Number(shiftKeys.has('right')) - Number(shiftKeys.has('left')) + gamepadMove.x;
+  const z = Number(shiftKeys.has('down')) - Number(shiftKeys.has('up')) + gamepadMove.z;
+  setShiftMove(round, 'YOU', Math.max(-1, Math.min(1, x)), Math.max(-1, Math.min(1, z)));
 }
 
 function crashMessage(outcome) {
@@ -1096,14 +1383,19 @@ function captureReplayFrame(force=false) {
   if(!force && round.tick%12!==0) return;
   const riderMap=new Map(round.riders.map(r=>[r.id,{
     id:r.id,x:r.x,z:r.z,dir:r.dir,alive:r.alive,isPlayer:r.isPlayer,
-    style:r.style,color:r.color,
+    style:r.style,color:r.color,form:r.form,formChangedAt:r.formChangedAt,
   }]));
   replayFrames.push({
-    time:round.elapsed,
+    time:round.elapsed, elapsed:round.elapsed, limit:round.limit,
+    operation:round.operation ? { ...round.operation,
+      beam:round.operation.beam ? { ...round.operation.beam } : null } : null,
+    shift:round.shift ? { discs:round.shift.discs.map(disc=>({ ...disc })) } : null,
     riders:[...riderMap.values()],
     segments:round.segments.map(segment=>({
       id:segment.id,x1:segment.x1,z1:segment.z1,x2:segment.x2,z2:segment.z2,
-      active:segment.active,closedAt:segment.closedAt,rider:riderMap.get(segment.ownerId),
+      active:segment.active,closedAt:segment.closedAt,
+      rider:{ color:riderMap.get(segment.ownerId)?.color || C.player,
+        style:riderMap.get(segment.ownerId)?.style },
     })),
   });
   while(replayFrames.length>2 && replayFrames[0].time<round.elapsed-6)
@@ -1129,6 +1421,11 @@ function showRoundResult(result) {
 }
 function completeHighlight() {
   if(mode!=='highlight' || !highlight) return;
+  if (highlight.history) {
+    skipHighlightButton.textContent = 'SKIP REPLAY';
+    showMenu();
+    return;
+  }
   const result=highlight.result;
   showRoundResult(result);
 }
@@ -1156,6 +1453,8 @@ function finishOperation(event) {
   }
   loadBest();
   updateHud();
+  if (operationFlow.kind === 'single' || operationFlow.status === 'complete' || !won)
+    recordRun(won ? 'won' : 'lost', operationFlow.points + (won ? 0 : round.score));
   const reason = won ? mission.objective + ' Complete.' : crashMessage(event);
   const result = won
     ? 'Stage +' + round.score + ' points. ' +
@@ -1174,6 +1473,7 @@ function finishShift(event) {
   syncAudioMix();
   accumulator = 0;
   finishAge = 0;
+  captureReplayFrame(true);
   hideCountdown();
   lessonHint.hidden = true;
   ui['rival-intent'].textContent = '';
@@ -1183,6 +1483,7 @@ function finishShift(event) {
     writeLocal(scoreKey(), String(best));
   }
   updateHud();
+  recordRun(event.kind, round.score);
   const cause = event.reason === 'disc' ? 'A disc derezzed the rider.'
     : event.reason === 'timeout' ? 'The 90-second lockout ended.'
     : event.reason === 'mutual' ? 'Both riders derezzed together.'
@@ -1212,6 +1513,8 @@ function finish(event) {
   if(duel) recordRound(match,event.kind,round.score,round.actionLog);
   else recordArenaRound(match,event.kind,round.score,round.actionLog);
   const total=match.points;
+  if (match.completed) recordRun(
+    (duel ? match.wins.player >= 3 : arenaWon(match)) ? 'won' : 'lost', total);
   if(total>best) {
     best=total;
     writeLocal(scoreKey(),String(best));
@@ -1285,10 +1588,12 @@ function handleEvents() {
       showToast(event.riderId + (event.form === 'foot' ? ' DISMOUNTED' : ' REMOUNTED'));
       beep(event.riderId === 'YOU' ? 650 : 460, .18, 'triangle', .03);
       if (event.riderId === 'YOU') {
+        runBadgeEvents.add('form-switch');
         effectMotif('turn');
         showLessonStep(event.form === 'foot'
-          ? 'On foot / W A S D moves in arena directions. Your old wall is behind you. Space throws your disc.'
-          : 'Cycle / Your trail is live again. E dismounts when clear.');
+          ? 'On foot / Movement keys steer in arena directions. Your old wall is behind you. ' +
+            keyLabel('disc') + ' throws your disc.'
+          : 'Cycle / Your trail is live again. ' + keyLabel('form') + ' dismounts when clear.');
         syncShiftMove();
       }
       announce(event.riderId + (event.form === 'foot' ? ' on foot.' : ' on cycle.'));
@@ -1319,6 +1624,7 @@ function handleEvents() {
       beep(760 + event.progress * 90, 0.12, 'triangle', 0.045);
       updateHud();
     } else if (event.type === 'skill') {
+      runBadgeEvents.add(event.kind);
       showToast(event.kind === 'clean-trap' ? 'CLEAN TRAP +' + event.points : 'CLOSE ESCAPE +' + event.points);
       updateHud();
     } else if (event.type === 'crash') {
@@ -1510,8 +1816,9 @@ function boundaryMesh(out, limit, color, height = .08) {
   }
 }
 function operationMesh(out, scene) {
-  if (!round.operation) return;
-  const mission=getOperation(round.operation.id), op=round.operation;
+  const op = scene.operation || round.operation;
+  if (!op) return;
+  const mission=getOperation(op.id);
   const elapsed=scene.time ?? scene.elapsed;
   if (mission.kind === 'checkpoints') {
     mission.gates.forEach((gate,index)=>{
@@ -1571,7 +1878,7 @@ function cameraPose(player) {
       player.z-direction[1]*distance+direction[0]*5];
     aim=[player.x+direction[0]*5,.55,player.z+direction[1]*5];
   }
-  if(mode==='countdown' && !reducedMotion.matches) {
+  if(mode==='countdown' && !reducedMotion.matches && cameraMotion === 'cinematic') {
     const duration=match?.roundNumber>1 ? 1.5 : 3;
     const intro=Math.max(0,Math.min(1,(countdownRemaining-.45)/(duration-.45)));
     const side=[player.x-direction[0]*7-direction[1]*15,8.3,
@@ -1579,7 +1886,7 @@ function cameraPose(player) {
     desired=desired.map((value,i)=>value*(1-intro)+side[i]*intro);
     aim=aim.map((value,i)=>value*(1-intro)+[player.x,1,player.z][i]*intro);
   }
-  if((mode==='won'||mode==='lost') && !reducedMotion.matches) {
+  if((mode==='won'||mode==='lost') && !reducedMotion.matches && cameraMotion === 'cinematic') {
     const framing=Math.max(0,1-finishAge/1.2);
     desired=[desired[0]-direction[1]*4*framing,desired[1]+2*framing,
       desired[2]+direction[0]*4*framing];
@@ -1594,7 +1901,7 @@ function draw(renderDt) {
   const player=scene.riders.find(r=>r.isPlayer);
   if(!player) return;
   const {desired,aim}=cameraPose(player);
-  const alpha=reducedMotion.matches ? 1 : 1-Math.exp(-(mode==='ready'?2.8:6)*renderDt);
+  const alpha=reducedMotion.matches || cameraMotion === 'steady' ? 1 : 1-Math.exp(-(mode==='ready'?2.8:6)*renderDt);
   camera=camera.map((value,i)=>value+(desired[i]-value)*alpha);
   target=target.map((value,i)=>value+(aim[i]-value)*alpha);
   const matrix = multiply(
@@ -1605,7 +1912,7 @@ function draw(renderDt) {
   gl.uniformMatrix4fv(loc.matrix, false, matrix);
   gl.uniform3fv(loc.camera, camera);
   gl.uniform1f(loc.time, visualTime);
-  gl.uniform1f(loc.flash, flashReduced() || graphicsQuality === 'low' ? 0 : 1);
+  gl.uniform1f(loc.flash, flashReduced() || graphicsQuality === 'low' ? 0 : flashIntensity === 'soft' ? .35 : 1);
   const palette=getMap(round.map).palette;
   gl.uniform3fv(loc.gridColor,palette.rail.map(value=>value*.23));
   gl.uniform3fv(loc.fogColor,palette.floor);
@@ -1671,8 +1978,8 @@ function drawRadar() {
   ctx.fillStyle = map.palette.radar;
   for (const o of map.obstacles)
     ctx.fillRect(at(o.minX),at(o.minZ),(o.maxX-o.minX)*scale,(o.maxZ-o.minZ)*scale);
-  if(round.operation) {
-    const mission=getOperation(round.operation.id), op=round.operation;
+  if(scene.operation || round.operation) {
+    const op=scene.operation || round.operation, mission=getOperation(op.id);
     if(mission.kind==='checkpoints') {
       mission.gates.forEach((gate,index)=>{
         const open=(scene.time ?? scene.elapsed)>=gate.openFrom && (scene.time ?? scene.elapsed)<gate.openUntil;
@@ -1702,11 +2009,12 @@ function drawRadar() {
       Math.round(color[2] * 255) + ',.7)';
     const remaining=round.rule==='decay' && !segment.active
       ? segment.closedAt+round.trailLifetime-(scene.time ?? scene.elapsed) : Infinity;
-    if(remaining<=2) {
-      ctx.strokeStyle='#ffe879';
-      ctx.setLineDash([5,4]);
-    } else ctx.setLineDash([]);
-    ctx.lineWidth = 2.5;
+    if(remaining<=2) ctx.strokeStyle='#ffe879';
+    const pattern = segment.rider.style === 'hunter' ? [9,4] :
+      segment.rider.style === 'survivor' ? [2,4] :
+      segment.rider.style === 'trapper' ? [8,3,2,3] : [];
+    ctx.setLineDash(remaining<=2 ? [5,4] : pattern);
+    ctx.lineWidth = segment.rider.style === 'trapper' ? 3.5 : 2.5;
     ctx.beginPath();
     ctx.moveTo(at(segment.x1), at(segment.z1));
     ctx.lineTo(at(segment.x2), at(segment.z2));
@@ -1760,10 +2068,61 @@ function drawRadar() {
   }
 }
 
+function pollGamepad() {
+  let pad = null;
+  if (gamepadEnabled) {
+    try {
+      pad = Array.from(navigator.getGamepads?.() || [])
+        .find(item => item?.connected && item.mapping === 'standard') || null;
+    } catch { pad = null; }
+  }
+  if (!pad) {
+    if (gamepadMove.x || gamepadMove.z) {
+      gamepadMove = { x: 0, z: 0 };
+      syncShiftMove();
+    }
+    gamepadHeld.clear();
+    return;
+  }
+  const button = index => !!pad.buttons[index]?.pressed;
+  const axisX = pad.axes[0] || 0, axisZ = pad.axes[1] || 0;
+  const active = new Set();
+  if (axisX < -.55 || button(14) || button(4)) active.add('left');
+  if (axisX > .55 || button(15) || button(5)) active.add('right');
+  if (axisZ < -.4 || button(12)) active.add('up');
+  if (axisZ > .4 || button(13)) active.add('down');
+  if (button(0)) active.add('confirm');
+  if (button(1)) active.add('disc');
+  if (button(9)) active.add('pause');
+  const fresh = action => active.has(action) && !gamepadHeld.has(action);
+  if (mode === 'running') {
+    if (sessionMode === 'shift') {
+      gamepadMove = {
+        x: Number(active.has('right')) - Number(active.has('left')),
+        z: Number(active.has('down')) - Number(active.has('up')),
+      };
+      syncShiftMove();
+      if (round.riders[0].form === 'cycle') {
+        if (fresh('left')) playerTurn(-1);
+        if (fresh('right')) playerTurn(1);
+      }
+      if (fresh('confirm')) { requestShiftForm(round, 'YOU'); handleEvents(); }
+      if (fresh('disc')) { throwShiftDisc(round, 'YOU'); handleEvents(); }
+    } else {
+      if (fresh('left')) playerTurn(-1);
+      if (fresh('right')) playerTurn(1);
+    }
+  } else if (fresh('confirm') && ['ready', 'operation-brief', 'shift-brief', 'won', 'lost', 'paused'].includes(mode)) {
+    ui.start.click();
+  } else if (fresh('confirm') && mode === 'countdown') launch();
+  if (fresh('pause') && (mode === 'running' || mode === 'countdown' || mode === 'paused')) pause();
+  gamepadHeld = active;
+}
 function frame(now) {
   const realDt = lastFrame ? Math.min(Math.max((now - lastFrame) / 1000, 0), 0.25) : 0;
   lastFrame = now;
   if (!reducedMotion.matches && mode !== 'paused') visualTime += realDt;
+  pollGamepad();
   let launchedThisFrame = false;
   if (mode === 'countdown') {
     countdownRemaining -= realDt;
@@ -1882,7 +2241,77 @@ reduceFlashesInput.addEventListener('change', () => {
 qualitySelect.addEventListener('change', () => {
   graphicsQuality = qualitySelect.value;
   writeLocal(QUALITY_KEY, graphicsQuality);
-});ui.pause.addEventListener('click', pause);
+});
+renderScaleSelect.addEventListener('change', () => {
+  renderScale = renderScaleSelect.value;
+  writeLocal(RENDER_SCALE_KEY, renderScale);
+  resize();
+});
+cameraMotionSelect.addEventListener('change', () => {
+  cameraMotion = cameraMotionSelect.value;
+  writeLocal(CAMERA_MOTION_KEY, cameraMotion);
+});
+flashIntensitySelect.addEventListener('change', () => {
+  flashIntensity = flashIntensitySelect.value;
+  writeLocal(FLASH_INTENSITY_KEY, flashIntensity);
+  syncFlashSetting();
+});
+touchSizeSelect.addEventListener('change', () => {
+  touchSize = touchSizeSelect.value;
+  writeLocal(TOUCH_SIZE_KEY, touchSize);
+  syncTouchControls();
+});
+touchPlacementSelect.addEventListener('change', () => {
+  touchPlacement = touchPlacementSelect.value;
+  writeLocal(TOUCH_PLACEMENT_KEY, touchPlacement);
+  syncTouchControls();
+});
+gamepadInput.addEventListener('change', () => {
+  gamepadEnabled = gamepadInput.checked;
+  writeLocal(GAMEPAD_KEY, String(gamepadEnabled));
+  if (!gamepadEnabled) {
+    gamepadMove = { x: 0, z: 0 };
+    gamepadHeld.clear();
+    syncShiftMove();
+  }
+});
+captionsInput.addEventListener('change', () => {
+  captionsEnabled = captionsInput.checked;
+  writeLocal(CAPTIONS_KEY, String(captionsEnabled));
+  if (!captionsEnabled) cueCaption.hidden = true;
+});
+for (const button of document.querySelectorAll('[data-bind]')) {
+  button.addEventListener('click', () => {
+    captureBinding = button.dataset.bind;
+    bindingStatus.textContent = 'Press a new key for ' + captureBinding.toUpperCase() + '. Escape cancels.';
+    syncBindingButtons();
+  });
+}
+document.querySelector('#reset-settings').addEventListener('click', () => {
+  if (!confirm('Reset all controls and comfort settings to their defaults?')) return;
+  try {
+    for (const key of [MUTE_KEY, TOUCH_KEY, LOOK_KEY, VOLUME_KEY, MUSIC_VOLUME_KEY,
+      CAMERA_KEY, CAMERA_MODE_KEY, REDUCE_FLASHES_KEY, QUALITY_KEY, BINDINGS_KEY,
+      TOUCH_SIZE_KEY, TOUCH_PLACEMENT_KEY, RENDER_SCALE_KEY, CAMERA_MOTION_KEY,
+      FLASH_INTENSITY_KEY, GAMEPAD_KEY, CAPTIONS_KEY]) localStorage.removeItem(key);
+    location.reload();
+  } catch {
+    storageAvailable = false;
+    syncStorageStatus();
+  }
+});
+document.querySelector('#clear-data').addEventListener('click', () => {
+  if (!confirm('Delete this browser\'s Grid Run scores, run history, badges, unlocks, and settings?')) return;
+  try {
+    for (const key of Object.keys(localStorage))
+      if (key.startsWith('tron-grid-run-')) localStorage.removeItem(key);
+    location.reload();
+  } catch {
+    storageAvailable = false;
+    syncStorageStatus();
+  }
+});
+ui.pause.addEventListener('click', pause);
 ui.sound.addEventListener('click', () => {
   muted = !muted;
   writeLocal(MUTE_KEY, String(muted));
@@ -1914,10 +2343,31 @@ canvas.addEventListener('pointerdown', () => {
 });
 window.addEventListener('keydown', event => {
   const key = event.key.toLowerCase();
-  const shiftDirection = ['w','a','s','d','arrowup','arrowleft','arrowdown','arrowright'].includes(key);
+  if (captureBinding) {
+    event.preventDefault();
+    if (key === 'escape') {
+      captureBinding = null;
+      bindingStatus.textContent = 'Binding change cancelled.';
+    } else {
+      const next = key === ' ' ? 'space' : key;
+      if (!validBinding(next)) bindingStatus.textContent = 'Use a letter, number, or Space. Arrows remain movement shortcuts.';
+      else if (Object.entries(bindings).some(([action, value]) => action !== captureBinding && value === next))
+        bindingStatus.textContent = 'That key is already assigned. Choose another key.';
+      else {
+        bindings[captureBinding] = next;
+        writeLocal(BINDINGS_KEY, JSON.stringify(bindings));
+        bindingStatus.textContent = captureBinding.toUpperCase() + ' is now ' + keyLabel(captureBinding) + '.';
+        captureBinding = null;
+      }
+    }
+    syncBindingButtons();
+    return;
+  }
+  const action = keyAction(event.key);
+  const shiftDirection = ['up', 'left', 'down', 'right'].includes(action);
   if (event.repeat && !(sessionMode === 'shift' && mode === 'running' && shiftDirection)) return;
   const interactive = event.target instanceof Element &&
-    event.target.closest('button, input, select, textarea, a');
+    event.target.closest('button, input, select, textarea, a, summary');
   const editing = event.target instanceof Element &&
     event.target.closest('input, select, textarea, [contenteditable]');
   if (mode === 'highlight' && (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ')) {
@@ -1925,14 +2375,14 @@ window.addEventListener('keydown', event => {
     completeHighlight();
     return;
   }
-  if (sessionMode === 'shift' && mode === 'running' && !editing) {
-    if (key === 'e') {
+  if (sessionMode === 'shift' && mode === 'running' && !interactive) {
+    if (action === 'form') {
       event.preventDefault();
       requestShiftForm(round, 'YOU');
       handleEvents();
       return;
     }
-    if (event.code === 'Space') {
+    if (action === 'disc') {
       event.preventDefault();
       if (!throwShiftDisc(round, 'YOU'))
         showToast(round.riders[0].form === 'cycle' ? 'DISMOUNT TO THROW' : 'DISC NOT READY');
@@ -1941,41 +2391,45 @@ window.addEventListener('keydown', event => {
     }
     if (shiftDirection) {
       event.preventDefault();
-      shiftKeys.add(key);
+      shiftKeys.add(action);
       syncShiftMove();
       if (round.riders[0].form === 'cycle' && !event.repeat) {
-        if (key === 'a' || key === 'arrowleft') playerTurn(-1);
-        if (key === 'd' || key === 'arrowright') playerTurn(1);
+        if (action === 'left') playerTurn(-1);
+        if (action === 'right') playerTurn(1);
       }
       return;
     }
   }
-  if (mode === 'running' && !editing && (event.key === 'ArrowLeft' || key === 'a')) {
+  if (mode === 'running' && !interactive && action === 'left') {
     event.preventDefault();
     playerTurn(-1);
-  } else if (mode === 'running' && !editing && (event.key === 'ArrowRight' || key === 'd')) {
+  } else if (mode === 'running' && !interactive && action === 'right') {
     event.preventDefault();
     playerTurn(1);
-  } else if (key === 'p' || event.key === 'Escape') {
+  } else if ((action === 'pause' || event.key === 'Escape') && !editing) {
     event.preventDefault();
     pause();
-  } else if (key === 'm' && !editing) {
+  } else if (action === 'sound' && !interactive) {
     ui.sound.click();
   } else if (!interactive && (event.key === 'Enter' || event.key === ' ') && mode === 'countdown') {
     event.preventDefault();
     launch();
   } else if (!interactive && (event.key === 'Enter' || event.key === ' ') &&
-      (mode === 'ready' || mode === 'operation-brief' || mode === 'won' || mode === 'lost')) {
+      (mode === 'ready' || mode === 'operation-brief' || mode === 'shift-brief' ||
+       mode === 'won' || mode === 'lost')) {
     event.preventDefault();
     start();
   }
 });
 window.addEventListener('keyup', event => {
-  shiftKeys.delete(event.key.toLowerCase());
+  const action = keyAction(event.key);
+  if (action) shiftKeys.delete(action);
   syncShiftMove();
 });
 window.addEventListener('blur', () => {
   shiftKeys.clear();
+  gamepadMove = { x: 0, z: 0 };
+  gamepadHeld.clear();
   syncShiftMove();
 });
 for (const button of shiftTouch.querySelectorAll('[data-move]')) {
@@ -1983,12 +2437,12 @@ for (const button of shiftTouch.querySelectorAll('[data-move]')) {
   button.addEventListener('pointerdown', event => {
     event.preventDefault();
     if (sessionMode !== 'shift' || mode !== 'running') return;
-    shiftKeys.add('arrow' + move);
+    shiftKeys.add(move);
     syncShiftMove();
     if (round.riders[0].form === 'cycle' && (move === 'left' || move === 'right'))
       playerTurn(move === 'left' ? -1 : 1);
   });
-  const release = () => { shiftKeys.delete('arrow' + move); syncShiftMove(); };
+  const release = () => { shiftKeys.delete(move); syncShiftMove(); };
   button.addEventListener('pointerup', release);
   button.addEventListener('pointercancel', release);
   button.addEventListener('lostpointercapture', release);
@@ -2028,7 +2482,7 @@ canvas.addEventListener('webglcontextrestored', () => {
 });
 window.addEventListener('resize', resize);
 
-modeSelect.value = ['duel', 'arena', 'operations', 'shift'].includes(readLocal(MODE_KEY)) ? readLocal(MODE_KEY) : 'duel';
+modeSelect.value = ['duel', 'arena', 'operations', 'shift', 'daily'].includes(readLocal(MODE_KEY)) ? readLocal(MODE_KEY) : 'duel';
 operationSelect.value = ['portal', 'sweep', 'collapse', 'journey'].includes(readLocal(OPERATION_KEY)) ? readLocal(OPERATION_KEY) : 'portal';
 finalRivalInput.checked = readLocal(FINAL_RIVAL_KEY) !== 'false';
 syncLookOptions();
@@ -2043,6 +2497,15 @@ cameraModeSelect.value = cameraMode;
 reduceFlashesInput.checked = reduceFlashes;
 syncFlashSetting();
 qualitySelect.value = graphicsQuality;
+renderScaleSelect.value = renderScale;
+cameraMotionSelect.value = cameraMotion;
+flashIntensitySelect.value = flashIntensity;
+touchSizeSelect.value = touchSize;
+touchPlacementSelect.value = touchPlacement;
+gamepadInput.checked = gamepadEnabled;
+captionsInput.checked = captionsEnabled;
+syncBindingButtons();
+syncStorageStatus();
 syncSoundButton();
 syncTouchControls();
 showMenu();
