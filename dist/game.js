@@ -1,7 +1,8 @@
-import { createRound, createDuelRound, createArenaRound, DUEL_RIVALS, DIFFICULTIES, drainEvents, queueTurn, stepRound, STEP } from './simulation.js';
+import { createRound, createDuelRound, createArenaRound, createOperationRound, DUEL_RIVALS, DIFFICULTIES, drainEvents, queueTurn, stepRound, STEP } from './simulation.js';
 import { MAPS, getMap } from './maps.js';
 import { createArenaMatch, recordArenaRound, nextArenaRound, arenaWon } from './arena.js';
 import { createMatch, recordRound, nextRound, roundSeed } from './match.js';
+import { OPERATIONS, JOURNEY, getOperation } from './operations.js';
 
 const canvas = document.querySelector('#game');
 const radar = document.querySelector('#radar');
@@ -18,6 +19,15 @@ const rivalSelect = document.querySelector('#rival-select');
 const difficultySelect = document.querySelector('#difficulty-select');
 const mapSelect = document.querySelector('#map-select');
 const ruleSelect = document.querySelector('#rule-select');
+const operationSelect = document.querySelector('#operation-select');
+const finalRivalInput = document.querySelector('#final-rival');
+const skipBriefButton = document.querySelector('#skip-brief');
+const trailLookSelect = document.querySelector('#trail-look');
+const operationHud = document.querySelector('#operation-hud');
+const objectiveTitle = document.querySelector('#objective-title');
+const objectiveProgress = document.querySelector('#objective-progress');
+const objectiveWarning = document.querySelector('#objective-warning');
+const archiveList = document.querySelector('#archive-list');
 const mapPreview = document.querySelector('#map-preview');
 const mapTip = document.querySelector('#map-tip');
 const volumeInput = document.querySelector('#volume');
@@ -149,6 +159,10 @@ const RIVAL_KEY = 'tron-grid-run-rival';
 const DIFFICULTY_KEY = 'tron-grid-run-difficulty';
 const MAP_KEY = 'tron-grid-run-map';
 const RULE_KEY = 'tron-grid-run-rule';
+const OPERATION_KEY = 'tron-grid-run-operation';
+const FINAL_RIVAL_KEY = 'tron-grid-run-final-rival';
+const OP_PROGRESS_KEY = 'tron-grid-run-operations:v1';
+const LOOK_KEY = 'tron-grid-run-trail-look';
 const VOLUME_KEY = 'tron-grid-run-volume';
 const MUSIC_VOLUME_KEY = 'tron-grid-run-music-volume';
 const CAMERA_KEY = 'tron-grid-run-camera';
@@ -169,6 +183,9 @@ let muted = readLocal(MUTE_KEY) === 'true';
 let touchChoice = readLocal(TOUCH_KEY) || 'auto';
 let sessionMode = 'duel';
 let match = null;
+let operationFlow = null;
+let operationProgress = readOperationProgress();
+let lookChoice = readLocal(LOOK_KEY) || 'default';
 let lessonStage = 0;
 const storedVolume = Number(readLocal(VOLUME_KEY) ?? 70);
 let volume = Number.isFinite(storedVolume) ? Math.max(0, Math.min(100, storedVolume)) : 70;
@@ -319,30 +336,116 @@ function announce(message) {
   if (statusLive) statusLive.textContent = message;
 }
 
+function readOperationProgress() {
+  let saved = {};
+  try { saved = JSON.parse(readLocal(OP_PROGRESS_KEY) || '{}') || {}; } catch { /* Invalid local data is ignored. */ }
+  const result = {};
+  for (const id of [...Object.keys(OPERATIONS), 'journey']) {
+    const entry = saved[id] || {};
+    result[id] = {
+      completed: entry.completed === true,
+      best: Number.isFinite(entry.best) && entry.best >= 0 ? Math.floor(entry.best) : 0,
+    };
+  }
+  return result;
+}
+function saveOperationProgress(id, points) {
+  const entry = operationProgress[id];
+  entry.completed = true;
+  entry.best = Math.max(entry.best, Math.max(0, Math.floor(points)));
+  writeLocal(OP_PROGRESS_KEY, JSON.stringify(operationProgress));
+  syncLookOptions();
+  updateArchive();
+}
+function updateArchive() {
+  const unlocked = Object.values(OPERATIONS).filter(op => operationProgress[op.id].completed);
+  archiveList.textContent = unlocked.length
+    ? unlocked.map(op => op.name + ': ' + op.reward.lore).join(' ')
+    : 'Complete an operation to unlock its log fragment and a cosmetic trail look. No gameplay advantage.';
+}
+function syncLookOptions() {
+  const unlocks = { default: true,
+    amber: operationProgress.portal.completed,
+    violet: operationProgress.sweep.completed,
+    white: operationProgress.collapse.completed,
+  };
+  const labels = { default: 'Grid cyan', amber: 'Portal amber',
+    violet: 'Scanner violet', white: 'Containment white' };
+  for (const option of trailLookSelect.options) {
+    option.disabled = !unlocks[option.value];
+    option.textContent = labels[option.value] + (option.disabled ? ' (locked)' : '');
+  }
+  if (!unlocks[lookChoice]) lookChoice = 'default';
+  trailLookSelect.value = lookChoice;
+}
+function applyPlayerLook() {
+  const colors = { default: [0.15, 0.88, 1], amber: [1, 0.62, 0.18],
+    violet: [0.78, 0.45, 1], white: [0.92, 0.98, 1] };
+  const player = round.riders.find(r => r.isPlayer);
+  if (player) player.color = [...colors[lookChoice]];
+}
 function scoreKey() {
   return 'tron-grid-run-best:v2:' + sessionMode + ':' + round.map + ':' +
     round.difficulty + ':' + round.rule;
 }
 function loadBest() {
+  if (sessionMode === 'operations') {
+    const key = operationFlow?.kind === 'journey' ? 'journey'
+      : operationFlow?.sequence[0] || (operationSelect.value === 'journey' ? 'journey' : operationSelect.value);
+    best = operationProgress[key]?.best || 0;
+    return;
+  }
   const value = Number(readLocal(scoreKey()));
   best = Number.isFinite(value) && value >= 0 ? value : 0;
 }
+function updateOperationHud() {
+  if (sessionMode !== 'operations' || mode === 'ready') {
+    operationHud.hidden = true;
+    return;
+  }
+  operationHud.hidden = false;
+  const mission = getOperation(round.operation.id);
+  const op = round.operation;
+  objectiveTitle.textContent = mission.name.toUpperCase() + ' / ' + mission.objective;
+  const remaining = mission.timeLimit === null ? '' :
+    ' / ' + Math.max(0, Math.ceil(mission.timeLimit - round.elapsed)) + 's left';
+  if (mission.kind === 'checkpoints')
+    objectiveProgress.textContent = 'Gate ' + Math.min(op.progress + 1, mission.gates.length) + '/' + mission.gates.length + remaining;
+  else if (mission.kind === 'scanner')
+    objectiveProgress.textContent = 'Sweeps ' + op.pulseIndex + '/' + mission.pulses.length + remaining;
+  else if (mission.kind === 'collapse')
+    objectiveProgress.textContent = 'Rings ' + op.collapseIndex + '/' + mission.steps.length + remaining;
+  else objectiveProgress.textContent = 'Sentinel active / one rival';
+  objectiveWarning.textContent = op.warning || mission.hudTip;
+}
 function updateHud() {
-  const points = match && sessionMode !== 'lesson'
-    ? match.points + (match.resultRecorded ? 0 : round.score) : round.score;
+  const points = sessionMode === 'operations'
+    ? (operationFlow?.points || 0) + round.score
+    : match && sessionMode !== 'lesson'
+      ? match.points + (match.resultRecorded ? 0 : round.score) : round.score;
   ui.score.textContent = String(points).padStart(5, '0');
   if (sessionMode === 'duel' && match) {
-    ui.matchline.textContent = 'DUEL / YOU ' + match.wins.player + ' ? ' + match.wins.rival +
+    ui.matchline.textContent = 'DUEL / YOU ' + match.wins.player + ' - ' + match.wins.rival +
       ' ' + DUEL_RIVALS[match.rival].id + ' / R' + match.roundNumber + ' / ' + getMap(round.map).name.toUpperCase();
   } else if (sessionMode === 'arena' && match) {
     ui.matchline.textContent = 'ARENA / HEAT ' + match.roundNumber + '/3 / SURVIVE 2 / ' +
       getMap(round.map).name.toUpperCase();
+  } else if (sessionMode === 'operations') {
+    const stage = operationFlow?.index ?? 0;
+    const total = operationFlow?.sequence.length ?? 1;
+    ui.matchline.textContent = 'OPERATION / ' + getOperation(round.operation.id).name.toUpperCase() +
+      (operationFlow?.kind === 'journey' ? ' / ' + (stage+1) + '/' + total : '');
   } else if (sessionMode === 'lesson') ui.matchline.textContent = 'LESSON / GRID BASICS';
   else ui.matchline.textContent = sessionMode === 'duel' ? 'DUEL / FIRST TO 3' : 'ARENA / SURVIVE 2 OF 3';
   document.querySelector('.radar-wrap .label').textContent =
     getMap(round.map).name.toUpperCase() + ' / ' + (match?.roundNumber || '01');
   ui.best.textContent = String(best).padStart(5, '0');
-  ui.rivals.textContent = String(round.riders.filter(r => !r.isPlayer && r.alive).length).padStart(2, '0');
+  document.querySelector('#rivals-label').textContent =
+    sessionMode === 'operations' ? 'Progress' : 'Rivals';
+  ui.rivals.textContent = sessionMode === 'operations'
+    ? String(round.operation.progress || round.operation.pulseIndex || round.operation.collapseIndex || 0).padStart(2, '0')
+    : String(round.riders.filter(r => !r.isPlayer && r.alive).length).padStart(2, '0');
+  updateOperationHud();
 }
 function setBackgroundInert(inert) {
   canvas.inert = inert;
@@ -540,13 +643,18 @@ function launch() {
   lastFrame = performance.now();
   beep(730, 0.2, 'triangle', 0.06);
   effectMotif('wall');
-  announce('Go. Survive the Grid.');
+  announce(sessionMode === 'operations' ? 'Go. ' + getOperation(round.operation.id).objective : 'Go. Survive the Grid.');
   const token = generation;
   setTimeout(() => { if (token === generation && mode === 'running') hideCountdown(); }, 420);
 }
 
+function selectedOperationId() {
+  return operationSelect.value === 'journey' ? 'portal' : operationSelect.value;
+}
 function drawMapPreview() {
-  const map = getMap(mapSelect.value);
+  const operations = modeSelect.value === 'operations';
+  const mission = operations ? getOperation(selectedOperationId()) : null;
+  const map = getMap(mission?.map || mapSelect.value);
   const ctx = mapPreview.getContext('2d');
   const size = mapPreview.height;
   const scale = (size - 14) / (map.limit * 2);
@@ -559,41 +667,65 @@ function drawMapPreview() {
   ctx.fillStyle = map.palette.radar;
   for (const o of map.obstacles)
     ctx.fillRect(at(o.minX), at(o.minZ), (o.maxX-o.minX)*scale, (o.maxZ-o.minZ)*scale);
-  map.spawns[modeSelect.value].forEach((spawn, index) => {
+  const spawns = operations ? [mission.spawn, ...(mission.rivalSpawn ? [mission.rivalSpawn] : [])]
+    : map.spawns[modeSelect.value];
+  spawns.forEach((spawn, index) => {
     ctx.fillStyle = index === 0 ? '#73eaff' : ['#ffa353','#c78aff','#ffdf72'][index-1];
     ctx.beginPath(); ctx.arc(at(spawn.x),at(spawn.z),3.5,0,Math.PI*2); ctx.fill();
   });
+  if (mission?.gates) {
+    ctx.strokeStyle = '#ffe18b';
+    for (const gate of mission.gates)
+      ctx.strokeRect(at(gate.minX),at(gate.minZ),
+        (gate.maxX-gate.minX)*scale,(gate.maxZ-gate.minZ)*scale);
+  }
   ctx.fillStyle = '#b9dce6';
   ctx.font = '600 12px Rajdhani, sans-serif';
-  ctx.fillText(map.name.toUpperCase(), size + 12, 23);
+  ctx.fillText((mission?.name || map.name).toUpperCase(), size + 12, 23);
   ctx.font = '12px Rajdhani, sans-serif';
   ctx.fillText(map.obstacles.length ? map.obstacles.length + ' fixed barriers' : 'Open circuit', size + 12, 45);
   ctx.fillText('CYAN = YOU', size + 12, 68);
-  mapPreview.setAttribute('aria-label', map.name + ' layout with ' + map.obstacles.length + ' fixed barriers and ' + map.spawns[modeSelect.value].length + ' spawn positions');
-  mapTip.textContent = map.cue + (ruleSelect.value === 'decay' && modeSelect.value === 'arena'
-    ? ' Advanced: closed walls pulse before fading after 10 seconds.' : ' Light walls remain until the heat ends.') +
-    (legacyBest ? ' Legacy best ' + legacyBest + ' is preserved.' : '');
+  mapPreview.setAttribute('aria-label', (mission?.name || map.name) + ' layout with ' +
+    map.obstacles.length + ' fixed barriers and ' + spawns.length + ' spawn positions');
+  mapTip.textContent = operations
+    ? mission.objective + ' ' + mission.tip +
+      (operationSelect.value === 'journey' ? ' The journey links all three operations.' : '')
+    : map.cue + (ruleSelect.value === 'decay' && modeSelect.value === 'arena'
+      ? ' Advanced: closed walls pulse before fading after 10 seconds.' : ' Light walls remain until the heat ends.') +
+      (legacyBest ? ' Legacy best ' + legacyBest + ' is preserved.' : '');
 }
 function syncSetup() {
   const duel = modeSelect.value === 'duel';
+  const operations = modeSelect.value === 'operations';
   document.querySelector('#rival-field').hidden = !duel;
-  document.querySelector('#rule-field').hidden = duel;
+  document.querySelector('#rule-field').hidden = duel || operations;
+  document.querySelector('#map-field').hidden = operations;
+  document.querySelector('#operation-field').hidden = !operations;
+  document.querySelector('#final-rival-field').hidden = !operations || operationSelect.value !== 'journey';
   const profile = DUEL_RIVALS[rivalSelect.value];
   const difficultyHint = {
     rookie: 'Reacts later; speed stays equal.',
     standard: 'Balanced reactions; speed stays equal.',
     expert: 'Reacts sooner; speed stays equal.',
   };
-  ui['rival-preview'].textContent = duel
-    ? profile.id + ' / ' + profile.style.toUpperCase() + ' ? ' + profile.cue + '. ' + difficultyHint[difficultySelect.value]
-    : 'Three different AI styles per heat. Survive at least 2 of 3 heats; each heat adds to your score.';
-  ui.start.textContent = duel ? 'ENTER DUEL' : 'ENTER ARENA';
+  ui['rival-preview'].textContent = operations
+    ? operationSelect.value === 'journey'
+      ? 'Three linked operations with skippable briefings. Final Sentinel challenge is optional.'
+      : getOperation(selectedOperationId()).briefing
+    : duel
+      ? profile.id + ' / ' + profile.style.toUpperCase() + ' / ' + profile.cue + '. ' + difficultyHint[difficultySelect.value]
+      : 'Three different AI styles per heat. Survive at least 2 of 3 heats; each heat adds to your score.';
+  ui.start.textContent = operations ? 'OPEN OPERATIONS' : duel ? 'ENTER DUEL' : 'ENTER ARENA';
   drawMapPreview();
+  updateArchive();
   if (mode === 'ready') {
     sessionMode = modeSelect.value;
-    round = duel
-      ? createDuelRound({ seed: 1, rival: rivalSelect.value, difficulty: difficultySelect.value, map: mapSelect.value })
-      : createArenaRound({ seed: 1, difficulty: difficultySelect.value, map: mapSelect.value, rule: ruleSelect.value });
+    round = operations
+      ? createOperationRound({ id: selectedOperationId(), seed: 1, difficulty: difficultySelect.value })
+      : duel
+        ? createDuelRound({ seed: 1, rival: rivalSelect.value, difficulty: difficultySelect.value, map: mapSelect.value })
+        : createArenaRound({ seed: 1, difficulty: difficultySelect.value, map: mapSelect.value, rule: ruleSelect.value });
+    applyPlayerLook();
     rebuildStatic(getMap(round.map));
     loadBest();
     updateHud();
@@ -604,6 +736,7 @@ function syncSetup() {
 function showMenu() {
   generation++;
   match = null;
+  operationFlow = null;
   sessionMode = modeSelect.value;
   mode = 'ready';
   syncAudioMix();
@@ -618,19 +751,61 @@ function showMenu() {
   skipLesson.hidden = true;
   setup.hidden = false;
   ui['lesson-start'].hidden = false;
+  skipBriefButton.hidden = true;
   ui['change-mode'].hidden = true;
   ui['rival-intent'].textContent = '';
-  updateHud();
   syncSetup();
   setOverlay('CHOOSE YOUR CIRCUIT', 'ENTER THE <span>GRID<small>01</small></span>',
-    'Duel is first to three against one rival. Arena is three scored heats: survive at least two. Every turn leaves a lethal wall.', ui.start.textContent);
-  announce('Choose Duel or Arena, then enter the Grid. A short playable lesson is available.');
+    'Duel is first to three, Arena is three scored heats, and Operations is a short solo journey with three distinct hazards. Every turn leaves a lethal wall.', ui.start.textContent);
+  announce('Choose Duel, Arena, or Operations. A short playable lesson is available.');
 }
 
 function showLessonStep(message) {
   lessonHint.hidden = false;
   lessonHint.textContent = message;
   announce(message);
+}
+
+function operationStageSeed() {
+  return (operationFlow.seed ^ Math.imul(operationFlow.index + 1, 0x9e3779b9)) >>> 0;
+}
+function showOperationBrief() {
+  generation++;
+  const id = operationFlow.sequence[operationFlow.index];
+  const mission = getOperation(id);
+  round = createOperationRound({ id, seed: operationStageSeed(), difficulty: operationFlow.difficulty });
+  applyPlayerLook();
+  rebuildStatic(getMap(round.map));
+  loadBest();
+  mode = 'operation-brief';
+  syncAudioMix();
+  setup.hidden = true;
+  ui['lesson-start'].hidden = true;
+  skipBriefButton.hidden = false;
+  ui['change-mode'].hidden = false;
+  highlightCard.hidden = true;
+  hideCountdown();
+  ui['rival-intent'].textContent = '';
+  updateHud();
+  const count = operationFlow.kind === 'journey'
+    ? (operationFlow.index + 1) + '/' + operationFlow.sequence.length : 'SOLO';
+  setOverlay('OPERATION ' + count, mission.name.toUpperCase().replace(' ', '<br>'),
+    mission.briefing + ' Objective: ' + mission.objective + ' ' + mission.tip,
+    'LAUNCH');
+  announce(mission.name + '. ' + mission.objective + ' Press Launch or Skip Story to begin.');
+}
+function startOperationFlow() {
+  const journey = operationSelect.value === 'journey';
+  operationFlow = {
+    kind: journey ? 'journey' : 'single',
+    sequence: journey
+      ? [...JOURNEY, ...(finalRivalInput.checked ? ['sentinel'] : [])]
+      : [operationSelect.value],
+    index: 0, points: 0, seed: randomSeed(),
+    difficulty: difficultySelect.value, status: 'brief',
+  };
+  sessionMode = 'operations';
+  showOperationBrief();
 }
 
 function startLesson() {
@@ -643,19 +818,23 @@ function startLesson() {
 
 function beginRound() {
   generation++;
-  round = sessionMode === 'duel'
+  round = sessionMode === 'operations'
+    ? createOperationRound({ id: operationFlow.sequence[operationFlow.index],
+        seed: operationStageSeed(), difficulty: operationFlow.difficulty })
+    : sessionMode === 'duel'
     ? createDuelRound({ seed: roundSeed(match), rival: match.rival, difficulty: match.difficulty, map: match.map })
     : sessionMode === 'lesson'
       ? createRound({ seed: randomSeed(), riders: [{ id: 'YOU', x: 0, z: 16, dir: 0, isPlayer: true, controller: 'none' }] })
       : createArenaRound({ seed: roundSeed(match), difficulty: match.difficulty, map: match.map, rule: match.rule });
   rebuildStatic(getMap(round.map));
+  applyPlayerLook();
   loadBest();
   replayFrames=[];
   highlight=null;
   highlightCard.hidden=true;
   captureReplayFrame(true);
   mode = 'countdown';
-  countdownRemaining = match && match.roundNumber > 1 ? 1.5 : 3;
+  countdownRemaining = sessionMode === 'operations' && operationFlow.index > 0 ? 1.5 : match && match.roundNumber > 1 ? 1.5 : 3;
   countdownNumber = Math.ceil(countdownRemaining);
   accumulator = 0;
   lastFrame = performance.now();
@@ -666,10 +845,11 @@ function beginRound() {
   nextMusicBeat=0;
   ++toastSequence;
   ui.toast.classList.remove('show');
-  ui.pause.textContent = '?';
+  ui.pause.textContent = 'II';
   ui.pause.setAttribute('aria-label', 'Pause game');
   setup.hidden = true;
   ui['lesson-start'].hidden = true;
+  skipBriefButton.hidden = true;
   ui['change-mode'].hidden = true;
   ui['rival-intent'].textContent = sessionMode === 'duel' ? DUEL_RIVALS[match.rival].cue :
     sessionMode === 'arena' ? getMap(round.map).cue : '';
@@ -684,10 +864,23 @@ function beginRound() {
   activateAudio();
   beep(440, 0.08, 'triangle', 0.03);
   syncAudioMix();
-  announce(sessionMode === 'lesson' ? 'Lesson starting. Turn left or right.' : 'Round starting. Three, two, one.');
+  announce(sessionMode === 'lesson' ? 'Lesson starting. Turn left or right.' : sessionMode === 'operations' ? getOperation(round.operation.id).name + '. ' + getOperation(round.operation.id).objective + ' Starting in three, two, one.' : 'Round starting. Three, two, one.');
 }
 
 function start() {
+  if (modeSelect.value === 'operations' && (mode === 'ready' || sessionMode === 'operations')) {
+    if (mode === 'ready' || !operationFlow || operationFlow.status === 'complete') {
+      startOperationFlow();
+    } else if (mode === 'operation-brief' || operationFlow.status === 'retry') {
+      operationFlow.status = 'running';
+      beginRound();
+    } else if (operationFlow.status === 'next') {
+      operationFlow.index++;
+      operationFlow.status = 'brief';
+      showOperationBrief();
+    }
+    return;
+  }
   if (mode === 'ready' || match?.completed) {
     sessionMode = modeSelect.value;
     match = sessionMode === 'duel'
@@ -739,6 +932,9 @@ function playerTurn(sign) {
 
 function crashMessage(outcome) {
   if (outcome.reason === 'boundary') return 'You hit the arena edge.';
+  if (outcome.reason === 'collapse') return 'The collapse ring caught you.';
+  if (outcome.reason === 'hazard') return (outcome.by || 'A hazard') + ' struck your cycle.';
+  if (outcome.reason === 'timeout') return 'Time ran out before ' + (outcome.by || 'the objective') + '.';
   if (outcome.reason === 'obstacle') return 'You hit a barrier.';
   if (outcome.reason === 'rider') return 'You collided with ' + (outcome.by || 'another rider') + '.';
   if (outcome.reason === 'trail') {
@@ -792,7 +988,7 @@ function updateParticles(dt) {
 }
 
 function scoreExplanation() {
-  const labels = { derez: 'rival derez', closeCall: 'close escape', trap: 'clean trap', win: 'round win' };
+  const labels = { derez: 'rival derez', closeCall: 'close escape', trap: 'clean trap', checkpoint: 'gates', win: 'completion' };
   const parts = Object.entries(round.scoreBreakdown)
     .filter(([, points]) => points > 0)
     .map(([kind, points]) => labels[kind] + ' +' + points);
@@ -856,7 +1052,45 @@ function completeHighlight() {
   const result=highlight.result;
   showRoundResult(result);
 }
+function finishOperation(event) {
+  mode = event.kind;
+  syncAudioMix();
+  accumulator = 0;
+  finishAge = 0;
+  captureReplayFrame(true);
+  hideCountdown();
+  skipBriefButton.hidden = true;
+  ui['change-mode'].hidden = false;
+  const mission = getOperation(round.operation.id);
+  const won = event.kind === 'won';
+  if (won) {
+    effectMotif('win');
+    operationFlow.points += round.score;
+    saveOperationProgress(mission.id, round.score);
+    operationFlow.status = operationFlow.index + 1 < operationFlow.sequence.length ? 'next' : 'complete';
+    if (operationFlow.status === 'complete' && operationFlow.kind === 'journey')
+      saveOperationProgress('journey', operationFlow.points);
+  } else {
+    operationFlow.status = 'retry';
+    effectMotif('crash');
+  }
+  loadBest();
+  updateHud();
+  const reason = won ? mission.objective + ' Complete.' : crashMessage(event);
+  const result = won
+    ? 'Stage +' + round.score + ' points. ' +
+      (mission.reward.look ? mission.reward.look + ' trail look and archive fragment unlocked. ' : 'Archive fragment unlocked. ') +
+      (operationFlow.status === 'next' ? 'Next: ' + getOperation(operationFlow.sequence[operationFlow.index + 1]).name + '.'
+        : operationFlow.kind === 'journey' ? 'Journey complete. Total ' + operationFlow.points + ' points.' : 'Best ' + best + ' points.')
+    : 'Retry this operation or return to selection. ' + mission.tip;
+  setOverlay(won ? 'OPERATION COMPLETE' : 'OPERATION FAILED',
+    won ? 'ROUTE <span>SECURED</span>' : 'SIGNAL <span>LOST</span>',
+    reason + ' ' + result,
+    won ? operationFlow.status === 'next' ? 'NEXT OPERATION' : 'NEW RUN' : 'RETRY OPERATION');
+  announce((won ? 'Operation complete. ' : 'Operation failed. ') + reason + ' ' + result);
+}
 function finish(event) {
+  if (sessionMode === 'operations') { finishOperation(event); return; }
   if (sessionMode === 'lesson') { finishLesson(false, event); return; }
   mode=event.kind;
   syncAudioMix();
@@ -882,7 +1116,7 @@ function finish(event) {
     : crashMessage(event);
   const scoreText='Heat +'+round.score+' ('+scoreExplanation()+').';
   const scoreline=duel
-    ? ' Duel '+match.wins.player+'?'+match.wins.rival+'.'
+    ? ' Duel '+match.wins.player+'-'+match.wins.rival+'.'
     : ' Arena '+match.wins.player+' of '+match.roundNumber+' heats survived.';
   const summary=match.completed
     ? duel ? ' Match total '+total+' points.'
@@ -937,6 +1171,15 @@ function handleEvents() {
     } else if (event.type === 'ai-intent' && sessionMode === 'duel') {
       const side = event.sign < 0 ? 'left' : 'right';
       ui['rival-intent'].textContent = event.riderId + ' / ' + event.style.toUpperCase() + ' / turning ' + side;
+    } else if (event.type === 'operation-warning') {
+      showToast(event.message);
+      announce(event.message);
+      effectMotif('wall');
+    } else if (event.type === 'operation-checkpoint') {
+      showToast(event.name.toUpperCase() + ' / ' + event.progress + '/' + event.total);
+      announce(event.name + ' crossed. ' + event.progress + ' of ' + event.total + '.');
+      beep(760 + event.progress * 90, 0.12, 'triangle', 0.045);
+      updateHud();
     } else if (event.type === 'skill') {
       showToast(event.kind === 'clean-trap' ? 'CLEAN TRAP +' + event.points : 'CLOSE ESCAPE +' + event.points);
       updateHud();
@@ -1097,6 +1340,51 @@ function gateMesh(out) {
     box(out,x,5.89,-LIMIT-.94,2.55,.07,.08,getMap(round.map).palette.rail,2);
   }
 }
+function boundaryMesh(out, limit, color, height = .08) {
+  for (const side of [-1,1]) {
+    box(out,side*limit,height/2,0,.18,height,limit*2+.25,color,2);
+    box(out,0,height/2,side*limit,limit*2+.25,height,.18,color,2);
+  }
+}
+function operationMesh(out, scene) {
+  if (!round.operation) return;
+  const mission=getOperation(round.operation.id), op=round.operation;
+  const elapsed=scene.time ?? scene.elapsed;
+  if (mission.kind === 'checkpoints') {
+    mission.gates.forEach((gate,index)=>{
+      const cx=(gate.minX+gate.maxX)/2, cz=(gate.minZ+gate.maxZ)/2;
+      const sx=gate.maxX-gate.minX, sz=gate.maxZ-gate.minZ;
+      const open=elapsed>=gate.openFrom && elapsed<gate.openUntil;
+      const color=index<op.progress ? [.08,.22,.27] : open ? [.12,.95,.66] : [1,.41,.18];
+      // The closed slab is the same rectangle used by swept collision.
+      if(!open) box(out,cx,.55,cz,sx,1.1,sz,mixColor(color,.48));
+      for(const x of [gate.minX,gate.maxX])
+        box(out,x,1.2,cz,.16,2.4,sz+.12,color,2);
+      for(const z of [gate.minZ,gate.maxZ])
+        box(out,cx,.06,z,sx+.12,.12,.16,color,2);
+      box(out,cx,2.42,cz,sx+.12,.1,sz+.12,color,2);
+    });
+  } else if (mission.kind === 'scanner') {
+    const lane=op.beam?.x;
+    const craftX=lane ?? -19 + ((elapsed*5)%38);
+    // A suspended, angular search craft built from simple original geometry.
+    box(out,craftX,4.6,0,3.8,.55,3.2,[.025,.095,.14]);
+    box(out,craftX,5.0,0,1.3,1.0,1.3,[.12,.47,.55],2);
+    for(const side of [-1,1]) {
+      box(out,craftX+side*2.5,4.4,0,2.2,.24,.75,[.05,.2,.26]);
+      box(out,craftX+side*3.1,3.2,0,.18,2.5,.18,[.15,.59,.64],2);
+    }
+    if(op.beam) {
+      const color=op.beam.active ? [1,.20,.12] : [1,.74,.20];
+      box(out,lane,.035,0,1.3,.07,48,color,2);
+      if(op.beam.active) box(out,lane,.65,0,1.3,1.3,48,mixColor(color,.7),2);
+    }
+  } else if (mission.kind === 'collapse') {
+    if(scene.limit < getMap(round.map).limit)
+      boundaryMesh(out,scene.limit,[1,.26,.16],1.2);
+    if(op.nextLimit) boundaryMesh(out,op.nextLimit,[1,.76,.23],.12);
+  }
+}
 function displayRound() {
   return mode === 'highlight' && highlight
     ? highlight.frames[highlight.index] : round;
@@ -1157,6 +1445,7 @@ function draw(renderDt) {
   gl.drawArrays(gl.TRIANGLES, 0, staticData.length / 7);
   const dynamic = [];
   gateMesh(dynamic);
+  operationMesh(dynamic, scene);
   for (const segment of scene.segments) trailMesh(dynamic, segment, scene.time ?? scene.elapsed);
   for (const rider of scene.riders) if (rider.alive) bikeMesh(dynamic, rider);
   if(mode==='highlight' && highlight && highlight.elapsed>highlight.duration-1.15) {
@@ -1183,6 +1472,7 @@ function drawRadar() {
   const height = radar.height;
   const map=getMap(round.map);
   const limit=map.limit;
+  const playLimit=scene.limit ?? round.limit;
   const scale = width / (limit*2+6);
   const at = value => (value + limit + 3) * scale;
   ctx.clearRect(0, 0, width, height);
@@ -1197,12 +1487,39 @@ function drawRadar() {
     ctx.moveTo(0, p); ctx.lineTo(width, p);
     ctx.stroke();
   }
-  ctx.strokeStyle = map.palette.radar;
+  ctx.strokeStyle = playLimit < limit ? 'rgba(120,155,165,.3)' : map.palette.radar;
   ctx.lineWidth = 3;
   ctx.strokeRect(at(-limit), at(-limit), limit * 2 * scale, limit * 2 * scale);
+  if(playLimit < limit) {
+    ctx.strokeStyle='#ff6d53';
+    ctx.strokeRect(at(-playLimit),at(-playLimit),playLimit*2*scale,playLimit*2*scale);
+  }
   ctx.fillStyle = map.palette.radar;
   for (const o of map.obstacles)
     ctx.fillRect(at(o.minX),at(o.minZ),(o.maxX-o.minX)*scale,(o.maxZ-o.minZ)*scale);
+  if(round.operation) {
+    const mission=getOperation(round.operation.id), op=round.operation;
+    if(mission.kind==='checkpoints') {
+      mission.gates.forEach((gate,index)=>{
+        const open=(scene.time ?? scene.elapsed)>=gate.openFrom && (scene.time ?? scene.elapsed)<gate.openUntil;
+        ctx.strokeStyle=index<op.progress ? '#537a83' : open ? '#5ff7ab' : '#ff7b53';
+        ctx.lineWidth=index===op.progress ? 3 : 2;
+        ctx.strokeRect(at(gate.minX),at(gate.minZ),
+          (gate.maxX-gate.minX)*scale,(gate.maxZ-gate.minZ)*scale);
+        ctx.fillStyle=ctx.strokeStyle;
+        ctx.font='bold 13px Rajdhani, sans-serif';
+        ctx.fillText(String(index+1),at(gate.minX),at(gate.minZ)-3);
+      });
+    } else if(mission.kind==='scanner' && op.beam) {
+      ctx.fillStyle=op.beam.active ? '#ff4c37' : '#ffd05c';
+      ctx.fillRect(at(op.beam.x-.65),at(-24),1.3*scale,48*scale);
+    } else if(mission.kind==='collapse' && op.nextLimit) {
+      ctx.strokeStyle='#ffcc55';ctx.lineWidth=2;ctx.setLineDash([5,4]);
+      ctx.strokeRect(at(-op.nextLimit),at(-op.nextLimit),
+        op.nextLimit*2*scale,op.nextLimit*2*scale);
+      ctx.setLineDash([]);
+    }
+  }
   for (const segment of scene.segments) {
     const color = segment.rider.color;
     ctx.strokeStyle = 'rgba(' +
@@ -1307,6 +1624,7 @@ function frame(now) {
     }
     if(highlight.elapsed>=highlight.duration) completeHighlight();
   }
+  if (sessionMode === 'operations' && mode === 'running') updateOperationHud();
   if (mode !== 'paused') {
     updateParticles(realDt);
     for (const [id,lean] of turnLean) {
@@ -1341,6 +1659,7 @@ ui.start.addEventListener('click', () => {
   else start();
 });
 ui['lesson-start'].addEventListener('click', startLesson);
+skipBriefButton.addEventListener('click', () => { if (mode === 'operation-brief') start(); });
 ui['change-mode'].addEventListener('click', showMenu);
 skipLesson.addEventListener('click', showMenu);
 skipHighlightButton.addEventListener('click', completeHighlight);
@@ -1349,6 +1668,9 @@ rivalSelect.addEventListener('change', () => { writeLocal(RIVAL_KEY, rivalSelect
 difficultySelect.addEventListener('change', () => { writeLocal(DIFFICULTY_KEY, difficultySelect.value); syncSetup(); });
 mapSelect.addEventListener('change', () => { writeLocal(MAP_KEY, mapSelect.value); syncSetup(); });
 ruleSelect.addEventListener('change', () => { writeLocal(RULE_KEY, ruleSelect.value); syncSetup(); });
+operationSelect.addEventListener('change', () => { writeLocal(OPERATION_KEY, operationSelect.value); syncSetup(); });
+finalRivalInput.addEventListener('change', () => { writeLocal(FINAL_RIVAL_KEY, String(finalRivalInput.checked)); syncSetup(); });
+trailLookSelect.addEventListener('change', () => { lookChoice = trailLookSelect.value; writeLocal(LOOK_KEY, lookChoice); if (mode === 'ready') { applyPlayerLook(); drawRadar(); } });
 volumeInput.addEventListener('input', () => {
   volume = Number(volumeInput.value);
   writeLocal(VOLUME_KEY, String(volume));
@@ -1434,7 +1756,7 @@ window.addEventListener('keydown', event => {
     event.preventDefault();
     launch();
   } else if (!interactive && (event.key === 'Enter' || event.key === ' ') &&
-      (mode === 'ready' || mode === 'won' || mode === 'lost')) {
+      (mode === 'ready' || mode === 'operation-brief' || mode === 'won' || mode === 'lost')) {
     event.preventDefault();
     start();
   }
@@ -1460,7 +1782,10 @@ canvas.addEventListener('webglcontextrestored', () => {
 });
 window.addEventListener('resize', resize);
 
-modeSelect.value = ['duel', 'arena'].includes(readLocal(MODE_KEY)) ? readLocal(MODE_KEY) : 'duel';
+modeSelect.value = ['duel', 'arena', 'operations'].includes(readLocal(MODE_KEY)) ? readLocal(MODE_KEY) : 'duel';
+operationSelect.value = ['portal', 'sweep', 'collapse', 'journey'].includes(readLocal(OPERATION_KEY)) ? readLocal(OPERATION_KEY) : 'portal';
+finalRivalInput.checked = readLocal(FINAL_RIVAL_KEY) !== 'false';
+syncLookOptions();
 rivalSelect.value = DUEL_RIVALS[readLocal(RIVAL_KEY)] ? readLocal(RIVAL_KEY) : 'hunter';
 difficultySelect.value = DIFFICULTIES[readLocal(DIFFICULTY_KEY)] ? readLocal(DIFFICULTY_KEY) : 'standard';
 mapSelect.value = MAPS[readLocal(MAP_KEY)] ? readLocal(MAP_KEY) : 'classic';

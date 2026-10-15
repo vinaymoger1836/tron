@@ -1,3 +1,4 @@
+import { getOperation } from './operations.js';
 import { getMap, spawnClear } from './maps.js';
 export const STEP = 1 / 120;
 export const SPEED = 10.6;
@@ -76,6 +77,27 @@ export function createArenaRound({ seed = 1, difficulty = 'standard', map = 'cla
     ],
   });
 }
+export function createOperationRound({ id = 'portal', seed = 1, difficulty = 'standard' } = {}) {
+  const mission = getOperation(id);
+  const map = getMap(mission.map);
+  if (!spawnClear(map, mission.spawn) ||
+      (mission.rivalSpawn && !spawnClear(map, mission.rivalSpawn)))
+    throw new Error('Unsafe operation spawn: ' + mission.id);
+  const riders = [{ id: 'YOU', isPlayer: true, controller: 'none', ...mission.spawn }];
+  if (mission.rivalSpawn) riders.push({
+    id: 'SENTINEL', controller: 'ai', style: 'hunter',
+    color: COLORS.gold, ...mission.rivalSpawn,
+  });
+  const round = createRound({ seed, map: mission.map, difficulty, riders });
+  round.operation = {
+    id: mission.id, progress: 0, warning: '', dynamicObstacles: [],
+    pulseIndex: 0, targetLane: null, beam: null, nextLimit: null,
+    collapseIndex: 0,
+  };
+  round.dynamicObstacles = [];
+  return round;
+}
+
 function nextRandom(round) {
   let x = round.randomState;
   x ^= x << 13;
@@ -109,7 +131,7 @@ export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles, diff
     rule: rule === 'decay' ? 'decay' : 'classic',
     trailLifetime: rule === 'decay' ? 10 : Infinity,
     score: 0,
-    scoreBreakdown: { derez: 0, closeCall: 0, trap: 0, win: 0 },
+    scoreBreakdown: { derez: 0, closeCall: 0, trap: 0, checkpoint: 0, win: 0 },
     difficulty: DIFFICULTIES[difficulty] ? difficulty : 'standard',
     nearMissAwarded: false,
     trapAwarded: false,
@@ -117,6 +139,7 @@ export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles, diff
     riders: [],
     segments: [],
     obstacles: (obstacles || layout.obstacles).map(o => ({ ...o })),
+    dynamicObstacles: [],
     events: [],
     actionLog: [],
     nextSegmentId: 1,
@@ -202,7 +225,7 @@ function boundaryHit(limitValue, x, z, dx, dz) {
 function staticHit(round, rider, x, z, dx, dz) {
   let hit = null;
   const boundaryTime = boundaryHit(round.limit, x, z, dx, dz);
-  if (boundaryTime !== null) hit = { t: boundaryTime, reason: 'boundary' };
+  if (boundaryTime !== null) hit = { t: boundaryTime, reason: round.operation?.id === 'collapse' && round.limit < getMap(round.map).limit ? 'collapse' : 'boundary' };
 
   for (const obstacle of round.obstacles) {
     const t = sweptBox(
@@ -213,6 +236,14 @@ function staticHit(round, rider, x, z, dx, dz) {
     if (t !== null && (!hit || t < hit.t)) {
       hit = { t, reason: 'obstacle', by: obstacle.id };
     }
+  }
+
+  for (const obstacle of round.dynamicObstacles) {
+    const t = sweptBox(x, z, dx, dz,
+      obstacle.minX - RIDER_RADIUS, obstacle.maxX + RIDER_RADIUS,
+      obstacle.minZ - RIDER_RADIUS, obstacle.maxZ + RIDER_RADIUS);
+    if (t !== null && (!hit || t < hit.t))
+      hit = { t, reason: 'hazard', by: obstacle.id };
   }
 
   for (const segment of round.segments) {
@@ -333,8 +364,108 @@ function applyTurn(round, rider, sign) {
   }
 }
 
+function prepareOperation(round) {
+  const op = round.operation;
+  if (!op) return;
+  const mission = getOperation(op.id);
+  const t = round.elapsed;
+  round.dynamicObstacles = [];
+  op.warning = '';
+  op.nextLimit = null;
+  op.beam = null;
+  if (mission.kind === 'checkpoints') {
+    for (const [index, gate] of mission.gates.entries()) {
+      const open = t >= gate.openFrom && t < gate.openUntil;
+      if (!open) round.dynamicObstacles.push({ ...gate, id: gate.id + ' shutter' });
+      if (index === op.progress) {
+        if (open && op.announcedGate !== index) {
+          op.announcedGate = index;
+          round.events.push({ type: 'operation-warning', message: gate.id + ' is open.' });
+        }
+        if (!open) {
+          const wait = gate.openFrom - t;
+          op.warning = wait > 0 ? gate.id + ' opens in ' + wait.toFixed(1) + 's'
+            : gate.id + ' is closed. Retry the route.';
+          if (wait <= 0 && op.missedGate !== index) {
+            op.missedGate = index;
+            round.events.push({ type: 'operation-warning', message: gate.id + ' is closed.' });
+          }
+        }
+      }
+    }
+  } else if (mission.kind === 'scanner') {
+    const pulse = mission.pulses[op.pulseIndex];
+    if (pulse !== undefined && t >= pulse + mission.activeTime) {
+      op.pulseIndex++;
+      op.targetLane = null;
+    }
+    const next = mission.pulses[op.pulseIndex];
+    if (next !== undefined && t >= next - mission.warningTime) {
+      if (op.targetLane === null) {
+        const player = round.riders.find(r => r.isPlayer);
+        op.targetLane = Math.max(-22, Math.min(22, Math.round(player.x / 2) * 2));
+        round.events.push({ type: 'operation-warning', message: 'Scanner locked lane ' + op.targetLane + '. Move sideways.' });
+      }
+      const active = t >= next;
+      op.beam = { x: op.targetLane, active, firesAt: next, endsAt: next + mission.activeTime };
+      op.warning = active ? 'SCANNER BEAM ACTIVE' : 'SCANNER BEAM IN ' + Math.max(0, next - t).toFixed(1) + 's';
+      if (active) round.dynamicObstacles.push({
+        id: 'Scanner beam', minX: op.targetLane - 0.65, maxX: op.targetLane + 0.65,
+        minZ: -24, maxZ: 24,
+      });
+    }
+  } else if (mission.kind === 'collapse') {
+    const next = mission.steps[op.collapseIndex];
+    if (next && t >= next.at) {
+      round.limit = next.limit;
+      op.collapseIndex++;
+      round.events.push({ type: 'operation-warning', message: 'Containment ring locked at ' + next.limit + '.' });
+    }
+    const upcoming = mission.steps[op.collapseIndex];
+    if (upcoming && t >= upcoming.at - mission.warningTime) {
+      op.nextLimit = upcoming.limit;
+      op.warning = 'RING CLOSES IN ' + Math.max(0, upcoming.at - t).toFixed(1) + 's';
+      if (!op.warnedLimit || op.warnedLimit !== upcoming.limit) {
+        op.warnedLimit = upcoming.limit;
+        round.events.push({ type: 'operation-warning', message: 'Move inside the marked ring before it closes.' });
+      }
+    }
+  }
+}
+function completeOperation(round, bonus) {
+  round.score += bonus;
+  round.scoreBreakdown.win += bonus;
+  round.outcome = { kind: 'won' };
+}
+function updateOperationProgress(round, player) {
+  const op = round.operation;
+  const mission = getOperation(op.id);
+  if (mission.kind === 'checkpoints') {
+    const gate = mission.gates[op.progress];
+    if (gate && round.elapsed >= gate.openFrom && round.elapsed < gate.openUntil &&
+        player.x >= gate.minX && player.x <= gate.maxX &&
+        player.z >= gate.minZ && player.z <= gate.maxZ) {
+      op.progress++;
+      round.score += 400;
+      round.scoreBreakdown.checkpoint += 400;
+      round.events.push({ type: 'operation-checkpoint', progress: op.progress, total: mission.gates.length, name: gate.id });
+      if (op.progress === mission.gates.length)
+        completeOperation(round, 800 + Math.max(0, Math.floor((mission.timeLimit - round.elapsed) * 25)));
+    }
+    if (!round.outcome && round.elapsed >= mission.timeLimit)
+      round.outcome = { kind: 'lost', reason: 'timeout', by: gate?.id || 'final gate' };
+  } else if (mission.kind === 'scanner') {
+    if (round.elapsed >= mission.timeLimit) completeOperation(round, 1400);
+  } else if (mission.kind === 'collapse') {
+    if (round.elapsed >= mission.timeLimit) completeOperation(round, 1500);
+  } else if (mission.kind === 'rival' && round.riders.every(r => r.isPlayer || !r.alive)) {
+    completeOperation(round, 1250);
+  }
+}
+
 export function stepRound(round) {
   if (round.outcome) return round;
+  prepareOperation(round);
   if (round.rule === 'decay') {
     round.segments = round.segments.filter(segment =>
       segment.active || round.elapsed < segment.closedAt + round.trailLifetime);
@@ -416,6 +547,8 @@ export function stepRound(round) {
   if (player && !player.alive) {
     const crash = [...round.events].reverse().find(e => e.type === 'crash' && e.riderId === player.id);
     round.outcome = { kind: 'lost', reason: crash?.reason || 'unknown', by: crash?.by };
+  } else if (round.operation) {
+    updateOperationProgress(round, player);
   } else if (round.hasOpponents && round.riders.every(r => r.isPlayer || !r.alive)) {
     round.score += 1000;
     round.scoreBreakdown.win = 1000;
