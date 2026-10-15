@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRound, queueTurn, stepRound, STEP, SPEED } from '../dist/simulation.mjs';
+import { createRound, queueTurn, stepRound, STEP, SPEED } from '../dist/simulation.js';
 
 function run(round, ticks) {
   for (let i = 0; i < ticks && !round.outcome; i++) stepRound(round);
@@ -117,4 +117,20 @@ test('a seeded round replays the same AI decisions and state', () => {
     if (a.outcome || b.outcome) break;
   }
   assert.deepEqual(a.outcome, b.outcome);
+});
+
+test('a prior crash does not cause a later phantom rider collision', () => {
+  const round = createRound({
+    seed: 42,
+    riders: [
+      { id: 'YOU', x: 0, z: 0, dir: 1, isPlayer: true, controller: 'none' },
+      { id: 'B', x: 0.74, z: 0, dir: 3, controller: 'none' },
+      { id: 'C', x: 0, z: 0.63, dir: 0, controller: 'none' },
+    ],
+  });
+  stepRound(round);
+  assert.equal(round.riders[0].alive, false);
+  assert.equal(round.riders[1].alive, true);
+  assert.equal(round.riders[2].alive, false);
+  assert.equal(round.score, 250);
 });

@@ -1,13 +1,30 @@
+import { createRound, drainEvents, queueTurn, stepRound, STEP, LIMIT } from './simulation.js';
+
 const canvas = document.querySelector('#game');
 const radar = document.querySelector('#radar');
 const overlay = document.querySelector('#overlay');
-const ui = Object.fromEntries(['score','best','rivals','eyebrow','title','deck','start','toast','sound','pause'].map(id => [id, document.getElementById(id)]));
-const gl = canvas.getContext('webgl', { antialias: true, alpha: false, powerPreference: 'high-performance' });
-if (!gl) {
-  document.body.insertAdjacentHTML('beforeend', '<div class="webgl-error">This Grid needs WebGL. Please enable hardware acceleration or try another browser.</div>');
-  throw new Error('WebGL unavailable');
-}
+const countdown = document.querySelector('#countdown');
+const statusLive = document.querySelector('#status-live');
+const touchControls = document.querySelector('.touch-controls');
+const touchToggle = document.querySelector('#touch-toggle');
+const ui = Object.fromEntries(
+  ['score', 'best', 'rivals', 'eyebrow', 'title', 'deck', 'start', 'toast', 'sound', 'pause']
+    .map(id => [id, document.getElementById(id)]),
+);
 
+let gl;
+try {
+  gl = canvas.getContext('webgl', { antialias: true, alpha: false, powerPreference: 'high-performance' });
+} catch {
+  gl = null;
+}
+if (!gl) {
+  document.body.insertAdjacentHTML(
+    'beforeend',
+    '<div class="webgl-error" role="alert"><div>This Grid needs WebGL. Enable graphics acceleration or try another browser.<br><button class="primary" id="retry-webgl" type="button">RETRY</button></div></div>',
+  );
+  document.getElementById('retry-webgl').addEventListener('click', () => location.reload());
+} else {
 const VERTEX = `
 attribute vec3 aPosition;
 attribute vec3 aColor;
@@ -66,17 +83,47 @@ const loc = {
 gl.enable(gl.DEPTH_TEST);
 gl.clearColor(0.003, 0.013, 0.027, 1);
 
-const C = {
-  player: [0.15, 0.88, 1.0], orange: [1.0, 0.38, 0.09], violet: [0.75, 0.30, 1.0], gold: [1.0, 0.73, 0.20],
-  floor: [0.008, 0.026, 0.045], dark: [0.015, 0.038, 0.064], wall: [0.018, 0.072, 0.10]
-};
-const DIR = [[0,-1],[1,0],[0,1],[-1,0]];
-const LIMIT = 29;
-const SCORE_KEY = 'tron-grid-run-best';
-let best = Number(localStorage.getItem(SCORE_KEY) || 0);
-let score = 0, mode = 'ready', elapsed = 0, visualTime = 0, lastFrame = 0, lastTurn = -9, toastTimer = 0;
-let riders = [], segments = [], camera = [7, 13, 30], target = [0, 0, 0], muted = false, audio;
 
+const C = {
+  player: [0.15, 0.88, 1.0],
+  orange: [1.0, 0.38, 0.09],
+  violet: [0.75, 0.30, 1.0],
+  gold: [1.0, 0.73, 0.20],
+  floor: [0.008, 0.026, 0.045],
+  dark: [0.015, 0.038, 0.064],
+  wall: [0.018, 0.072, 0.10],
+};
+const DIR = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+const SCORE_KEY = 'tron-grid-run-best';
+const MUTE_KEY = 'tron-grid-run-muted';
+const TOUCH_KEY = 'tron-grid-run-touch';
+
+function readLocal(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function writeLocal(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* Storage can be unavailable. */ }
+}
+const savedBest = Number(readLocal(SCORE_KEY));
+let best = Number.isFinite(savedBest) && savedBest >= 0 ? savedBest : 0;
+let muted = readLocal(MUTE_KEY) === 'true';
+let touchChoice = readLocal(TOUCH_KEY) || 'auto';
+let round = createRound();
+let mode = 'ready';
+let pausedFrom = 'running';
+let visualTime = 0;
+let lastFrame = 0;
+let accumulator = 0;
+let countdownRemaining = 0;
+let countdownNumber = 0;
+let generation = 0;
+let toastSequence = 0;
+let graphicsLost = false;
+let camera = [7, 13, 31];
+let target = [0, 0, 0];
+let particles = [];
+let audio;
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 function mixColor(color, shade) { return color.map(v => Math.min(1, v * shade)); }
 function vertex(out, p, color, kind) { out.push(p[0],p[1],p[2],color[0],color[1],color[2],kind); }
 function quad(out, a,b,c,d,color,kind=0) {
@@ -95,15 +142,15 @@ function box(out,x,y,z,sx,sy,sz,color,kind=0) {
 const staticData = [];
 quad(staticData,[-32,0,-32],[32,0,-32],[32,0,32],[-32,0,32],C.floor,1);
 for (const s of [-1,1]) {
-  box(staticData, s*30.5,.62,0,.34,1.24,61,C.wall);
-  box(staticData, 0,.62,s*30.5,61,1.24,.34,C.wall);
-  box(staticData, s*30.5,1.26,0,.18,.10,61,[.06,.66,.82],2);
-  box(staticData, 0,1.26,s*30.5,61,.10,.18,[.06,.66,.82],2);
+  box(staticData, s*LIMIT,.62,0,.34,1.24,LIMIT*2+.5,C.wall);
+  box(staticData, 0,.62,s*LIMIT,LIMIT*2+.5,1.24,.34,C.wall);
+  box(staticData, s*LIMIT,1.26,0,.18,.10,LIMIT*2+.5,[.06,.66,.82],2);
+  box(staticData, 0,1.26,s*LIMIT,LIMIT*2+.5,.10,.18,[.06,.66,.82],2);
   for(let i=-3;i<=3;i++) {
-    box(staticData,s*30.5,1.2,i*8,.48,2.4,.48,[.025,.18,.25]);
-    box(staticData,i*8,1.2,s*30.5,.48,2.4,.48,[.025,.18,.25]);
-    box(staticData,s*30.5,2.34,i*8,.5,.08,.5,[.13,.85,1],2);
-    box(staticData,i*8,2.34,s*30.5,.5,.08,.5,[.13,.85,1],2);
+    box(staticData,s*LIMIT,1.2,i*8,.48,2.4,.48,[.025,.18,.25]);
+    box(staticData,i*8,1.2,s*LIMIT,.48,2.4,.48,[.025,.18,.25]);
+    box(staticData,s*LIMIT,2.34,i*8,.5,.08,.5,[.13,.85,1],2);
+    box(staticData,i*8,2.34,s*LIMIT,.5,.08,.5,[.13,.85,1],2);
   }
 }
 const staticBuffer = gl.createBuffer();
@@ -141,122 +188,266 @@ function resize() {
   if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);}
 }
 
-function addRider(id,x,z,dir,color,isPlayer=false) {
-  const rider={id,x,z,dir,color,isPlayer,alive:true,nextDecision:0};
-  riders.push(rider);
-  rider.segment={rider,x1:x,z1:z,x2:x,z2:z,active:true,closedAt:-1};
-  segments.push(rider.segment);
+
+function announce(message) {
+  if (statusLive) statusLive.textContent = message;
 }
-function reset() {
-  riders=[];segments=[];score=0;elapsed=0;lastTurn=-9;
-  addRider('YOU',0,16,0,C.player,true);
-  addRider('RINZLER',-17,-16,1,C.orange);
-  addRider('SIREN',17,-14,3,C.violet);
-  addRider('GOLD',16,14,0,C.gold);
-  camera=[7,13,31];target=[0,0,0];
-  updateHud();drawRadar();
-}
+
 function updateHud() {
-  ui.score.textContent=String(score).padStart(5,'0');
-  ui.best.textContent=String(best).padStart(5,'0');
-  ui.rivals.textContent=String(riders.filter(r=>!r.isPlayer&&r.alive).length).padStart(2,'0');
+  ui.score.textContent = String(round.score).padStart(5, '0');
+  ui.best.textContent = String(best).padStart(5, '0');
+  ui.rivals.textContent = String(round.riders.filter(r => !r.isPlayer && r.alive).length).padStart(2, '0');
 }
-function setOverlay(eyebrow,title,deck,button) {
-  ui.eyebrow.textContent=eyebrow;ui.title.innerHTML=title;ui.deck.textContent=deck;ui.start.textContent=button;
+
+function setOverlay(eyebrow, title, deck, button) {
+  ui.eyebrow.textContent = eyebrow;
+  ui.title.innerHTML = title;
+  ui.deck.textContent = deck;
+  ui.start.textContent = button;
+  overlay.inert = false;
+  overlay.setAttribute('aria-hidden', 'false');
   overlay.classList.remove('hidden');
+  ui.start.focus({ preventScroll: true });
 }
-function hideOverlay(){overlay.classList.add('hidden');}
-function showToast(text) {
-  ui.toast.textContent=text;ui.toast.classList.add('show');
-  clearTimeout(toastTimer);toastTimer=setTimeout(()=>ui.toast.classList.remove('show'),1500);
+
+function hideOverlay() {
+  overlay.classList.add('hidden');
+  overlay.setAttribute('aria-hidden', 'true');
+  overlay.inert = true;
+  canvas.focus({ preventScroll: true });
 }
-function ensureAudio(){if(!audio)try{audio=new (window.AudioContext||window.webkitAudioContext)();}catch{muted=true;}}
-function beep(freq,duration=.11,type='sawtooth',gain=.035){
-  if(muted)return;ensureAudio();if(!audio)return;
-  if(audio.state==='suspended')audio.resume();
-  const o=audio.createOscillator(),g=audio.createGain(),t=audio.currentTime;
-  o.type=type;o.frequency.setValueAtTime(freq,t);o.frequency.exponentialRampToValueAtTime(Math.max(50,freq*.57),t+duration);
-  g.gain.setValueAtTime(gain,t);g.gain.exponentialRampToValueAtTime(.0001,t+duration);
-  o.connect(g).connect(audio.destination);o.start(t);o.stop(t+duration+.01);
+
+function showToast(message) {
+  const sequence = ++toastSequence;
+  ui.toast.textContent = message;
+  ui.toast.classList.add('show');
+  setTimeout(() => {
+    if (sequence === toastSequence) ui.toast.classList.remove('show');
+  }, 1100);
 }
-function finish(won){
-  if(mode!=='running')return;
-  mode=won?'won':'lost';
-  if(won){score+=1000;beep(700,.22,'triangle',.07);setTimeout(()=>beep(1100,.35,'triangle',.06),150);}
-  else beep(120,.5,'sawtooth',.08);
-  if(score>best){best=score;localStorage.setItem(SCORE_KEY,String(best));}
+
+function ensureAudio() {
+  if (!audio) {
+    try { audio = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch { muted = true; syncSoundButton(); }
+  }
+}
+
+function beep(freq, duration = 0.11, type = 'sawtooth', gain = 0.035) {
+  if (muted) return;
+  ensureAudio();
+  if (!audio) return;
+  if (audio.state === 'suspended') audio.resume().catch(() => {});
+  const oscillator = audio.createOscillator();
+  const envelope = audio.createGain();
+  const now = audio.currentTime;
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(freq, now);
+  oscillator.frequency.exponentialRampToValueAtTime(Math.max(50, freq * 0.57), now + duration);
+  envelope.gain.setValueAtTime(gain, now);
+  envelope.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+  oscillator.connect(envelope).connect(audio.destination);
+  oscillator.start(now);
+  oscillator.stop(now + duration + 0.01);
+}
+
+function syncSoundButton() {
+  ui.sound.textContent = muted ? '♪̸' : '♫';
+  ui.sound.setAttribute('aria-label', muted ? 'Unmute sound' : 'Mute sound');
+}
+
+function syncTouchControls() {
+  const coarse = window.matchMedia('(any-pointer: coarse)').matches;
+  touchControls.classList.remove('force-show', 'force-hide');
+  if (touchChoice === 'show') touchControls.classList.add('force-show');
+  if (touchChoice === 'hide') touchControls.classList.add('force-hide');
+  const shown = touchChoice === 'show' || (touchChoice === 'auto' && coarse);
+  if (touchToggle) {
+    touchToggle.setAttribute('aria-pressed', String(shown));
+    touchToggle.setAttribute('aria-label', shown ? 'Hide touch controls' : 'Show touch controls');
+    touchToggle.title = shown ? 'Hide touch controls' : 'Show touch controls';
+  }
+}
+
+function randomSeed() {
+  const forced = new URLSearchParams(location.search);
+  if (forced.has('seed')) {
+    const value = Number(forced.get('seed'));
+    if (Number.isSafeInteger(value) && value >= 0) return value >>> 0;
+  }
+  if (window.crypto?.getRandomValues) {
+    const value = new Uint32Array(1);
+    window.crypto.getRandomValues(value);
+    return value[0];
+  }
+  return Math.floor(Math.random() * 0x100000000);
+}
+
+function hideCountdown() {
+  countdown.classList.remove('show');
+  countdown.textContent = '';
+}
+
+function launch() {
+  if (mode !== 'countdown') return;
+  mode = 'running';
+  countdown.textContent = 'GO';
+  countdown.classList.add('show');
+  accumulator = 0;
+  lastFrame = performance.now();
+  beep(730, 0.2, 'triangle', 0.06);
+  announce('Go. Survive the Grid.');
+  const token = generation;
+  setTimeout(() => { if (token === generation && mode === 'running') hideCountdown(); }, 420);
+}
+
+function start() {
+  generation++;
+  round = createRound({ seed: randomSeed() });
+  mode = 'countdown';
+  countdownRemaining = 3;
+  countdownNumber = 0;
+  accumulator = 0;
+  lastFrame = performance.now();
+  camera = [7, 13, 31];
+  target = [0, 0, 0];
+  particles = [];
+  ++toastSequence;
+  ui.toast.classList.remove('show');
+  ui.pause.textContent = 'Ⅱ';
+  ui.pause.setAttribute('aria-label', 'Pause game');
   updateHud();
-  setTimeout(()=>setOverlay(won?'ALL RIVALS DEREZZED':'YOUR TRAIL ENDS HERE',won?'GRID <span>MASTER<small>01</small></span>':'END OF <span>LINE<small>01</small></span>',won?`You ruled the arena with ${score.toLocaleString()} points. A fresh Grid is waiting.`:`You scored ${score.toLocaleString()} points. Read the trails, time your turns, and run it again.`,'RUN AGAIN'),550);
-}
-function start(){
-  reset();mode='running';hideOverlay();ui.pause.textContent='Ⅱ';ui.pause.setAttribute('aria-label','Pause game');
-  beep(440,.1,'triangle');setTimeout(()=>beep(690,.15,'triangle'),110);
-  showToast('SURVIVE THE GRID');
-}
-function pause(){
-  if(mode==='running'){
-    mode='paused';ui.pause.textContent='▶';ui.pause.setAttribute('aria-label','Resume game');
-    setOverlay('CONNECTION HELD','GRID <span>PAUSED<small>01</small></span>','Your light trail is waiting. Return when you are ready.','RESUME');
-  } else if(mode==='paused'){
-    mode='running';hideOverlay();ui.pause.textContent='Ⅱ';ui.pause.setAttribute('aria-label','Pause game');
-    lastFrame=performance.now();
-  }
-}
-function turn(r,sign){
-  if(!r.alive)return;
-  r.segment.active=false;r.segment.closedAt=elapsed;
-  r.dir=(r.dir+sign+4)%4;
-  r.segment={rider:r,x1:r.x,z1:r.z,x2:r.x,z2:r.z,active:true,closedAt:-1};
-  segments.push(r.segment);
-  if(r.isPlayer){lastTurn=elapsed;beep(sign<0?560:720,.09,'triangle',.04);}
-}
-function playerTurn(sign){if(mode==='running'&&elapsed-lastTurn>.16)turn(riders[0],sign);}
-function collision(r,x,z,look=false){
-  if(Math.abs(x)>LIMIT||Math.abs(z)>LIMIT)return true;
-  for(const s of segments){
-    if(s===r.segment)continue;
-    if(s.rider===r&&elapsed-s.closedAt<.43)continue;
-    const minx=Math.min(s.x1,s.x2)-.23,maxx=Math.max(s.x1,s.x2)+.23;
-    const minz=Math.min(s.z1,s.z2)-.23,maxz=Math.max(s.z1,s.z2)+.23;
-    if(x>=minx&&x<=maxx&&z>=minz&&z<=maxz)return true;
-  }
-  if(!look)for(const other of riders){
-    if(other!==r&&other.alive&&Math.hypot(x-other.x,z-other.z)<.7)return true;
-  }
-  return false;
-}
-function freeDistance(r,dir){
-  const d=DIR[dir];
-  for(let a=.7;a<=10;a+=.55)if(collision(r,r.x+d[0]*a,r.z+d[1]*a,true))return a;
-  return 10;
-}
-function aiTurn(r){
-  if(elapsed<r.nextDecision)return;
-  r.nextDecision=elapsed+.16+Math.random()*.10;
-  const ahead=freeDistance(r,r.dir);
-  if(ahead<4.5){
-    const left=freeDistance(r,(r.dir+3)%4),right=freeDistance(r,(r.dir+1)%4);
-    if(left>1.4||right>1.4)turn(r,left>right?-1:1);
-  } else if(ahead<8&&Math.random()<.035){
-    const sign=Math.random()<.5?-1:1;
-    if(freeDistance(r,(r.dir+sign+4)%4)>7)turn(r,sign);
-  }
-}
-function update(dt){
-  elapsed+=dt;
-  for(const r of riders){
-    if(!r.alive)continue;
-    if(!r.isPlayer)aiTurn(r);
-    const d=DIR[r.dir],speed=r.isPlayer?10.6:8.8+(.4*Math.sin(elapsed*.8+r.x));
-    const nx=r.x+d[0]*speed*dt,nz=r.z+d[1]*speed*dt;
-    if(collision(r,nx,nz)){
-      r.alive=false;r.segment.active=false;r.segment.closedAt=elapsed;
-      if(r.isPlayer){finish(false);break;}
-      score+=250;beep(185,.22,'sawtooth',.045);showToast(`${r.id} DEREZZED  +250`);updateHud();
-    }else{r.x=nx;r.z=nz;r.segment.x2=nx;r.segment.z2=nz;}
-  }
-  if(mode==='running'&&riders.slice(1).every(r=>!r.alive))finish(true);
   drawRadar();
+  hideOverlay();
+  countdown.classList.add('show');
+  countdown.textContent = '3';
+  countdownNumber = 3;
+  beep(440, 0.08, 'triangle', 0.03);
+  announce('Round starting. Three, two, one.');
+}
+
+function pause() {
+  if (graphicsLost) return;
+  if (mode === 'running' || mode === 'countdown') {
+    pausedFrom = mode;
+    mode = 'paused';
+    accumulator = 0;
+    ui.pause.textContent = '▶';
+    ui.pause.setAttribute('aria-label', 'Resume game');
+    setOverlay('CONNECTION HELD', 'GRID <span>PAUSED<small>01</small></span>',
+      'The Grid is waiting. Resume when you are ready.', 'RESUME');
+    announce('Game paused.');
+  } else if (mode === 'paused') {
+    mode = pausedFrom;
+    lastFrame = performance.now();
+    accumulator = 0;
+    hideOverlay();
+    ui.pause.textContent = 'Ⅱ';
+    ui.pause.setAttribute('aria-label', 'Pause game');
+    announce('Game resumed.');
+  }
+}
+
+function playerTurn(sign) {
+  if (mode === 'running') queueTurn(round, 'YOU', sign);
+}
+
+function crashMessage(outcome) {
+  if (outcome.reason === 'boundary') return 'You hit the arena edge.';
+  if (outcome.reason === 'obstacle') return 'You hit a barrier.';
+  if (outcome.reason === 'rider') return 'You collided with ' + (outcome.by || 'another rider') + '.';
+  if (outcome.reason === 'trail') {
+    return outcome.by === 'YOU'
+      ? 'You crossed your own light wall.'
+      : 'You crossed ' + (outcome.by || 'a rival') + '\'s light wall.';
+  }
+  return 'Your cycle was derezzed.';
+}
+
+function spawnDerez(event) {
+  if (reducedMotion.matches) return;
+  const rider = round.riders.find(r => r.id === event.riderId);
+  const color = rider?.color || C.player;
+  for (let i = 0; i < 12; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1.5 + Math.random() * 3;
+    particles.push({
+      x: event.x, y: 0.55, z: event.z,
+      vx: Math.cos(angle) * speed,
+      vy: 1.2 + Math.random() * 2.8,
+      vz: Math.sin(angle) * speed,
+      age: 0,
+      life: 0.35 + Math.random() * 0.35,
+      color,
+    });
+  }
+}
+
+function updateParticles(dt) {
+  if (reducedMotion.matches) { particles = []; return; }
+  for (const particle of particles) {
+    particle.age += dt;
+    particle.x += particle.vx * dt;
+    particle.y += particle.vy * dt;
+    particle.z += particle.vz * dt;
+    particle.vy -= 7 * dt;
+  }
+  particles = particles.filter(particle => particle.age < particle.life);
+}
+
+function finish(event) {
+  mode = event.kind;
+  accumulator = 0;
+  if (round.score > best) {
+    best = round.score;
+    writeLocal(SCORE_KEY, String(best));
+  }
+  updateHud();
+  const won = event.kind === 'won';
+  if (won) {
+    beep(740, 0.2, 'triangle', 0.06);
+  } else {
+    beep(140, 0.3, 'sawtooth', 0.07);
+  }
+  const reason = won
+    ? 'All rivals derezzed. You scored ' + round.score.toLocaleString() + ' points.'
+    : crashMessage(event) + ' You scored ' + round.score.toLocaleString() + ' points.';
+  announce(won ? 'Round won. ' + reason : 'Round lost. ' + reason);
+  const token = generation;
+  setTimeout(() => {
+    if (token !== generation || (mode !== 'won' && mode !== 'lost')) return;
+    hideCountdown();
+    setOverlay(
+      won ? 'ALL RIVALS DEREZZED' : 'YOUR TRAIL ENDS HERE',
+      won ? 'GRID <span>MASTER<small>01</small></span>' : 'END OF <span>LINE<small>01</small></span>',
+      reason,
+      'RUN AGAIN',
+    );
+  }, reducedMotion.matches ? 0 : 240);
+}
+
+function handleEvents() {
+  for (const event of drainEvents(round)) {
+    if (event.type === 'turn-queued' && event.riderId === 'YOU') {
+      showToast(event.sign < 0 ? 'LEFT TURN QUEUED' : 'RIGHT TURN QUEUED');
+      beep(340, 0.045, 'triangle', 0.015);
+    } else if (event.type === 'turn' && event.riderId === 'YOU') {
+      beep(event.sign < 0 ? 560 : 720, 0.08, 'triangle', 0.035);
+      if (event.nearMiss) {
+        showToast('CLOSE CALL');
+        beep(980, 0.14, 'sine', 0.025);
+      }
+    } else if (event.type === 'crash') {
+      spawnDerez(event);
+      if (event.riderId !== 'YOU') {
+        showToast(event.riderId + ' DEREZZED  +250');
+        beep(190, 0.18, 'sawtooth', 0.038);
+        updateHud();
+      }
+    } else if (event.type === 'round-end') {
+      finish(event);
+    }
+  }
 }
 function trailMesh(out,s){
   const dx=s.x2-s.x1,dz=s.z2-s.z1,len=Math.hypot(dx,dz);
@@ -289,58 +480,231 @@ function bikeMesh(out,r){
   }
   bikePart(out,r,-1.0,0,.8,.20,.47,.11,c,2);
 }
-function draw(){
+
+function draw(renderDt) {
+  if (graphicsLost) return;
   resize();
-  const p=riders[0],d=DIR[p.dir],desired=[p.x-d[0]*14-d[1]*5,10.2,p.z-d[1]*14+d[0]*5];
-  const aim=[p.x+d[0]*5,.55,p.z+d[1]*5];
-  const smooth=mode==='ready'?.045:.095;
-  camera=camera.map((v,i)=>v+(desired[i]-v)*smooth);
-  target=target.map((v,i)=>v+(aim[i]-v)*smooth);
-  const matrix=multiply(perspective(Math.PI/3,canvas.width/canvas.height,.1,145),lookAt(camera,target));
-  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-  gl.uniformMatrix4fv(loc.matrix,false,matrix);gl.uniform3fv(loc.camera,camera);gl.uniform1f(loc.time,visualTime);
-  bind(staticBuffer);gl.drawArrays(gl.TRIANGLES,0,staticData.length/7);
-  const dynamic=[];
-  for(const s of segments)trailMesh(dynamic,s);
-  for(const r of riders)if(r.alive)bikeMesh(dynamic,r);
-  gl.bindBuffer(gl.ARRAY_BUFFER,dynamicBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(dynamic),gl.DYNAMIC_DRAW);
-  bind(dynamicBuffer);gl.drawArrays(gl.TRIANGLES,0,dynamic.length/7);
-}
-function drawRadar(){
-  const ctx=radar.getContext('2d'),w=radar.width,h=radar.height,k=w/64,at=v=>(v+32)*k;
-  ctx.clearRect(0,0,w,h);ctx.fillStyle='#07121d';ctx.fillRect(0,0,w,h);
-  ctx.strokeStyle='rgba(78,220,243,.12)';ctx.lineWidth=1;
-  for(let i=0;i<=8;i++){let p=i*w/8;ctx.beginPath();ctx.moveTo(p,0);ctx.lineTo(p,h);ctx.moveTo(0,p);ctx.lineTo(w,p);ctx.stroke();}
-  ctx.strokeStyle='rgba(94,223,243,.5)';ctx.lineWidth=3;ctx.strokeRect(at(-29),at(-29),58*k,58*k);
-  for(const s of segments){
-    const c=s.rider.color;ctx.strokeStyle=`rgba(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)},.7)`;
-    ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(at(s.x1),at(s.z1));ctx.lineTo(at(s.x2),at(s.z2));ctx.stroke();
+  const player = round.riders.find(r => r.isPlayer);
+  if (!player) return;
+  const direction = DIR[player.dir];
+  const desired = [
+    player.x - direction[0] * 14 - direction[1] * 5,
+    10.2,
+    player.z - direction[1] * 14 + direction[0] * 5,
+  ];
+  const aim = [
+    player.x + direction[0] * 5,
+    0.55,
+    player.z + direction[1] * 5,
+  ];
+  const alpha = reducedMotion.matches ? 1 : 1 - Math.exp(-(mode === 'ready' ? 2.8 : 6) * renderDt);
+  camera = camera.map((value, i) => value + (desired[i] - value) * alpha);
+  target = target.map((value, i) => value + (aim[i] - value) * alpha);
+  const matrix = multiply(
+    perspective(Math.PI / 3, canvas.width / canvas.height, 0.1, 145),
+    lookAt(camera, target),
+  );
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.uniformMatrix4fv(loc.matrix, false, matrix);
+  gl.uniform3fv(loc.camera, camera);
+  gl.uniform1f(loc.time, visualTime);
+  bind(staticBuffer);
+  gl.drawArrays(gl.TRIANGLES, 0, staticData.length / 7);
+  const dynamic = [];
+  for (const segment of round.segments) trailMesh(dynamic, segment);
+  for (const rider of round.riders) if (rider.alive) bikeMesh(dynamic, rider);
+  for (const particle of particles) {
+    const size = Math.max(0.025, 0.13 * (1 - particle.age / particle.life));
+    box(dynamic, particle.x, Math.max(0.1, particle.y), particle.z,
+      size, size, size, particle.color, 2);
   }
-  for(const r of riders)if(r.alive){
-    const c=r.color;ctx.fillStyle=`rgb(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)})`;
-    ctx.beginPath();ctx.arc(at(r.x),at(r.z),r.isPlayer?5:3.5,0,Math.PI*2);ctx.fill();
-  }
-}
-function frame(now){
-  const dt=Math.min((now-(lastFrame||now))/1000,.05);lastFrame=now;visualTime+=dt;
-  if(mode==='running')update(dt);
-  draw();requestAnimationFrame(frame);
+  gl.bindBuffer(gl.ARRAY_BUFFER, dynamicBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(dynamic), gl.DYNAMIC_DRAW);
+  bind(dynamicBuffer);
+  gl.drawArrays(gl.TRIANGLES, 0, dynamic.length / 7);
 }
 
-ui.start.addEventListener('click',()=>mode==='paused'?pause():start());
-ui.pause.addEventListener('click',pause);
-ui.sound.addEventListener('click',()=>{muted=!muted;ui.sound.textContent=muted?'♪̸':'♫';ui.sound.setAttribute('aria-label',muted?'Unmute sound':'Mute sound');if(!muted)beep(650);});
-document.getElementById('left').addEventListener('pointerdown',e=>{e.preventDefault();playerTurn(-1);});
-document.getElementById('right').addEventListener('pointerdown',e=>{e.preventDefault();playerTurn(1);});
-window.addEventListener('keydown',e=>{
-  if(['ArrowLeft','ArrowRight',' ','ArrowUp','ArrowDown'].includes(e.key))e.preventDefault();
-  if(e.repeat)return;
-  if(e.key==='ArrowLeft'||e.key.toLowerCase()==='a')playerTurn(-1);
-  else if(e.key==='ArrowRight'||e.key.toLowerCase()==='d')playerTurn(1);
-  else if(e.key.toLowerCase()==='p'||e.key==='Escape')pause();
-  else if(e.key.toLowerCase()==='m')ui.sound.click();
-  else if((e.key==='Enter'||e.key===' ')&&mode!=='running')mode==='paused'?pause():start();
+function drawRadar() {
+  const ctx = radar.getContext('2d');
+  if (!ctx) return;
+  const width = radar.width;
+  const height = radar.height;
+  const scale = width / 64;
+  const at = value => (value + 32) * scale;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = '#07121d';
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = 'rgba(78,220,243,.12)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 8; i++) {
+    const p = i * width / 8;
+    ctx.beginPath();
+    ctx.moveTo(p, 0); ctx.lineTo(p, height);
+    ctx.moveTo(0, p); ctx.lineTo(width, p);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(94,223,243,.5)';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(at(-LIMIT), at(-LIMIT), LIMIT * 2 * scale, LIMIT * 2 * scale);
+  for (const segment of round.segments) {
+    const color = segment.rider.color;
+    ctx.strokeStyle = 'rgba(' +
+      Math.round(color[0] * 255) + ',' +
+      Math.round(color[1] * 255) + ',' +
+      Math.round(color[2] * 255) + ',.7)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(at(segment.x1), at(segment.z1));
+    ctx.lineTo(at(segment.x2), at(segment.z2));
+    ctx.stroke();
+  }
+  for (const rider of round.riders) {
+    if (!rider.alive) continue;
+    const color = rider.color;
+    ctx.fillStyle = 'rgb(' +
+      Math.round(color[0] * 255) + ',' +
+      Math.round(color[1] * 255) + ',' +
+      Math.round(color[2] * 255) + ')';
+    if (rider.isPlayer) {
+      ctx.save();
+      ctx.translate(at(rider.x), at(rider.z));
+      ctx.rotate(rider.dir * Math.PI / 2);
+      ctx.beginPath();
+      ctx.moveTo(0, -7);
+      ctx.lineTo(5, 5);
+      ctx.lineTo(-5, 5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.7;
+      ctx.stroke();
+      ctx.restore();
+    } else {
+      ctx.beginPath();
+      ctx.arc(at(rider.x), at(rider.z), 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+}
+
+function frame(now) {
+  const realDt = lastFrame ? Math.min(Math.max((now - lastFrame) / 1000, 0), 0.25) : 0;
+  lastFrame = now;
+  if (!reducedMotion.matches && mode !== 'paused') visualTime += realDt;
+  if (mode === 'countdown') {
+    countdownRemaining -= realDt;
+    const nextNumber = Math.ceil(countdownRemaining);
+    if (nextNumber <= 0) {
+      launch();
+    } else if (nextNumber !== countdownNumber) {
+      countdownNumber = nextNumber;
+      countdown.textContent = String(nextNumber);
+      beep(440 + (3 - nextNumber) * 95, 0.08, 'triangle', 0.03);
+    }
+  }
+  if (mode === 'running') {
+    accumulator += realDt;
+    let steps = 0;
+    while (accumulator >= STEP && steps < 16 && mode === 'running') {
+      stepRound(round);
+      handleEvents();
+      accumulator -= STEP;
+      steps++;
+    }
+    accumulator = Math.min(accumulator, STEP * 16);
+  }
+  updateParticles(realDt);
+  if (!graphicsLost) {
+    draw(realDt);
+    drawRadar();
+  }
+  requestAnimationFrame(frame);
+}
+
+ui.start.addEventListener('click', () => {
+  if (graphicsLost) location.reload();
+  else if (mode === 'paused') pause();
+  else start();
 });
-document.addEventListener('visibilitychange',()=>{if(document.hidden&&mode==='running')pause();});
-window.addEventListener('resize',resize);
-reset();requestAnimationFrame(frame);
+ui.pause.addEventListener('click', pause);
+ui.sound.addEventListener('click', () => {
+  muted = !muted;
+  writeLocal(MUTE_KEY, String(muted));
+  syncSoundButton();
+  if (!muted) beep(650);
+});
+if (touchToggle) {
+  touchToggle.addEventListener('click', () => {
+    const shown = touchChoice === 'show' ||
+      (touchChoice === 'auto' && window.matchMedia('(any-pointer: coarse)').matches);
+    touchChoice = shown ? 'hide' : 'show';
+    writeLocal(TOUCH_KEY, touchChoice);
+    syncTouchControls();
+  });
+}
+window.matchMedia('(any-pointer: coarse)').addEventListener?.('change', syncTouchControls);
+document.getElementById('left').addEventListener('pointerdown', event => {
+  event.preventDefault();
+  playerTurn(-1);
+});
+document.getElementById('right').addEventListener('pointerdown', event => {
+  event.preventDefault();
+  playerTurn(1);
+});
+canvas.addEventListener('pointerdown', () => {
+  if (mode === 'countdown') launch();
+});
+window.addEventListener('keydown', event => {
+  const interactive = event.target instanceof Element &&
+    event.target.closest('button, input, select, textarea, a');
+  if (interactive) return;
+  const key = event.key.toLowerCase();
+  if (mode === 'running' && (event.key === 'ArrowLeft' || key === 'a')) {
+    event.preventDefault();
+    playerTurn(-1);
+  } else if (mode === 'running' && (event.key === 'ArrowRight' || key === 'd')) {
+    event.preventDefault();
+    playerTurn(1);
+  } else if (key === 'p' || event.key === 'Escape') {
+    event.preventDefault();
+    pause();
+  } else if (key === 'm') {
+    ui.sound.click();
+  } else if ((event.key === 'Enter' || event.key === ' ') && mode === 'countdown') {
+    event.preventDefault();
+    launch();
+  } else if ((event.key === 'Enter' || event.key === ' ') &&
+      (mode === 'ready' || mode === 'won' || mode === 'lost')) {
+    event.preventDefault();
+    start();
+  }
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && (mode === 'running' || mode === 'countdown')) pause();
+});
+canvas.addEventListener('webglcontextlost', event => {
+  event.preventDefault();
+  graphicsLost = true;
+  generation++;
+  mode = 'paused';
+  accumulator = 0;
+  hideCountdown();
+  setOverlay('SIGNAL INTERRUPTED', 'GRID <span>OFFLINE<small>01</small></span>',
+    'The graphics connection was lost. Wait for recovery or reload the game.', 'RELOAD GAME');
+  announce('Graphics connection lost. Reload the game.');
+});
+canvas.addEventListener('webglcontextrestored', () => {
+  announce('Graphics restored. Reloading the game.');
+  location.reload();
+});
+window.addEventListener('resize', resize);
+
+syncSoundButton();
+syncTouchControls();
+updateHud();
+drawRadar();
+requestAnimationFrame(frame);
+}
