@@ -2337,7 +2337,7 @@ function frame(now) {
 
 overlay.addEventListener('keydown', event => {
   if (event.key !== 'Tab' || overlay.classList.contains('hidden')) return;
-  const items = [...overlay.querySelectorAll('button, select, input, summary')]
+  const items = [...overlay.querySelectorAll('button, select, input, summary, a')]
     .filter(item => !item.hidden && !item.closest('[hidden]') && item.getClientRects().length > 0 && getComputedStyle(item).visibility === 'visible');
   if (!items.length) return;
   const first = items[0], last = items[items.length - 1];

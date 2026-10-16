@@ -1,0 +1,11 @@
+{
+  "name": "tron-grid-run",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lan": "node lan-server.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

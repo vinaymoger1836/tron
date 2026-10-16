@@ -59,6 +59,23 @@ export function createDuelRound({ seed = 1, rival = 'hunter', difficulty = 'stan
   });
 }
 
+export function createLanRound({ seed = 1, playerIds = [], map = 'classic', roundNumber = 1 } = {}) {
+  if (playerIds.length < 2 || playerIds.length > 4 ||
+      new Set(playerIds).size !== playerIds.length)
+    throw new RangeError('LAN rounds require two to four distinct riders');
+  const layout = getMap(map);
+  const spawns = playerIds.length === 2 ? layout.spawns.duel : layout.spawns.arena;
+  const rotation = (Math.max(1, roundNumber) - 1) % spawns.length;
+  const colors = [COLORS.player, COLORS.orange, COLORS.violet, COLORS.gold];
+  const styles = ['player', 'hunter', 'survivor', 'trapper'];
+  const riders = playerIds.map((id, index) => {
+    const spawn = spawns[(index + rotation) % spawns.length];
+    if (!spawnClear(layout, spawn)) throw new Error('Unsafe LAN spawn on ' + layout.id);
+    return { id, ...spawn, color: colors[index], style: styles[index],
+      isPlayer: false, controller: 'none' };
+  });
+  return createRound({ seed, riders, map: layout.id, multiplayer: true });
+}
 export function createArenaRound({ seed = 1, difficulty = 'standard', map = 'classic', rule = 'classic' } = {}) {
   const layout = getMap(map);
   const names = ['AXIOM', 'HELIX', 'PULSE'];
@@ -123,10 +140,11 @@ function newSegment(round, rider) {
   };
 }
 
-export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles, difficulty = 'standard', map = 'classic', rule = 'classic' } = {}) {
+export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles, difficulty = 'standard', map = 'classic', rule = 'classic', multiplayer = false } = {}) {
   const layout = getMap(map);
   const round = {
     seed: seed >>> 0,
+    multiplayer: Boolean(multiplayer),
     randomState: (seed >>> 0) || 0x6d2b79f5,
     tick: 0,
     elapsed: 0,
@@ -633,7 +651,7 @@ export function stepRound(round) {
         reason: hit.reason, by: hit.by,
         x: rider.x, z: rider.z,
       });
-      if (!rider.isPlayer) {
+      if (!round.multiplayer && !rider.isPlayer) {
         round.score += 250;
         round.scoreBreakdown.derez += 250;
         if (hit.reason === 'trail' && hit.by === 'YOU' && !round.trapAwarded) {
@@ -649,7 +667,12 @@ export function stepRound(round) {
   round.tick++;
   round.elapsed = round.tick * STEP;
   const player = round.riders.find(r => r.isPlayer);
-  if (player && !player.alive) {
+  if (round.multiplayer) {
+    const alive = round.riders.filter(r => r.alive);
+    if (alive.length <= 1)
+      round.outcome = { kind: alive.length ? 'won' : 'draw',
+        winnerId: alive[0]?.id || null };
+  } else if (player && !player.alive) {
     const crash = [...round.events].reverse().find(e => e.type === 'crash' && e.riderId === player.id);
     round.outcome = { kind: 'lost', reason: crash?.reason || 'unknown', by: crash?.by };
   } else if (round.operation) {
