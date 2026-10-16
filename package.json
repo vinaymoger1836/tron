@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "lan": "node lan-server.mjs"
+    "lan": "node lan-server.mjs",
+    "start": "node online-server.mjs"
   },
   "engines": {
     "node": ">=20"

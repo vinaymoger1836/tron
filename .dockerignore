@@ -1,0 +1,8 @@
+.git
+artifacts
+node_modules
+.env*
+.secrets
+*.log
+README.md
+tests

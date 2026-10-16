@@ -8,7 +8,8 @@ const panel = $('#panel');
 const roomSection = $('#room');
 const statusLive = $('#status-live');
 const state = {
-  code: null, selfId: null, view: null, baseUrl: location.origin + '/lan.html',
+  code: null, selfId: null, view: null, online: false,
+  baseUrl: location.origin + '/lan.html',
   streamAbort: null, reconnectTimer: null, reconnecting: false,
   heldFire: false, lastPhase: null, lastRound: 0, leaving: false,
 };
@@ -70,8 +71,9 @@ async function createRoom() {
 async function joinRoom() {
   notice('', false, '#setup-notice');
   const code = $('#join-code').value.trim().toUpperCase();
-  if (!/^[A-Z2-9]{6}$/.test(code))
-    return notice('Enter the six-character room code.', true, '#setup-notice');
+  if (!(state.online ? /^[0-9]{6}$/ : /^[A-Z2-9]{6}$/).test(code))
+    return notice(state.online ? 'Enter the six-digit room code.' :
+      'Enter the six-character room code.', true, '#setup-notice');
   $('#join').disabled = true;
   try {
     const result = await post('/api/rooms/' + code + '/join', { name: $('#name').value });
@@ -163,6 +165,7 @@ function renderUi(view) {
   if (view.phase === 'countdown')
     $('#countdown').textContent = String(Math.max(1, Math.ceil(view.countdownMs / 1000)));
   $('#room-code-top').textContent = 'ROOM ' + view.code;
+  $('#room-code-large').value = view.code;
   const host = view.selfId === view.hostId;
   const full = view.players.length === view.maxPlayers && view.players.every(p => p.connected);
   $('#pause').hidden = !host || !['running', 'countdown', 'paused'].includes(view.phase);
@@ -172,7 +175,7 @@ function renderUi(view) {
     'round-result': 'HEAT COMPLETE', 'match-result': 'MATCH COMPLETE',
     paused: 'HOST PAUSED', 'connection-wait': 'CONNECTION HELD',
   };
-  $('#room-phase').textContent = labels[view.phase] || 'LAN ROOM';
+  $('#room-phase').textContent = labels[view.phase] || 'GAME ROOM';
   $('#room-title').innerHTML = view.phase === 'match-result'
     ? 'GRID <span>SECURED</span>' : view.phase === 'round-result'
       ? 'HEAT <span>ENDED</span>' : 'GRID <span>OPEN</span>';
@@ -180,7 +183,8 @@ function renderUi(view) {
   let message;
   if (view.phase === 'lobby')
     message = view.players.length + '/' + view.maxPlayers +
-      ' riders connected. Share the link, then the host starts the match.';
+      (state.online ? ' riders connected. Share the six-digit code, then the host starts the match.' :
+        ' riders connected. Share the link, then the host starts the match.');
   else if (view.phase === 'round-result' || view.phase === 'match-result') {
     const who = lastResult?.winnerId === view.selfId ? 'You' :
       lastResult?.winnerName || 'No rider';
@@ -345,6 +349,14 @@ $('#join').addEventListener('click', joinRoom);
 $('#join-code').addEventListener('keydown', event => { if (event.key === 'Enter') joinRoom(); });
 $('#start').addEventListener('click', () => action({ type: 'start' }));
 $('#pause').addEventListener('click', () => action({ type: 'pause' }));
+$('#copy-code').addEventListener('click', async () => {
+  const field = $('#room-code-large');
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(field.value);
+    else { field.select(); if (!document.execCommand('copy')) throw new Error('Copy unavailable'); }
+    notice('Room code copied. Share it with your friends.');
+  } catch { field.select(); notice('Select and copy the highlighted code.'); }
+});
 $('#copy-link').addEventListener('click', async () => {
   const link = $('#share-link');
   try {
@@ -386,19 +398,33 @@ document.addEventListener('keyup', event => {
 window.addEventListener('blur', () => fire(false));
 document.addEventListener('visibilitychange', () => { if (document.hidden) fire(false); });
 const roomFromUrl = new URLSearchParams(location.search).get('room')?.toUpperCase();
-if (roomFromUrl && /^[A-Z2-9]{6}$/.test(roomFromUrl)) $('#join-code').value = roomFromUrl;
+if (roomFromUrl && /^[A-Z0-9]{6}$/.test(roomFromUrl)) $('#join-code').value = roomFromUrl;
 (async () => {
   try {
     const status = await api('/api/lan/status');
     state.baseUrl = status.baseUrl || state.baseUrl;
-    if (roomFromUrl && /^[A-Z2-9]{6}$/.test(roomFromUrl)) {
+    state.online = !!status.online;
+    $('#online-code').hidden = !state.online;
+    $('#local-share').hidden = state.online;
+    if (!state.online) {
+      document.title = 'TRON: Grid Run / LAN Room';
+      $('#room-tag').textContent = 'LOCAL LAN';
+      $('#room-eyebrow').textContent = 'Friends on one network';
+      $('#room-heading').innerHTML = 'LAN <span>ROOM</span>';
+      $('#room-intro').textContent = 'Create a room on this computer, then share its LAN link or six-character code. All players use the same Wi-Fi or hotspot.';
+      $('#setup-hint').textContent = 'The room host must run node lan-server.mjs. Solo play stays available from the logo above.';
+      $('#join-code').inputMode = 'text';
+      $('#join-code').placeholder = 'ABC234';
+      $('#join-code').removeAttribute('pattern');
+    }
+    if (roomFromUrl && (state.online ? /^[0-9]{6}$/ : /^[A-Z2-9]{6}$/).test(roomFromUrl)) {
       state.code = roomFromUrl;
       connect();
     }
   } catch {
     $('#create').disabled = true;
     $('#join').disabled = true;
-    notice('Start the optional LAN host with node lan-server.mjs, then open its LAN address.',
+    notice('Room server unavailable. Open the online game server URL to create or join.',
       true, '#setup-notice');
   }
 })();

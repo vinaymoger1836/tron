@@ -8,7 +8,7 @@ import { createLanRound, drainEvents, queueTurn, setCycleFire, stepRound, STEP }
 import { MAPS } from './dist/maps.js';
 
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dist');
-const STATIC = new Set(['index.html', 'lan.html', 'lan.js', 'game.js', 'simulation.js',
+const STATIC = new Set(['index.html', 'lan.html', 'lan.js', 'peer.html', 'peer.js', 'game.js', 'simulation.js',
   'maps.js', 'match.js', 'arena.js', 'operations.js', 'grid-shift.js']);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8' };
 const ROOM_TTL = 60 * 60 * 1000;
@@ -16,12 +16,35 @@ const RECONNECT_MS = 15000;
 const SNAPSHOT_MS = 50;
 const ROOM_LIMIT = 24;
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const DIGITS = '0123456789';
 const rooms = new Map();
+const roomAttempts = new Map();
+let lastAttemptPrune = 0;
+
+function onlineOrigin() {
+  return process.env.TRON_PUBLIC_ORIGIN ? new URL(process.env.TRON_PUBLIC_ORIGIN) : null;
+}
+function allowRoomAttempt(req) {
+  if (!onlineOrigin()) return true;
+  const now = Date.now();
+  if (now - lastAttemptPrune > 60000) {
+    for (const [address, record] of roomAttempts)
+      if (now - record.started > 60000) roomAttempts.delete(address);
+    lastAttemptPrune = now;
+  }
+  const address = req.socket.remoteAddress || 'unknown';
+  let record = roomAttempts.get(address);
+  if (!record || now - record.started > 60000) {
+    record = { started: now, count: 0 }; roomAttempts.set(address, record);
+  }
+  return ++record.count <= 60;
+}
 
 function code() {
   let value;
   do {
-    value = Array.from({ length: 6 }, () => CODE_CHARS[randomInt(CODE_CHARS.length)]).join('');
+    const chars = onlineOrigin() ? DIGITS : CODE_CHARS;
+    value = Array.from({ length: 6 }, () => chars[randomInt(chars.length)]).join('');
   } while (rooms.has(value));
   return value;
 }
@@ -50,6 +73,7 @@ async function readJson(req) {
   try { return JSON.parse(body || '{}'); } catch { throw new Error('Invalid JSON.'); }
 }
 function hostAllowed(req) {
+  if (onlineOrigin()) return req.headers.host === onlineOrigin().host;
   try {
     const hostname = new URL('http://' + req.headers.host).hostname;
     if (hostname === 'localhost' || hostname === '127.0.0.1') return true;
@@ -59,6 +83,7 @@ function hostAllowed(req) {
 }
 function originAllowed(req) {
   if (!req.headers.origin) return true;
+  if (onlineOrigin()) return req.headers.origin === onlineOrigin().origin;
   try {
     const origin = new URL(req.headers.origin);
     return origin.host === req.headers.host && origin.protocol === 'http:';
@@ -72,7 +97,8 @@ function playerFor(room, req) {
 }
 function seatCookie(res, player) {
   res.setHeader('Set-Cookie', 'tron_lan_session=' + player.token +
-    '; Path=/api; HttpOnly; SameSite=Strict; Max-Age=3600');
+    '; Path=/api; HttpOnly; SameSite=Strict; Max-Age=3600' +
+    (onlineOrigin()?.protocol === 'https:' ? '; Secure' : ''));
 }
 function snapshot(room, selfId) {
   const round = room.round;
@@ -199,7 +225,9 @@ function authorizedRoom(id, req, res) {
   const room = rooms.get(id);
   if (!room) { fail(res, 404, 'Room not found.'); return null; }
   const player = playerFor(room, req);
-  if (!player) { fail(res, 403, 'This seat is unavailable. Rejoin the room.'); return null; }
+  if (!player) { fail(res, onlineOrigin() ? 404 : 403,
+    onlineOrigin() ? 'Room not found or seat unavailable.' :
+      'This seat is unavailable. Rejoin the room.'); return null; }
   return { room, player };
 }
 function createPlayer(id, value) {
@@ -207,6 +235,7 @@ function createPlayer(id, value) {
     stream: null, wins: 0, lastInputAt: 0, inputCount: 0 };
 }
 function lanBaseUrl(req) {
+  if (onlineOrigin()) return onlineOrigin().origin + '/lan.html';
   let address = req.socket.localAddress;
   if (!address || address === '127.0.0.1' || address === '0.0.0.0') {
     address = Object.values(os.networkInterfaces()).flat()
@@ -219,8 +248,10 @@ function lanBaseUrl(req) {
 async function handleApi(req, res, pathname) {
   if (!originAllowed(req)) return fail(res, 403, 'Open the room from this LAN server.');
   if (req.method === 'GET' && pathname === '/api/lan/status')
-    return json(res, 200, { available: true, maxPlayers: 4, baseUrl: lanBaseUrl(req) });
+    return json(res, 200, { available: true, maxPlayers: 4,
+      baseUrl: lanBaseUrl(req), online: !!onlineOrigin() });
   if (req.method === 'POST' && pathname === '/api/rooms') {
+    if (!allowRoomAttempt(req)) return fail(res, 429, 'Too many room requests. Try again shortly.');
     if (rooms.size >= ROOM_LIMIT) return fail(res, 503, 'Too many open rooms.');
     const body = await readJson(req);
     const maxPlayers = Number(body.maxPlayers);
@@ -236,8 +267,10 @@ async function handleApi(req, res, pathname) {
     seatCookie(res, host);
     return json(res, 201, { code: room.code, playerId: host.id });
   }
-  const route = /^\/api\/rooms\/([A-Z2-9]{6})(?:\/(join|stream|action|leave))?$/.exec(pathname);
+  const route = /^\/api\/rooms\/([A-Z0-9]{6})(?:\/(join|stream|action|leave))?$/.exec(pathname);
   if (!route) return fail(res, 404, 'Unknown room action.');
+  if (route[2] === 'join' && req.method === 'POST' && !allowRoomAttempt(req))
+    return fail(res, 429, 'Too many room requests. Try again shortly.');
   const room = rooms.get(route[1]);
   if (!room) return fail(res, 404, 'Room not found.');
   if (route[2] === 'join' && req.method === 'POST') {
@@ -322,6 +355,8 @@ async function handleApi(req, res, pathname) {
   return fail(res, 405, 'Method unavailable.');
 }
 async function handle(req, res) {
+  if (req.method === 'GET' && req.url === '/healthz')
+    return json(res, 200, { healthy: true });
   if (!hostAllowed(req)) return fail(res, 403, 'Use the local LAN address.');
   try {
     const url = new URL(req.url, 'http://' + req.headers.host);
