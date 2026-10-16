@@ -37,7 +37,7 @@
   </style>
 </head>
 <body>
-  <canvas id="arena" role="img" aria-label="Top-down multiplayer Grid arena"></canvas><div class="veil"></div>
+  <canvas id="arena" role="img" aria-label="Multiplayer Grid arena preview"></canvas><div class="veil"></div>
   <header class="top"><a class="brand" href="./index.html">TRON <b>/</b> GRID RUN</a><div class="meta"><span class="tag" id="room-tag">ONLINE ROOM</span><span id="room-code-top">NO ROOM</span><button id="pause" type="button" hidden>PAUSE</button></div></header>
   <div class="scorebar" id="scorebar" aria-label="Match score"></div>
   <main class="panel" id="panel">
@@ -45,7 +45,7 @@
       <p class="eyebrow" id="room-eyebrow">Play with friends online</p><h1 id="room-heading">ONLINE <span>ROOM</span></h1>
       <p class="intro" id="room-intro">Create a room and share its six-digit code. Friends open this site and enter the code to join.</p>
       <div class="fields"><label class="wide">YOUR RIDER NAME<input id="name" maxlength="18" autocomplete="nickname" value="Rider"></label><label class="wide">GAME MODE<select id="create-mode"><option value="duel">Duel / first to 3</option><option value="arena">Arena / 3 heats</option><option value="shift">Grid Shift / two forms</option></select></label><label>PLAYERS<select id="players"><option value="2">2 players</option><option value="3">3 players</option><option value="4">4 players</option></select></label><label>MAP<select id="map"><option value="classic">Classic Grid</option><option value="solar">Solar Circuit</option><option value="vault">Data Vault</option></select></label></div>
-      <p class="hint" id="create-mode-tip">The host can change the mode in the waiting room.</p>
+      <div class="fields" id="create-rule-field" hidden><label class="wide">WALL RULE<select id="create-rule"><option value="classic">Persistent</option><option value="decay">Advanced - 10s decay</option></select></label></div><p class="hint" id="create-mode-tip">The host can change the mode in the waiting room.</p>
       <div class="actions"><button class="primary" id="create" type="button">CREATE ROOM</button></div>
       <hr class="divider"><div class="fields"><label class="wide">JOIN ROOM CODE<input id="join-code" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" autocomplete="off" spellcheck="false" placeholder="000000"></label></div>
       <div class="actions"><button class="secondary" id="join" type="button">JOIN ROOM</button></div>
@@ -55,8 +55,8 @@
     <section id="room" hidden>
       <p class="eyebrow" id="room-phase">Waiting room</p><h1 id="room-title">GRID <span>OPEN</span></h1>
       <p class="message" id="room-message"></p>
-      <div class="fields" id="host-mode-field"><label class="wide">GAME MODE<select id="room-mode"><option value="duel">Duel / first to 3</option><option value="arena">Arena / 3 heats</option><option value="shift">Grid Shift / two forms</option></select></label></div>
-      <p class="hint" id="mode-summary"></p>
+      <div class="fields" id="host-mode-field"><label>GAME MODE<select id="room-mode"><option value="duel">Duel / first to 3</option><option value="arena">Arena / 3 heats</option><option value="shift">Grid Shift / two forms</option></select></label><label>MAP<select id="room-map"><option value="classic">Classic Grid</option><option value="solar">Solar Circuit</option><option value="vault">Data Vault</option></select></label></div>
+      <div class="fields" id="host-rule-field" hidden><label class="wide">WALL RULE<select id="room-rule"><option value="classic">Persistent</option><option value="decay">Advanced - 10s decay</option></select></label></div><p class="hint" id="mode-summary"></p>
       <ul class="roster" id="roster" aria-label="Players and score"></ul>
       <div class="room-code-card" id="online-code" hidden><label for="room-code-large">SHARE THIS SIX-DIGIT CODE</label><div class="share"><input id="room-code-large" readonly aria-label="Six-digit room code"><button class="secondary" id="copy-code" type="button">COPY CODE</button></div></div><div id="local-share"><label class="hint" for="share-link">ROOM LINK</label><div class="share"><input id="share-link" readonly aria-label="Room link"><button class="secondary" id="copy-link" type="button">COPY</button></div></div>
       <div class="actions"><button class="primary" id="start" type="button" hidden>START MATCH</button><button class="secondary" id="leave" type="button">LEAVE ROOM</button></div>

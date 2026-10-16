@@ -1,4 +1,4 @@
-﻿import { createRound, STEP } from './simulation.js';
+﻿import { createRound, sweptCircle, STEP } from './simulation.js';
 import { getMap, spawnClear } from './maps.js';
 
 const DIR = [[0, -1], [1, 0], [0, 1], [-1, 0]];
@@ -46,8 +46,10 @@ function worldHit(round, rider, x, z, dx, dz, radius, skipId = null) {
     }
   }
   for (const wall of round.obstacles) {
-    const t = boxHit(x, z, dx, dz, wall.minX - radius, wall.maxX + radius,
-      wall.minZ - radius, wall.maxZ + radius);
+    const t = wall.shape === 'circle'
+      ? sweptCircle(x, z, dx, dz, wall.x, wall.z, wall.radius + radius)
+      : boxHit(x, z, dx, dz, wall.minX - radius, wall.maxX + radius,
+        wall.minZ - radius, wall.maxZ + radius);
     if (t !== null && (!hit || t < hit.t)) hit = { t, reason: 'obstacle', by: wall.id };
   }
   for (const segment of round.segments) {
@@ -98,11 +100,11 @@ function safeMount(round, rider) {
     Math.hypot(other.x - rider.x, other.z - rider.z) > 1.55);
 }
 export function createShiftRound({ seed = 1, difficulty = 'standard',
-  playerIds = null, roundNumber = 1 } = {}) {
+  playerIds = null, roundNumber = 1, map = 'classic' } = {}) {
   if (playerIds && (playerIds.length < 2 || playerIds.length > 4 ||
       new Set(playerIds).size !== playerIds.length))
     throw new RangeError('Grid Shift requires two to four distinct riders');
-  const layout = getMap('classic');
+  const layout = getMap(map);
   const colors = [[.15, .88, 1], [1, .47, .18], [.75, .3, 1], [1, .73, .2]];
   const styles = ['player', 'hunter', 'survivor', 'trapper'];
   const spawns = playerIds?.length === 2 ? layout.spawns.duel : layout.spawns.arena;
@@ -113,11 +115,11 @@ export function createShiftRound({ seed = 1, difficulty = 'standard',
     return { id, ...spawn, color: colors[index], style: styles[index],
       controller: 'none', isPlayer: false };
   }) : [
-    { id: 'YOU', x: -8, z: 16, dir: 0, isPlayer: true, controller: 'none' },
-    { id: 'ECHO', x: 8, z: -16, dir: 2, controller: 'none',
+    { id: 'YOU', ...layout.spawns.duel[0], isPlayer: true, controller: 'none' },
+    { id: 'ECHO', ...layout.spawns.duel[1], controller: 'none',
       style: 'hunter', color: [1, .47, .18] },
   ];
-  const round = createRound({ seed, map: 'classic', difficulty,
+  const round = createRound({ seed, map: layout.id, difficulty,
     riders, multiplayer: Boolean(playerIds) });
   round.shift = { discs: [], bullets: [], timeLimit: TIME_LIMIT, aiIntent: 'reading lanes' };
   for (const rider of round.riders) {

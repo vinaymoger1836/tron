@@ -107,8 +107,8 @@ function snapshot(room, selfId) {
   const round = room.round;
   return {
     code: room.code, phase: room.phase, selfId, hostId: room.hostId,
-    maxPlayers: room.maxPlayers, map: room.mode === 'shift' ? 'classic' : room.map,
-    mode: room.mode, roundNumber: room.roundNumber,
+    maxPlayers: room.maxPlayers, map: room.map,
+    mode: room.mode, rule: room.mode === 'arena' ? room.rule : 'classic', roundNumber: room.roundNumber,
     countdownMs: room.phase === 'countdown' ? Math.max(0, room.deadline - Date.now()) : 0,
     waitMs: room.phase === 'connection-wait' ? Math.max(0, room.deadline - Date.now()) : 0,
     result: room.result, players: room.players.map(p => ({
@@ -116,12 +116,15 @@ function snapshot(room, selfId) {
     })),
     round: round ? {
       tick: round.tick, elapsed: round.elapsed, limit: round.limit, map: round.map,
+      rule: round.rule, trailLifetime: Number.isFinite(round.trailLifetime) ? round.trailLifetime : null,
       riders: round.riders.map(r => ({ id: r.id, x: r.x, z: r.z, dir: r.dir,
         color: r.color, style: r.style, alive: r.alive, ammo: r.ammo,
         form: r.form || 'cycle', hp: r.hp ?? null,
-        formReadyAt: r.formReadyAt ?? null, discReadyAt: r.discReadyAt ?? null })),
+        formReadyAt: r.formReadyAt ?? null, discReadyAt: r.discReadyAt ?? null,
+        recoveryUntil: r.recoveryUntil ?? 0, formChangedAt: r.formChangedAt ?? -10 })),
       segments: round.segments.map(s => ({ id: s.id, ownerId: s.ownerId,
-        x1: s.x1, z1: s.z1, x2: s.x2, z2: s.z2, active: s.active })),
+        x1: s.x1, z1: s.z1, x2: s.x2, z2: s.z2, active: s.active,
+        closedAt: s.closedAt ?? -1 })),
       bullets: (round.shift?.bullets || round.bullets)
         .map(b => ({ ownerId: b.ownerId, x: b.x, z: b.z })),
       shift: round.shift ? { timeLimit: round.shift.timeLimit,
@@ -143,7 +146,8 @@ function broadcast(room) {
 function nextRound(room) {
   room.roundNumber++;
   const options = { seed: randomInt(0x100000000),
-    playerIds: room.players.map(p => p.id), roundNumber: room.roundNumber };
+    playerIds: room.players.map(p => p.id), roundNumber: room.roundNumber, map: room.map,
+    rule: room.mode === 'arena' ? room.rule : 'classic' };
   room.round = room.mode === 'shift' ? createShiftRound(options)
     : createLanRound({ ...options, map: room.map });
   room.crashes = [];
@@ -176,7 +180,12 @@ function handleDisconnect(room, player) {
   player.connected = false;
   player.stream = null;
   if (room.phase === 'running' || room.phase === 'countdown' || room.phase === 'paused') {
+    if (room.round) room.round.riders.forEach(r => {
+      r.fireHeld = false;
+      if (r.input) r.input = { x: 0, z: 0 };
+    });
     room.beforeWait = room.phase;
+    room.deadlineBeforeWait = room.deadline;
     room.phase = 'connection-wait';
     room.deadline = Date.now() + RECONNECT_MS;
     room.waitStarted = Date.now();
@@ -187,6 +196,7 @@ function tickRoom(room, now) {
   if (room.phase === 'connection-wait') {
     if (room.players.every(p => p.connected)) {
       room.phase = room.beforeWait;
+      room.deadline = room.deadlineBeforeWait;
       if (room.phase === 'countdown') room.deadline += Date.now() - room.waitStarted;
       room.lastTickAt = now;
       room.accumulator = 0;
@@ -279,8 +289,10 @@ async function handleApi(req, res, pathname) {
     if (!Object.hasOwn(MAPS, body.map)) return fail(res, 400, 'Unknown map.');
     const mode = body.mode ?? 'duel';
     if (!MODES.has(mode)) return fail(res, 400, 'Unknown game mode.');
+    const rule = body.rule ?? 'classic';
+    if (!['classic', 'decay'].includes(rule)) return fail(res, 400, 'Unknown wall rule.');
     const host = createPlayer('P1', body.name);
-    const room = { code: code(), map: body.map, mode, maxPlayers, hostId: host.id,
+    const room = { code: code(), map: body.map, mode, rule, maxPlayers, hostId: host.id,
       players: [host], phase: 'lobby', round: null, roundNumber: 0,
       result: null, crashes: [], touched: Date.now(), lastBroadcast: 0,
       lastTickAt: performance.now(), accumulator: 0 };
@@ -328,6 +340,23 @@ async function handleApi(req, res, pathname) {
       broadcast(room);
       return json(res, 200, { ok: true });
     }
+    if (body.type === 'rule') {
+      if (player.id !== room.hostId) return fail(res, 403, 'Only the host selects the wall rule.');
+      if (room.phase !== 'lobby' || room.mode !== 'arena')
+        return fail(res, 409, 'Choose an Arena wall rule before starting.');
+      if (!['classic', 'decay'].includes(body.rule)) return fail(res, 400, 'Unknown wall rule.');
+      room.rule = body.rule;
+      broadcast(room);
+      return json(res, 200, { ok: true });
+    }
+    if (body.type === 'map') {
+      if (player.id !== room.hostId) return fail(res, 403, 'Only the host selects the map.');
+      if (room.phase !== 'lobby') return fail(res, 409, 'Choose a map before starting.');
+      if (!Object.hasOwn(MAPS, body.map)) return fail(res, 400, 'Unknown map.');
+      room.map = body.map;
+      broadcast(room);
+      return json(res, 200, { ok: true });
+    }
     if (body.type === 'pause') {
       if (player.id !== room.hostId) return fail(res, 403, 'Only the host can pause.');
       if (room.phase === 'paused') {
@@ -341,7 +370,10 @@ async function handleApi(req, res, pathname) {
         room.beforePause = room.phase;
         room.phase = 'paused';
         room.pauseStarted = Date.now();
-        if (room.round) room.round.riders.forEach(r => { r.fireHeld = false; });
+        if (room.round) room.round.riders.forEach(r => {
+          r.fireHeld = false;
+          if (r.input) r.input = { x: 0, z: 0 };
+        });
       } else return fail(res, 409, 'No active round to pause.');
       broadcast(room);
       return json(res, 200, { ok: true });

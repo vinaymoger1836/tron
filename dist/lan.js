@@ -69,8 +69,8 @@ async function createRoom() {
   try {
     const result = await post('/api/rooms', {
       name: $('#name').value, maxPlayers: Number($('#players').value),
-      map: $('#create-mode').value === 'shift' ? 'classic' : $('#map').value,
-      mode: $('#create-mode').value,
+      map: $('#map').value,
+      mode: $('#create-mode').value, rule: $('#create-rule').value,
     });
     enterRoom(result);
   } catch (error) { notice(error.message, true, '#setup-notice'); }
@@ -139,6 +139,10 @@ async function connect() {
   }
 }
 function receive(view) {
+  if (['countdown', 'running', 'paused', 'connection-wait'].includes(view.phase) && view.round) {
+    location.replace('./index.html?onlineRoom=' + view.code);
+    return;
+  }
   state.view = view;
   state.selfId = view.selfId;
   state.code = view.code;
@@ -173,7 +177,7 @@ const MODE_DETAILS = {
     rules: 'Duel: first to three heat wins. Arrow keys or A/D turn; hold E to fire up to 24 wall-cutting bullets.' },
   arena: { name: 'Arena', summary: 'Three heats. The most heat wins takes the match; a tie is a draw.',
     rules: 'Arena: exactly three heats. The rider with the most heat wins takes the match. Arrow keys or A/D turn; hold E to fire.' },
-  shift: { name: 'Grid Shift', summary: 'First to three heat wins. Each heat lasts at most 90 seconds on Classic Grid.',
+  shift: { name: 'Grid Shift', summary: 'First to three heat wins. Each heat lasts at most 90 seconds on the selected map.',
     rules: 'Grid Shift: A/D or Left/Right steer the cycle, hold E to fire, F changes form. On foot use WASD or arrows to move and Space to throw a disc at the nearest rider. Two disc hits derez a rider. At 90 seconds, the surviving rider with the most integrity wins; ties are draws.' },
 };
 function modeName(mode) { return MODE_DETAILS[mode]?.name || MODE_DETAILS.duel.name; }
@@ -221,8 +225,12 @@ function renderUi(view) {
     : labels[view.phase] || 'GAME ROOM';
   $('#host-mode-field').hidden = !host || view.phase !== 'lobby';
   $('#room-mode').value = mode;
+  $('#room-map').value = view.map;
+  $('#host-rule-field').hidden = !host || view.phase !== 'lobby' || mode !== 'arena';
+  $('#room-rule').value = view.rule || 'classic';
   $('#mode-summary').textContent = modeName(mode) + ' / ' + MODE_DETAILS[mode].summary +
-    (shift ? ' Map: Classic Grid.' : ' Map: ' + getMap(view.map).name + '.');
+    ' Map: ' + getMap(view.map).name + '.' +
+    (mode === 'arena' ? view.rule === 'decay' ? ' Walls fade after 10 seconds.' : ' Persistent walls.' : '');
   $('#room-rules').textContent = MODE_DETAILS[mode].rules +
     ' Touch controls appear below during play.';
   $('#room-title').innerHTML = view.phase === 'match-result'
@@ -450,15 +458,15 @@ function frame() {
 }
 $('#create').addEventListener('click', createRoom);
 $('#create-mode').addEventListener('change', () => {
-  const shift = $('#create-mode').value === 'shift';
-  $('#map').disabled = shift;
-  if (shift) $('#map').value = 'classic';
-  $('#create-mode-tip').textContent = shift
-    ? 'Grid Shift uses Classic Grid. The host can still change mode in the waiting room.'
-    : 'The host can change the mode in the waiting room.';
+  $('#create-rule-field').hidden = $('#create-mode').value !== 'arena';
 });
+$('#room-rule').addEventListener('change', event =>
+  action({ type: 'rule', rule: event.currentTarget.value }));
+
 $('#room-mode').addEventListener('change', event =>
   action({ type: 'mode', mode: event.currentTarget.value }));
+$('#room-map').addEventListener('change', event =>
+  action({ type: 'map', map: event.currentTarget.value }));
 $('#join').addEventListener('click', joinRoom);
 $('#join-code').addEventListener('keydown', event => { if (event.key === 'Enter') joinRoom(); });
 $('#start').addEventListener('click', () => action({ type: 'start' }));

@@ -338,6 +338,10 @@ let gamepadMove = { x: 0, z: 0 };
 let gamepadHeld = new Set();
 const fireSources = new Set();
 let round = createRound();
+const onlineCode = new URLSearchParams(location.search).get('onlineRoom')?.toUpperCase();
+const online = /^[A-Z0-9]{6}$/.test(onlineCode || '') ? { code: onlineCode, view: null,
+  controller: null, retry: null, connected: false, heldFire: false, lastMove: '',
+  lastPhase: '', lastRound: 0 } : null;
 let mode = 'ready';
 let pausedFrom = 'running';
 let visualTime = 0;
@@ -639,6 +643,7 @@ function recordRun(outcome, score) {
   renderHistory();
 }
 function playHistoryHighlight(item) {
+  if (online) { showToast('RETURN TO SOLO TO WATCH SAVED RUNS'); return; }
   const frames = item.highlight?.frames;
   if (!Array.isArray(frames) || frames.length < 2 || !frames.every(frame =>
     Array.isArray(frame.riders) && Array.isArray(frame.segments))) return;
@@ -699,6 +704,7 @@ function updateOperationHud() {
   objectiveWarning.textContent = op.warning || mission.hudTip;
 }
 function updateShiftHud() {
+  if (online) { updateOnlineShiftHud(); return; }
   const active = sessionMode === 'shift';
   document.body.classList.toggle('grid-shift-active', active);
   shiftHud.hidden = !active || mode === 'ready';
@@ -729,6 +735,7 @@ function updateShiftHud() {
       Math.max(0, Math.ceil(round.shift.timeLimit - round.elapsed)) + 's';
 }
 function updateHud() {
+  if (online) { updateOnlineHud(); return; }
   const points = sessionMode === 'operations'
     ? (operationFlow?.points || 0) + round.score
     : match && sessionMode !== 'lesson'
@@ -776,6 +783,7 @@ function setBackgroundInert(inert) {
   canvas.inert = inert;
   document.querySelector('.hud').inert = inert;
   touchControls.inert = inert;
+  shiftTouch.inert = inert;
 }
 
 let menuHubReturnFocus = null;
@@ -790,8 +798,13 @@ function activateMenuTab(tab, focus = true) {
   if (focus) tab.focus({ preventScroll: true });
 }
 function openMenuHub() {
-  if (overlay.classList.contains('hidden') || !menuHub.hidden) return;
+  if ((overlay.classList.contains('hidden') && !online) || !menuHub.hidden) return;
   menuHubReturnFocus = document.activeElement;
+  if (online) {
+    fireSources.clear(); shiftKeys.clear(); gamepadMove = { x: 0, z: 0 };
+    syncFire(); syncShiftMove();
+    setBackgroundInert(true);
+  }
   overlay.inert = true;
   overlay.setAttribute('aria-hidden', 'true');
   menuHub.hidden = false;
@@ -808,7 +821,10 @@ function closeMenuHub(restoreFocus = true) {
   const overlayHidden = overlay.classList.contains('hidden');
   overlay.inert = overlayHidden;
   overlay.setAttribute('aria-hidden', String(overlayHidden));
-  if (restoreFocus && !overlayHidden) (menuHubReturnFocus || menuHubOpen).focus({ preventScroll: true });
+  if (online && overlayHidden) {
+    setBackgroundInert(false);
+    if (restoreFocus) canvas.focus({ preventScroll: true });
+  } else if (restoreFocus && !overlayHidden) (menuHubReturnFocus || menuHubOpen).focus({ preventScroll: true });
   menuHubReturnFocus = null;
 }
 function setOverlay(eyebrow, title, deck, button) {
@@ -825,8 +841,9 @@ function setOverlay(eyebrow, title, deck, button) {
   let focusAttempts = 0;
   function focusWhenVisible() {
     if (token !== overlayFocusToken || overlay.classList.contains('hidden')) return;
-    ui.start.focus({ preventScroll: true });
-    if (document.activeElement !== ui.start && ++focusAttempts < 90) {
+    const focusTarget = ui.start.disabled ? menuHubOpen : ui.start;
+    focusTarget.focus({ preventScroll: true });
+    if (document.activeElement !== focusTarget && ++focusAttempts < 90) {
       requestAnimationFrame(focusWhenVisible);
     }
   }
@@ -970,7 +987,7 @@ function keyAction(key) {
   if (custom) return custom;
   return { arrowleft: 'left', arrowright: 'right', arrowup: 'up', arrowdown: 'down' }[normalized] || null;
 }
-function syncControlHints(shift = modeSelect.value === 'shift') {
+function syncControlHints(shift = online ? sessionMode === 'shift' : modeSelect.value === 'shift') {
   const key = action => '<kbd>' + keyLabel(action) + '</kbd>';
   document.querySelector('#controls-hint').innerHTML = shift
     ? key('left') + key('right') + ' TURN ' + key('form') + ' FORM ' +
@@ -1040,7 +1057,7 @@ function hideCountdown() {
 }
 
 function launch() {
-  if (mode !== 'countdown') return;
+  if (online || mode !== 'countdown') return;
   mode = 'running';
   syncAudioMix();
   countdown.textContent = 'GO';
@@ -1060,7 +1077,7 @@ function selectedOperationId() {
 function drawMapPreview() {
   const operations = modeSelect.value === 'operations';
   const mission = operations ? getOperation(selectedOperationId()) : null;
-  const map = getMap(modeSelect.value === 'shift' ? 'classic' : mission?.map || mapSelect.value);
+  const map = getMap(mission?.map || mapSelect.value);
   const ctx = mapPreview.getContext('2d');
   const size = mapPreview.height;
   const scale = (size - 14) / (map.limit * 2);
@@ -1077,7 +1094,7 @@ function drawMapPreview() {
     } else ctx.fillRect(at(o.minX),at(o.minZ),(o.maxX-o.minX)*scale,(o.maxZ-o.minZ)*scale);
   }
   const spawns = operations ? [mission.spawn, ...(mission.rivalSpawn ? [mission.rivalSpawn] : [])]
-    : modeSelect.value === 'shift' ? [{x:-8,z:16},{x:8,z:-16}]
+    : modeSelect.value === 'shift' ? map.spawns.duel
       : map.spawns[modeSelect.value === 'daily' ? 'duel' : modeSelect.value];
   spawns.forEach((spawn, index) => {
     ctx.fillStyle = index === 0 ? '#73eaff' : ['#ffa353','#c78aff','#ffdf72'][index-1];
@@ -1098,7 +1115,7 @@ function drawMapPreview() {
   mapPreview.setAttribute('aria-label', (mission?.name || map.name) + ' layout with ' +
     map.obstacles.length + ' fixed barriers and ' + spawns.length + ' spawn positions');
   mapTip.textContent = modeSelect.value === 'shift'
-    ? 'One open arena. Hold fire while mounted to shoot up to 24 wall-breaking bullets; dismount to move freely and throw a returning disc. Two disc hits derez a rival.'
+    ? map.cue + ' Hold fire while mounted to shoot up to 24 wall-breaking bullets; dismount to move freely and throw a returning disc. Two disc hits derez a rival.'
     : operations
     ? mission.objective + ' ' + mission.tip +
       (operationSelect.value === 'journey' ? ' The journey links all three operations.' : '')
@@ -1126,7 +1143,7 @@ function syncSetup() {
   const shift = modeSelect.value === 'shift';
   document.querySelector('#rival-field').hidden = !duel;
   document.querySelector('#rule-field').hidden = duel || operations || shift;
-  document.querySelector('#map-field').hidden = operations || shift;
+  document.querySelector('#map-field').hidden = operations;
   document.querySelector('#operation-field').hidden = !operations;
   document.querySelector('#final-rival-field').hidden = !operations || operationSelect.value !== 'journey';
   const profile = DUEL_RIVALS[rivalSelect.value];
@@ -1162,7 +1179,7 @@ function syncSetup() {
   updateArchive();
   if (mode === 'ready') {
     sessionMode = daily ? 'duel' : modeSelect.value;
-    round = shift ? createShiftRound({ seed: 1, difficulty: difficultySelect.value })
+    round = shift ? createShiftRound({ seed: 1, difficulty: difficultySelect.value, map: mapSelect.value })
       : operations
       ? createOperationRound({ id: selectedOperationId(), seed: 1, difficulty: difficultySelect.value })
       : duel
@@ -1173,6 +1190,253 @@ function syncSetup() {
     loadBest();
     updateHud();
     drawRadar();
+  }
+}
+
+
+function onlineAction(value) {
+  if (!online?.connected || !online.view) return;
+  fetch('/api/rooms/' + online.code + '/action', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value),
+  }).then(async response => {
+    if (response.ok || ['turn', 'fire', 'move'].includes(value.type)) return;
+    const body = await response.json().catch(() => ({}));
+    showToast(body.error || 'Room action failed.');
+  }).catch(() => {
+    if (!['turn', 'fire', 'move'].includes(value.type))
+      showToast('Room connection interrupted.');
+  });
+}
+function onlineRound(view) {
+  const riders = view.round.riders.map(rider => ({
+    ...rider, isPlayer: rider.id === view.selfId,
+  }));
+  riders.sort((a, b) => Number(b.isPlayer) - Number(a.isPlayer));
+  const riderById = new Map(riders.map(rider => [rider.id, rider]));
+  return {
+    ...view.round, rule: view.round.rule || 'classic',
+    trailLifetime: view.round.trailLifetime ?? Infinity, difficulty: 'standard',
+    score: 0, scoreBreakdown: {}, riders,
+    segments: view.round.segments.map(segment => ({
+      ...segment, rider: riderById.get(segment.ownerId),
+    })).filter(segment => segment.rider),
+    shift: view.round.shift ? {
+      ...view.round.shift, bullets: view.round.bullets, aiIntent: 'human riders',
+    } : null,
+  };
+}
+function updateOnlineShiftHud() {
+  const active = sessionMode === 'shift' && !!online?.view?.round;
+  document.body.classList.toggle('grid-shift-active', active);
+  shiftHud.hidden = !active;
+  if (!active) return;
+  const player = round.riders[0];
+  const others = round.riders.filter(r => !r.isPlayer);
+  if (!player) return;
+  document.querySelector('#shift-title').textContent = player.form === 'cycle'
+    ? 'CYCLE / WALL ACTIVE' : 'ON FOOT / DISC';
+  const discOut = round.shift.discs.some(disc => disc.ownerId === player.id);
+  const cooldown = Math.max(0, player.discReadyAt - round.elapsed);
+  document.querySelector('#shift-status').textContent =
+    'You ' + player.hp + '/2 integrity / ' + (player.form === 'cycle'
+      ? 'Gun ' + player.ammo + '/24 bullets'
+      : 'Disc ' + (discOut ? 'returning' : cooldown > 0 ? cooldown.toFixed(1) + 's' : 'ready'));
+  document.querySelector('#shift-rival-status').textContent = others.map(rider => {
+    const name = online.view.players.find(player => player.id === rider.id)?.name || rider.id;
+    return name + ' ' + (rider.alive ? rider.hp + '/2 ' + rider.form.toUpperCase() : 'OUT');
+  }).join(' / ');
+  const weaponButton = document.querySelector('#shift-throw');
+  weaponButton.textContent = player.form === 'cycle' ? 'FIRE ' + player.ammo : 'DISC';
+  weaponButton.setAttribute('aria-label', player.form === 'cycle' ? 'Fire wall gun' : 'Throw disc');
+  weaponButton.disabled = mode !== 'running' || !player.alive ||
+    (player.form === 'cycle' ? player.ammo <= 0 || round.elapsed < player.recoveryUntil
+      : discOut || cooldown > 0);
+  document.querySelector('#shift-tip').textContent = player.form === 'cycle'
+    ? keyLabel('fire') + ' hold to fire / ' + keyLabel('form') + ' dismount / ' +
+      keyLabel('left') + ' ' + keyLabel('right') + ' turn / ' +
+      Math.max(0, Math.ceil(round.shift.timeLimit - round.elapsed)) + 's'
+    : [keyLabel('up'), keyLabel('left'), keyLabel('down'), keyLabel('right')].join(' ') +
+      ' move / ' + keyLabel('disc') + ' throw / ' + keyLabel('form') + ' remount / ' +
+      Math.max(0, Math.ceil(round.shift.timeLimit - round.elapsed)) + 's';
+}
+function updateOnlineHud() {
+  const view = online.view;
+  if (!view?.round) return;
+  const self = view.players.find(player => player.id === view.selfId);
+  const player = round.riders[0];
+  ui.score.previousElementSibling.textContent = 'WINS';
+  ui.best.previousElementSibling.textContent = 'HEAT';
+  ui.score.textContent = String(self?.wins || 0).padStart(2, '0');
+  ui.best.textContent = String(view.roundNumber).padStart(2, '0');
+  document.querySelector('#rivals-label').textContent = 'RIVALS';
+  ui.rivals.textContent = String(round.riders.filter(r => !r.isPlayer && r.alive).length).padStart(2, '0');
+  ui.matchline.textContent = 'ONLINE ' + view.mode.toUpperCase() + ' / ROOM ' + view.code +
+    ' / HEAT ' + view.roundNumber + ' / ' + getMap(view.map).name.toUpperCase() +
+    (view.mode === 'arena' && view.rule === 'decay' ? ' / 10S WALLS' : '');
+  document.querySelector('.radar-wrap .label').textContent =
+    getMap(view.map).name.toUpperCase() + ' / ' + view.roundNumber;
+  const roster = document.querySelector('#online-roster');
+  roster.hidden = false;
+  roster.replaceChildren(...view.players.map(seat => {
+    const item = document.createElement('span');
+    const rider = round.riders.find(r => r.id === seat.id);
+    item.className = (seat.id === view.selfId ? 'self ' : '') +
+      (rider?.alive === false ? 'out' : '');
+    item.textContent = seat.name + ' ' + seat.wins +
+      (view.mode === 'shift' && rider ? ' / ' + rider.hp + 'HP' : '');
+    return item;
+  }));
+  ui['rival-intent'].textContent = view.mode === 'shift'
+    ? Math.max(0, Math.ceil(round.shift.timeLimit - round.elapsed)) + 'S / ' +
+      (player?.form === 'foot' ? 'FOOT' : 'CYCLE')
+    : view.players.map(seat => seat.name + ' ' + seat.wins).join(' / ');
+  operationHud.hidden = true;
+  updateOnlineShiftHud();
+  updateCycleWeaponHud();
+}
+function onlineReceive(view) {
+  if (!online || graphicsLost || view.code !== online.code) return;
+  if (view.phase === 'lobby') {
+    location.replace('./lan.html?room=' + online.code);
+    return;
+  }
+  online.view = view;
+  document.body.dataset.onlinePhase = view.phase;
+  online.connected = true;
+  if (view.round) {
+    const oldMap = round.map;
+    round = onlineRound(view);
+    sessionMode = view.mode;
+    match = { roundNumber: view.roundNumber };
+    if (oldMap !== round.map || online.lastRound !== view.roundNumber) {
+      rebuildStatic(getMap(round.map));
+      camera = [7, 13, 31];
+      target = [0, 0, 0];
+      online.lastRound = view.roundNumber;
+    }
+  }
+  const key = view.phase + ':' + view.roundNumber;
+  if (key !== online.lastPhase) {
+    online.lastPhase = key;
+    online.heldFire = false;
+    online.lastMove = '';
+    fireSources.clear();
+    shiftKeys.clear();
+    gamepadMove = { x: 0, z: 0 };
+    syncControlHints(view.mode === 'shift');
+    if (view.phase === 'running') {
+      mode = 'running';
+      hideCountdown();
+      hideOverlay();
+      nextMusicBeat = 0;
+      activateAudio();
+      syncAudioMix();
+      announce('Online ' + view.mode + ' heat ' + view.roundNumber + ' started.');
+    } else if (view.phase === 'countdown') {
+      mode = 'countdown';
+      hideOverlay();
+      countdown.classList.add('show');
+      announce('Online heat starting.');
+    } else if (view.phase === 'paused' || view.phase === 'connection-wait') {
+      mode = 'paused';
+      hideCountdown();
+      setOverlay(view.phase === 'paused' ? 'HOST PAUSED' : 'CONNECTION HELD',
+        'GRID <span>PAUSED</span>',
+        view.phase === 'paused' ? 'The host paused the match.' :
+          'Waiting for every rider to reconnect. The simulation is held.',
+        view.selfId === view.hostId && view.phase === 'paused' ? 'RESUME' : 'WAITING');
+      ui.start.disabled = view.selfId !== view.hostId || view.phase !== 'paused';
+      ui['change-mode'].hidden = false;
+      ui['change-mode'].textContent = 'ROOM';
+      announce(view.phase === 'paused' ? 'Host paused the match.' : 'Waiting for a rider to reconnect.');
+    } else if (view.phase === 'round-result' || view.phase === 'match-result') {
+      const finished = view.phase === 'match-result';
+      const winnerId = finished ? view.result?.matchWinnerId : view.result?.winnerId;
+      const winnerName = finished ? view.result?.matchWinnerName : view.result?.winnerName;
+      const result = view.result?.matchDraw ? 'The match is a draw.' :
+        winnerId === view.selfId ? 'You won ' + (finished ? 'the match.' : 'the heat.') :
+          winnerName ? winnerName + ' won ' + (finished ? 'the match.' : 'the heat.') :
+            'The heat ended in a draw.';
+      mode = winnerId === view.selfId ? 'won' : 'lost';
+      hideCountdown();
+      setOverlay(finished ? 'MATCH COMPLETE' : 'HEAT COMPLETE',
+        winnerId === view.selfId ? 'GRID <span>SECURED</span>' : 'END OF <span>LINE</span>',
+        result + ' ' + view.players.map(player => player.name + ' ' + player.wins).join(' / '),
+        view.selfId === view.hostId ? finished ? 'REMATCH' : 'NEXT HEAT' : 'RETURN TO ROOM');
+      ui.start.disabled = false;
+      ui['change-mode'].hidden = false;
+      ui['change-mode'].textContent = 'ROOM';
+      announce(result);
+    }
+  }
+  if (view.phase === 'countdown') {
+    mode = 'countdown';
+    online.countdownUntil = performance.now() + view.countdownMs;
+    countdownRemaining = Math.max(0, view.countdownMs / 1000);
+    countdown.textContent = String(Math.max(1, Math.ceil(countdownRemaining)));
+  }
+  ui.pause.hidden = view.selfId !== view.hostId;
+  document.querySelector('#online-settings').hidden = false;
+  updateOnlineHud();
+}
+function beginOnline() {
+  setup.hidden = true;
+  ui['lesson-start'].hidden = true;
+  ui['change-mode'].hidden = false;
+  ui['change-mode'].textContent = 'ROOM';
+  ui.pause.hidden = true;
+  document.querySelector('#online-settings').hidden = false;
+  setOverlay('ONLINE ROOM ' + online.code, 'CONNECTING <span>TO GRID</span>',
+    'Joining the live match. Your camera and control settings carry over.', 'WAITING');
+  ui.start.disabled = true;
+  onlineConnect();
+}
+async function onlineConnect() {
+  if (!online) return;
+  online.controller?.abort();
+  const controller = new AbortController();
+  online.controller = controller;
+  try {
+    const response = await fetch('/api/rooms/' + online.code + '/stream', {
+      credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      if (response.status === 403 || response.status === 404)
+        throw Object.assign(new Error(body.error || 'Room seat unavailable.'), { fatal: true });
+      throw new Error(body.error || 'Room connection failed.');
+    }
+    online.connected = true;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error('Room connection closed.');
+      pending += decoder.decode(value, { stream: true });
+      let end;
+      while ((end = pending.indexOf('\n')) >= 0) {
+        const line = pending.slice(0, end);
+        pending = pending.slice(end + 1);
+        if (line) onlineReceive(JSON.parse(line));
+      }
+    }
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    online.connected = false;
+    online.lastPhase = '';
+    online.heldFire = false;
+    fireSources.clear();
+    mode = 'paused';
+    hideCountdown();
+    setOverlay('SIGNAL INTERRUPTED', 'GRID <span>OFFLINE</span>',
+      error.fatal ? error.message : 'Connection interrupted. Reconnecting to the room.',
+      error.fatal ? 'RETURN TO ROOM' : 'WAITING');
+    ui.start.disabled = !error.fatal;
+    ui['change-mode'].hidden = false;
+    announce(error.message);
+    if (!error.fatal) online.retry = setTimeout(onlineConnect, 1000);
   }
 }
 
@@ -1285,7 +1549,7 @@ function beginRound() {
   generation++;
   fireSources.clear();
   if (sessionMode === 'shift') runBadgeEvents = new Set();
-  round = sessionMode === 'shift' ? createShiftRound({ seed: randomSeed(), difficulty: difficultySelect.value })
+  round = sessionMode === 'shift' ? createShiftRound({ seed: randomSeed(), difficulty: difficultySelect.value, map: mapSelect.value })
     : sessionMode === 'operations'
     ? createOperationRound({ id: operationFlow.sequence[operationFlow.index],
         seed: operationStageSeed(), difficulty: operationFlow.difficulty })
@@ -1337,6 +1601,17 @@ function beginRound() {
 }
 
 function start() {
+  if (online) {
+    if (!online.connected || !online.view) { location.href = './lan.html?room=' + online.code; return; }
+    if (online.view?.selfId === online.view?.hostId && online.view.phase === 'paused')
+      onlineAction({ type: 'pause' });
+    else if (online.view?.selfId === online.view?.hostId &&
+        ['round-result', 'match-result', 'lobby'].includes(online.view.phase))
+      onlineAction({ type: 'start' });
+    else if (online.view?.selfId !== online.view?.hostId || !online.view)
+      location.href = './lan.html?room=' + online.code;
+    return;
+  }
   if (modeSelect.value === 'shift' && (mode === 'ready' || mode === 'shift-brief' || sessionMode === 'shift')) {
     sessionMode = 'shift';
     if (mode === 'ready') showShiftBrief();
@@ -1374,6 +1649,13 @@ function start() {
   beginRound();
 }
 function pause() {
+  if (online) {
+    if (!online.connected || !online.view) return;
+    if (online.view?.selfId === online.view?.hostId &&
+      ['running', 'countdown', 'paused'].includes(online.view.phase))
+      onlineAction({ type: 'pause' });
+    return;
+  }
   if (graphicsLost) return;
   fireSources.clear();
   syncFire();
@@ -1416,11 +1698,21 @@ function pause() {
 
 function playerTurn(sign) {
   if (mode !== 'running') return;
+  if (online) {
+    if (sessionMode !== 'shift' || round.riders[0]?.form === 'cycle')
+      onlineAction({ type: 'turn', sign });
+    return;
+  }
   if (sessionMode === 'shift') queueShiftTurn(round, 'YOU', sign);
   else queueTurn(round, 'YOU', sign);
 }
 function syncFire() {
   const held = mode === 'running' && fireSources.size > 0;
+  if (online) {
+    if (online.heldFire !== held) { online.heldFire = held; onlineAction({ type: 'fire', held }); }
+    updateShiftHud(); updateCycleWeaponHud();
+    return;
+  }
   if (sessionMode === 'shift') setShiftFire(round, 'YOU', held);
   else setCycleFire(round, 'YOU', held);
   updateShiftHud();
@@ -1430,13 +1722,21 @@ function setFireSource(source, held) {
   if (held) fireSources.add(source);
   else fireSources.delete(source);
   syncFire();
-  handleEvents();
+  if (!online) handleEvents();
 }
 function syncShiftMove() {
   if (sessionMode !== 'shift' || mode !== 'running') return;
   const x = Number(shiftKeys.has('right')) - Number(shiftKeys.has('left')) + gamepadMove.x;
   const z = Number(shiftKeys.has('down')) - Number(shiftKeys.has('up')) + gamepadMove.z;
-  setShiftMove(round, 'YOU', Math.max(-1, Math.min(1, x)), Math.max(-1, Math.min(1, z)));
+  const dx = Math.max(-1, Math.min(1, x)), dz = Math.max(-1, Math.min(1, z));
+  if (online) {
+    const length = Math.hypot(dx, dz);
+    const move = length > 1 ? { x: dx / length, z: dz / length } : { x: dx, z: dz };
+    const value = move.x + ',' + move.z;
+    if (online.lastMove !== value) { online.lastMove = value; onlineAction({ type: 'move', ...move }); }
+    return;
+  }
+  setShiftMove(round, 'YOU', dx, dz);
 }
 
 function crashMessage(outcome) {
@@ -1952,14 +2252,14 @@ function shiftFormRing(out, rider, age) {
   box(out, rider.x + radius, y, rider.z, .055, .045, radius * 2, c, 2);
 }
 function discMesh(out, disc) {
-  const c = disc.ownerId === 'YOU' ? [.48, .96, 1] : [1, .62, .28];
+  const c = round.riders.find(r => r.id === disc.ownerId)?.isPlayer ? [.48, .96, 1] : [1, .62, .28];
   const y = 0;
   box(out, disc.x, y + .75, disc.z, .52, .08, .52, c, 2);
   box(out, disc.x, y + .75, disc.z, .19, .11, .19, [.02, .06, .08]);
   box(out, disc.x, y + .03, disc.z, .58, .03, .58, mixColor(c, .48), 2);
 }
 function bulletMesh(out, bullet) {
-  const c = bullet.ownerId === 'YOU' ? [.56, 1, .96] : [1, .72, .36];
+  const c = round.riders.find(r => r.id === bullet.ownerId)?.isPlayer ? [.56, 1, .96] : [1, .72, .36];
   const y = 0;
   box(out, bullet.x, y + .54, bullet.z, .18, .15, .18, c, 2);
   box(out, bullet.x, y + .04, bullet.z, .28, .035, .28, mixColor(c, .4), 2);
@@ -2194,11 +2494,11 @@ function drawRadar() {
     ctx.setLineDash([]);
   }
   if (scene.shift) for (const disc of scene.shift.discs) {
-    ctx.fillStyle = disc.ownerId === 'YOU' ? '#b7faff' : '#ffbc7b';
+    ctx.fillStyle = scene.riders.find(r => r.id === disc.ownerId)?.isPlayer ? '#b7faff' : '#ffbc7b';
     ctx.fillRect(at(disc.x)-2, at(disc.z)-2, 4, 4);
   }
   for (const bullet of scene.shift?.bullets || scene.bullets || []) {
-    ctx.fillStyle = bullet.ownerId === 'YOU' ? '#b7fff7' : '#ffd29a';
+    ctx.fillStyle = scene.riders.find(r => r.id === bullet.ownerId)?.isPlayer ? '#b7fff7' : '#ffd29a';
     ctx.fillRect(at(bullet.x)-2, at(bullet.z)-2, 4, 4);
   }
   for (const rider of scene.riders) {
@@ -2289,10 +2589,11 @@ function pollGamepad() {
         if (fresh('left')) playerTurn(-1);
         if (fresh('right')) playerTurn(1);
       }
-      if (fresh('confirm')) { requestShiftForm(round, 'YOU'); handleEvents(); }
+      if (fresh('confirm')) { if (online) onlineAction({ type: 'form' });
+        else { requestShiftForm(round, 'YOU'); handleEvents(); } }
       if (round.riders[0].form === 'foot' && fresh('disc')) {
-        throwShiftDisc(round, 'YOU');
-        handleEvents();
+        if (online) onlineAction({ type: 'disc' });
+        else { throwShiftDisc(round, 'YOU'); handleEvents(); }
       }
       if (round.riders[0].form === 'cycle' && active.has('disc') !== fireSources.has('gamepad'))
         setFireSource('gamepad', active.has('disc'));
@@ -2309,7 +2610,7 @@ function pollGamepad() {
   }
   if (fresh('confirm') && ['ready', 'operation-brief', 'shift-brief', 'won', 'lost', 'paused'].includes(mode)) {
     ui.start.click();
-  } else if (fresh('confirm') && mode === 'countdown') launch();
+  } else if (!online && fresh('confirm') && mode === 'countdown') launch();
   if (fresh('pause') && (mode === 'running' || mode === 'countdown' || mode === 'paused')) pause();
   gamepadHeld = active;
 }
@@ -2319,7 +2620,11 @@ function frame(now) {
   if (!reducedMotion.matches && mode !== 'paused') visualTime += realDt;
   pollGamepad();
   let launchedThisFrame = false;
-  if (mode === 'countdown') {
+  if (online && mode === 'countdown') {
+    countdownRemaining = Math.max(0, (online.countdownUntil - now) / 1000);
+    countdown.textContent = String(Math.max(1, Math.ceil(countdownRemaining)));
+  }
+  if (!online && mode === 'countdown') {
     countdownRemaining -= realDt;
     const nextNumber = Math.ceil(countdownRemaining);
     if (nextNumber <= 0) {
@@ -2331,7 +2636,7 @@ function frame(now) {
       beep(440 + (3 - nextNumber) * 95, 0.08, 'triangle', 0.03);
     }
   }
-  if (mode === 'running' && !launchedThisFrame) {
+  if (!online && mode === 'running' && !launchedThisFrame) {
     accumulator += realDt;
     let steps = 0;
     while (accumulator >= STEP && steps < 16 && mode === 'running') {
@@ -2361,7 +2666,7 @@ function frame(now) {
   if (mode === 'running') updateCycleWeaponHud();
   if (sessionMode === 'shift' && mode === 'running') {
     updateShiftHud();
-    ui['rival-intent'].textContent = 'ECHO / ' + round.shift.aiIntent.toUpperCase();
+    if (!online) ui['rival-intent'].textContent = 'ECHO / ' + round.shift.aiIntent.toUpperCase();
   }
   if (mode !== 'paused') {
     updateParticles(realDt);
@@ -2380,6 +2685,7 @@ function frame(now) {
 }
 
 menuHubOpen.addEventListener('click', openMenuHub);
+document.querySelector('#online-settings').addEventListener('click', openMenuHub);
 document.querySelector('#menu-hub-close').addEventListener('click', () => closeMenuHub());
 document.querySelector('#menu-hub-backdrop').addEventListener('click', () => closeMenuHub());
 for (const tab of menuTabs) tab.addEventListener('click', () => activateMenuTab(tab, false));
@@ -2429,7 +2735,10 @@ ui.start.addEventListener('click', () => {
 });
 ui['lesson-start'].addEventListener('click', startLesson);
 skipBriefButton.addEventListener('click', () => { if (mode === 'operation-brief') start(); });
-ui['change-mode'].addEventListener('click', showMenu);
+ui['change-mode'].addEventListener('click', () => {
+  if (online) location.href = './lan.html?room=' + online.code;
+  else showMenu();
+});
 skipLesson.addEventListener('click', showMenu);
 skipHighlightButton.addEventListener('click', completeHighlight);
 modeSelect.addEventListener('change', () => { writeLocal(MODE_KEY, modeSelect.value); syncSetup(); });
@@ -2569,7 +2878,7 @@ document.getElementById('right').addEventListener('pointerdown', event => {
   playerTurn(1);
 });
 canvas.addEventListener('pointerdown', () => {
-  if (mode === 'countdown') launch();
+  if (!online && mode === 'countdown') launch();
 });
 window.addEventListener('keydown', event => {
   const key = event.key.toLowerCase();
@@ -2609,8 +2918,8 @@ window.addEventListener('keydown', event => {
   if (sessionMode === 'shift' && mode === 'running' && !interactive) {
     if (action === 'form') {
       event.preventDefault();
-      requestShiftForm(round, 'YOU');
-      handleEvents();
+      if (online) onlineAction({ type: 'form' });
+      else { requestShiftForm(round, 'YOU'); handleEvents(); }
       return;
     }
     if (action === 'fire') {
@@ -2620,9 +2929,12 @@ window.addEventListener('keydown', event => {
     }
     if (action === 'disc') {
       event.preventDefault();
-      if (!throwShiftDisc(round, 'YOU'))
-        showToast(round.riders[0].form === 'cycle' ? 'DISMOUNT TO THROW' : 'DISC NOT READY');
-      handleEvents();
+      if (online) onlineAction({ type: 'disc' });
+      else {
+        if (!throwShiftDisc(round, 'YOU'))
+          showToast(round.riders[0].form === 'cycle' ? 'DISMOUNT TO THROW' : 'DISC NOT READY');
+        handleEvents();
+      }
       return;
     }
     if (shiftDirection) {
@@ -2652,7 +2964,7 @@ window.addEventListener('keydown', event => {
     ui.sound.click();
   } else if (!interactive && (event.key === 'Enter' || event.key === ' ') && mode === 'countdown') {
     event.preventDefault();
-    launch();
+    if (!online) launch();
   } else if (!interactive && (event.key === 'Enter' || event.key === ' ') &&
       (mode === 'ready' || mode === 'operation-brief' || mode === 'shift-brief' ||
        mode === 'won' || mode === 'lost')) {
@@ -2692,8 +3004,8 @@ for (const button of shiftTouch.querySelectorAll('[data-move]')) {
 document.querySelector('#shift-transform').addEventListener('pointerdown', event => {
   event.preventDefault();
   if (sessionMode === 'shift' && mode === 'running') {
-    requestShiftForm(round, 'YOU');
-    handleEvents();
+    if (online) onlineAction({ type: 'form' });
+    else { requestShiftForm(round, 'YOU'); handleEvents(); }
   }
 });
 for (const [id, source] of [['cycle-fire', 'touch-cycle'], ['shift-throw', 'touch-shift']]) {
@@ -2702,8 +3014,8 @@ for (const [id, source] of [['cycle-fire', 'touch-cycle'], ['shift-throw', 'touc
     event.preventDefault();
     if (mode !== 'running') return;
     if (id === 'shift-throw' && round.riders[0].form === 'foot') {
-      throwShiftDisc(round, 'YOU');
-      handleEvents();
+      if (online) onlineAction({ type: 'disc' });
+      else { throwShiftDisc(round, 'YOU'); handleEvents(); }
       return;
     }
     if (id === 'cycle-fire' && sessionMode === 'shift') return;
@@ -2716,7 +3028,7 @@ for (const [id, source] of [['cycle-fire', 'touch-cycle'], ['shift-throw', 'touc
   button.addEventListener('lostpointercapture', release);
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && (mode === 'running' || mode === 'countdown')) pause();
+  if (document.hidden && !online && (mode === 'running' || mode === 'countdown')) pause();
 });
 canvas.addEventListener('webglcontextlost', event => {
   event.preventDefault();
@@ -2763,6 +3075,7 @@ syncStorageStatus();
 syncSoundButton();
 syncTouchControls();
 showMenu();
+if (online) beginOnline();
 drawRadar();
 requestAnimationFrame(frame);
 } catch (error) {

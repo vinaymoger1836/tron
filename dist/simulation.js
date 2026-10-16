@@ -59,7 +59,7 @@ export function createDuelRound({ seed = 1, rival = 'hunter', difficulty = 'stan
   });
 }
 
-export function createLanRound({ seed = 1, playerIds = [], map = 'classic', roundNumber = 1 } = {}) {
+export function createLanRound({ seed = 1, playerIds = [], map = 'classic', roundNumber = 1, rule = 'classic' } = {}) {
   if (playerIds.length < 2 || playerIds.length > 4 ||
       new Set(playerIds).size !== playerIds.length)
     throw new RangeError('LAN rounds require two to four distinct riders');
@@ -74,7 +74,7 @@ export function createLanRound({ seed = 1, playerIds = [], map = 'classic', roun
     return { id, ...spawn, color: colors[index], style: styles[index],
       isPlayer: false, controller: 'none' };
   });
-  return createRound({ seed, riders, map: layout.id, multiplayer: true });
+  return createRound({ seed, riders, map: layout.id, rule, multiplayer: true });
 }
 export function createArenaRound({ seed = 1, difficulty = 'standard', map = 'classic', rule = 'classic' } = {}) {
   const layout = getMap(map);
@@ -238,7 +238,7 @@ function sweptBox(x, z, dx, dz, minX, maxX, minZ, maxZ) {
   return exit >= 0 && enter <= 1 ? Math.max(0, enter) : null;
 }
 
-function sweptCircle(x, z, dx, dz, cx, cz, radius) {
+export function sweptCircle(x, z, dx, dz, cx, cz, radius) {
   const px = x - cx, pz = z - cz;
   const c = px * px + pz * pz - radius * radius;
   if (c <= 0) return 0;
