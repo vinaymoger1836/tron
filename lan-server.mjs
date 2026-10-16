@@ -4,7 +4,7 @@ import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { randomBytes, randomInt } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { createLanRound, drainEvents, queueDirection, queueTurn, setCycleFire, stepRound, STEP } from './dist/simulation.js';
+import { createLanRound, drainEvents, queueDirection, queueTurn, setCycleAutoDrive, setCycleThrottle, setCycleFire, stepRound, STEP } from './dist/simulation.js';
 import { MAPS } from './dist/maps.js';
 import { createShiftRound, queueShiftDirection, queueShiftTurn, requestShiftForm, setShiftFire,
   setShiftMove, stepShiftRound, throwShiftDisc } from './dist/grid-shift.js';
@@ -122,6 +122,7 @@ function snapshot(room, selfId) {
         color: r.color, style: r.style, alive: r.alive, ammo: r.ammo,
         form: r.form || 'cycle', hp: r.hp ?? null,
         nitroUntil: r.nitroUntil, rocketReady: r.rocketReady,
+        autoDrive: r.autoDrive, throttleHeld: r.throttleHeld,
         formReadyAt: r.formReadyAt ?? null, discReadyAt: r.discReadyAt ?? null,
         recoveryUntil: r.recoveryUntil ?? 0, formChangedAt: r.formChangedAt ?? -10 })),
       segments: round.segments.map(s => ({ id: s.id, ownerId: s.ownerId,
@@ -381,6 +382,7 @@ async function handleApi(req, res, pathname) {
         room.pauseStarted = Date.now();
         if (room.round) room.round.riders.forEach(r => {
           r.fireHeld = false;
+          r.throttleHeld = false;
           if (r.input) r.input = { x: 0, z: 0 };
         });
       } else return fail(res, 409, 'No active round to pause.');
@@ -411,6 +413,10 @@ async function handleApi(req, res, pathname) {
     } else if (body.type === 'turn' && (body.sign === -1 || body.sign === 1)) {
       if (room.mode === 'shift') queueShiftTurn(room.round, player.id, body.sign);
       else queueTurn(room.round, player.id, body.sign);
+    } else if (body.type === 'auto-drive' && typeof body.enabled === 'boolean') {
+      setCycleAutoDrive(room.round, player.id, body.enabled);
+    } else if (body.type === 'throttle' && typeof body.held === 'boolean') {
+      setCycleThrottle(room.round, player.id, body.held);
     } else if (body.type === 'fire' && typeof body.held === 'boolean') {
       if (room.mode === 'shift') setShiftFire(room.round, player.id, body.held);
       else setCycleFire(room.round, player.id, body.held);

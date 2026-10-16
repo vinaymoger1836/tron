@@ -1,9 +1,9 @@
-﻿import { createRound, createDuelRound, createArenaRound, createOperationRound, DUEL_RIVALS, DIFFICULTIES, drainEvents, queueDirection, stepRound, setCycleFire, STEP } from './simulation.js';
+﻿import { createRound, createDuelRound, createArenaRound, createOperationRound, DUEL_RIVALS, DIFFICULTIES, drainEvents, queueTurn, stepRound, setCycleAutoDrive, setCycleThrottle, setCycleFire, STEP } from './simulation.js';
 import { MAPS, getMap } from './maps.js';
 import { createArenaMatch, recordArenaRound, nextArenaRound, arenaWon } from './arena.js';
 import { createMatch, recordRound, nextRound, roundSeed } from './match.js';
 import { OPERATIONS, JOURNEY, getOperation } from './operations.js';
-import { createShiftRound, stepShiftRound, setShiftMove, queueShiftDirection, requestShiftForm, throwShiftDisc, setShiftFire } from './grid-shift.js';
+import { createShiftRound, stepShiftRound, setShiftMove, queueShiftTurn, requestShiftForm, throwShiftDisc, setShiftFire } from './grid-shift.js';
 
 const canvas = document.querySelector('#game');
 const radar = document.querySelector('#radar');
@@ -58,6 +58,7 @@ const flashIntensitySelect = document.querySelector('#flash-intensity');
 const gamepadInput = document.querySelector('#gamepad-enabled');
 const bindingStatus = document.querySelector('#binding-status');
 const captionsInput = document.querySelector('#captions-enabled');
+const autoDriveInput = document.querySelector('#auto-drive');
 const cueCaption = document.querySelector('#cue-caption');
 const ui = Object.fromEntries(
   ['score', 'best', 'rivals', 'eyebrow', 'title', 'deck', 'start', 'toast', 'sound', 'pause', 'matchline', 'rival-intent', 'rival-preview', 'lesson-start', 'change-mode']
@@ -202,6 +203,7 @@ const CAMERA_MOTION_KEY = 'tron-grid-run-camera-motion';
 const FLASH_INTENSITY_KEY = 'tron-grid-run-flash-intensity';
 const GAMEPAD_KEY = 'tron-grid-run-gamepad';
 const CAPTIONS_KEY = 'tron-grid-run-captions';
+const AUTO_DRIVE_KEY = 'tron-grid-run-auto-drive';
 const DAILY_RULES_VERSION = 3;
 const DEFAULT_BINDINGS = Object.freeze({ left: 'a', right: 'd', up: 'w', down: 's', form: 'f', fire: 'e', disc: 'space', pause: 'p', sound: 'm' });
 let storageAvailable = true;
@@ -333,14 +335,16 @@ let cameraMotion = optionValue(CAMERA_MOTION_KEY, ['cinematic', 'steady'], 'cine
 let flashIntensity = optionValue(FLASH_INTENSITY_KEY, ['full', 'soft', 'off'], 'full');
 let gamepadEnabled = readLocal(GAMEPAD_KEY) === 'true';
 let captionsEnabled = readLocal(CAPTIONS_KEY) !== 'false';
+let autoDrive = readLocal(AUTO_DRIVE_KEY) !== 'false';
 let captionToken = 0;
 let gamepadMove = { x: 0, z: 0 };
 let gamepadHeld = new Set();
 const fireSources = new Set();
+const throttleSources = new Set();
 let round = createRound();
 const onlineCode = new URLSearchParams(location.search).get('onlineRoom')?.toUpperCase();
 const online = /^[A-Z0-9]{6}$/.test(onlineCode || '') ? { code: onlineCode, view: null,
-  controller: null, retry: null, connected: false, heldFire: false, lastMove: '',
+  controller: null, retry: null, connected: false, heldFire: false, heldThrottle: false, lastMove: '',
   lastPhase: '', lastRound: 0 } : null;
 let mode = 'ready';
 let pausedFrom = 'running';
@@ -723,6 +727,7 @@ function updateShiftHud() {
     document.querySelector('#shift-status').textContent += ' / NITRO ' + Math.ceil(player.nitroUntil - round.elapsed) + 'S';
   document.querySelector('#shift-rival-status').textContent =
     'Echo ' + rival.hp + '/2 integrity / ' + rival.form.toUpperCase();
+  shiftTouch.querySelector('[data-move="down"]').disabled = player.form === 'cycle';
   const weaponButton = document.querySelector('#shift-throw');
   weaponButton.textContent = player.form === 'cycle' ? (player.rocketReady ? 'ROCKET 1' : 'FIRE ' + player.ammo) : 'DISC';
   weaponButton.setAttribute('aria-label', player.form === 'cycle' ? (player.rocketReady ? 'Fire one rocket' : 'Fire wall gun') : 'Throw disc');
@@ -730,7 +735,7 @@ function updateShiftHud() {
     ? (!player.ammo && !player.rocketReady) || round.elapsed < player.recoveryUntil : disc || cooldown > 0);
   document.querySelector('#shift-tip').textContent =
     player.form === 'cycle' ? keyLabel('fire') + ' hold to fire / ' + keyLabel('form') + ' dismount / ' +
-      [keyLabel('up'),keyLabel('left'),keyLabel('down'),keyLabel('right')].join(' ') + ' steer / ' +
+      keyLabel('left') + '/' + keyLabel('right') + ' turn / ' + keyLabel('up') + ' forward / ' +
       Math.max(0, Math.ceil(round.shift.timeLimit - round.elapsed)) + 's'
       : [keyLabel('up'), keyLabel('left'), keyLabel('down'), keyLabel('right')].join(' ') +
         ' move / ' + keyLabel('disc') + ' throw / ' + keyLabel('form') + ' remount / ' +
@@ -805,8 +810,8 @@ function openMenuHub() {
   if ((overlay.classList.contains('hidden') && !online) || !menuHub.hidden) return;
   menuHubReturnFocus = document.activeElement;
   if (online) {
-    fireSources.clear(); shiftKeys.clear(); gamepadMove = { x: 0, z: 0 };
-    syncFire(); syncShiftMove();
+    fireSources.clear(); throttleSources.clear(); shiftKeys.clear(); gamepadMove = { x: 0, z: 0 };
+    syncFire(); syncThrottle(); syncShiftMove();
     setBackgroundInert(true);
   }
   overlay.inert = true;
@@ -952,7 +957,7 @@ function musicIntensity() {
     .map(r=>Math.hypot(r.x-player.x,r.z-player.z))) : 20;
   const pressure=Math.max(0,1-nearest/16);
   const duration=Math.min(1,round.elapsed/38);
-  const stakes=sessionMode==='duel' && match
+  const stakes=!online && sessionMode==='duel' && match
     ? Math.min(1,(match.wins.player+match.wins.rival)/4) : 0;
   return Math.min(1,.25+duration*.20+pressure*.35+stakes*.20);
 }
@@ -994,17 +999,17 @@ function keyAction(key) {
 function syncControlHints(shift = online ? sessionMode === 'shift' : modeSelect.value === 'shift') {
   const key = action => '<kbd>' + keyLabel(action) + '</kbd>';
   document.querySelector('#controls-hint').innerHTML =
-    key('up') + key('left') + key('down') + key('right') + ' STEER ' +
+    key('left') + key('right') + ' TURN ' + key('up') + ' FORWARD ' +
     key('fire') + ' FIRE ' + (shift ? key('form') + ' FORM ' + key('disc') + ' DISC ' : '') +
     key('pause') + ' PAUSE';
   document.querySelector('#panel-footer').innerHTML = shift
-    ? 'CYCLE <span>' + [keyLabel('up'),keyLabel('left'),keyLabel('down'),keyLabel('right')].join(' ') +
-      ' STEER</span> &nbsp;?&nbsp; FOOT <span>' +
+    ? 'CYCLE <span>' + keyLabel('left') + '/' + keyLabel('right') + ' TURN / ' +
+      keyLabel('up') + ' FORWARD</span> &nbsp;&middot;&nbsp; FOOT <span>' +
       [keyLabel('up'),keyLabel('left'),keyLabel('down'),keyLabel('right')].join(' ') +
-      ' MOVE</span> &nbsp;?&nbsp; <span>' + keyLabel('form') + ' FORM / ' +
+      ' MOVE</span> &nbsp;&middot;&nbsp; <span>' + keyLabel('form') + ' FORM / ' +
       keyLabel('fire') + ' FIRE / ' + keyLabel('disc') + ' DISC</span>'
-    : 'KEYBOARD <span>ARROWS / ' + [keyLabel('up'),keyLabel('left'),keyLabel('down'),keyLabel('right')].join(' ') +
-      '</span> / ' + keyLabel('fire') + ' FIRE &nbsp; TOUCH <span>STEER + FIRE</span>';
+    : 'KEYBOARD <span>' + keyLabel('left') + '/' + keyLabel('right') +
+      ' TURN / ' + keyLabel('up') + ' FORWARD</span> &nbsp;&middot;&nbsp; TOUCH <span>TURN + FORWARD + FIRE</span>';
 }
 function syncBindingButtons() {
   for (const button of document.querySelectorAll('[data-bind]')) {
@@ -1175,7 +1180,7 @@ function syncSetup() {
     : duel ? 'First to three / Turn into open space and trap one rival.'
     : 'Three heats / Survive at least two against three rivals. Trails: solid you, dashed Hunter, dotted Survivor, paired Trapper.';
   if (gamepadEnabled) document.querySelector('#mode-guide').textContent +=
-    ' Gamepad: left stick or D-pad steers, A changes form, B uses the current weapon, Start pauses.';
+    ' Gamepad: left/right turns, up moves forward in manual drive, A changes form, B uses the current weapon, Start pauses.';
   canvas.setAttribute('aria-label', shift ? '3D Grid Shift cycle and disc arena' : '3D light cycle arena');
   syncControlHints(shift);
   drawMapPreview();
@@ -1203,11 +1208,11 @@ function onlineAction(value) {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value),
   }).then(async response => {
-    if (response.ok || ['direction', 'fire', 'move'].includes(value.type)) return;
+    if (response.ok || ['direction', 'turn', 'throttle', 'fire', 'move'].includes(value.type)) return;
     const body = await response.json().catch(() => ({}));
     showToast(body.error || 'Room action failed.');
   }).catch(() => {
-    if (!['direction', 'fire', 'move'].includes(value.type))
+    if (!['direction', 'turn', 'throttle', 'fire', 'move'].includes(value.type))
       showToast('Room connection interrupted.');
   });
 }
@@ -1251,6 +1256,7 @@ function updateOnlineShiftHud() {
     const name = online.view.players.find(player => player.id === rider.id)?.name || rider.id;
     return name + ' ' + (rider.alive ? rider.hp + '/2 ' + rider.form.toUpperCase() : 'OUT');
   }).join(' / ');
+  shiftTouch.querySelector('[data-move="down"]').disabled = player.form === 'cycle';
   const weaponButton = document.querySelector('#shift-throw');
   weaponButton.textContent = player.form === 'cycle' ? (player.rocketReady ? 'ROCKET 1' : 'FIRE ' + player.ammo) : 'DISC';
   weaponButton.setAttribute('aria-label', player.form === 'cycle' ? (player.rocketReady ? 'Fire one rocket' : 'Fire wall gun') : 'Throw disc');
@@ -1259,7 +1265,7 @@ function updateOnlineShiftHud() {
       : discOut || cooldown > 0);
   document.querySelector('#shift-tip').textContent = player.form === 'cycle'
     ? keyLabel('fire') + ' hold to fire / ' + keyLabel('form') + ' dismount / ' +
-      [keyLabel('up'),keyLabel('left'),keyLabel('down'),keyLabel('right')].join(' ') + ' steer / ' +
+      keyLabel('left') + '/' + keyLabel('right') + ' turn / ' + keyLabel('up') + ' forward / ' +
       Math.max(0, Math.ceil(round.shift.timeLimit - round.elapsed)) + 's'
     : [keyLabel('up'), keyLabel('left'), keyLabel('down'), keyLabel('right')].join(' ') +
       ' move / ' + keyLabel('disc') + ' throw / ' + keyLabel('form') + ' remount / ' +
@@ -1339,13 +1345,16 @@ function onlineReceive(view) {
   if (key !== online.lastPhase) {
     online.lastPhase = key;
     online.heldFire = false;
+    online.heldThrottle = false;
     online.lastMove = '';
     fireSources.clear();
+    throttleSources.clear();
     shiftKeys.clear();
     gamepadMove = { x: 0, z: 0 };
     syncControlHints(view.mode === 'shift');
     if (view.phase === 'running') {
       mode = 'running';
+      onlineAction({ type: 'auto-drive', enabled: autoDrive });
       hideCountdown();
       hideOverlay();
       nextMusicBeat = 0;
@@ -1577,6 +1586,7 @@ function beginRound() {
     : sessionMode === 'lesson'
       ? createRound({ seed: randomSeed(), riders: [{ id: 'YOU', x: 0, z: 16, dir: 0, isPlayer: true, controller: 'none' }] })
       : createArenaRound({ seed: roundSeed(match), difficulty: match.difficulty, map: match.map, rule: match.rule });
+  syncAutoDrive();
   rebuildStatic(getMap(round.map));
   applyPlayerLook();
   loadBest();
@@ -1677,7 +1687,9 @@ function pause() {
   }
   if (graphicsLost) return;
   fireSources.clear();
+  throttleSources.clear();
   syncFire();
+  syncThrottle();
   if (mode === 'running' || mode === 'countdown') {
     pausedFrom = mode;
     mode = 'paused';
@@ -1715,15 +1727,35 @@ function pause() {
   }
 }
 
-function playerDirection(direction) {
+function playerTurn(sign) {
   if (mode !== 'running') return;
   if (online) {
     if (sessionMode !== 'shift' || round.riders[0]?.form === 'cycle')
-      onlineAction({ type: 'direction', direction });
+      onlineAction({ type: 'turn', sign });
     return;
   }
-  if (sessionMode === 'shift') queueShiftDirection(round, 'YOU', direction);
-  else queueDirection(round, 'YOU', direction);
+  if (sessionMode === 'shift') queueShiftTurn(round, 'YOU', sign);
+  else queueTurn(round, 'YOU', sign);
+}
+function syncThrottle() {
+  const held = mode === 'running' && throttleSources.size > 0;
+  if (online) {
+    if (online.heldThrottle !== held) {
+      online.heldThrottle = held;
+      onlineAction({ type: 'throttle', held });
+    }
+  } else setCycleThrottle(round, 'YOU', held);
+}
+function setThrottleSource(source, held) {
+  if (held) throttleSources.add(source);
+  else throttleSources.delete(source);
+  syncThrottle();
+}
+function syncAutoDrive() {
+  if (online) {
+    if (mode === 'running') onlineAction({ type: 'auto-drive', enabled: autoDrive });
+  } else setCycleAutoDrive(round, 'YOU', autoDrive);
+  syncControlHints();
 }
 function syncFire() {
   const held = mode === 'running' && fireSources.size > 0;
@@ -2604,6 +2636,7 @@ function pollGamepad() {
   }
   if (!pad) {
     if (fireSources.delete('gamepad')) syncFire();
+    if (throttleSources.delete('gamepad')) syncThrottle();
     if (gamepadMove.x || gamepadMove.z) {
       gamepadMove = { x: 0, z: 0 };
       syncShiftMove();
@@ -2623,6 +2656,7 @@ function pollGamepad() {
   if (button(9)) active.add('pause');
   if (!menuHub.hidden) {
     if (fireSources.delete('gamepad')) syncFire();
+    if (throttleSources.delete('gamepad')) syncThrottle();
     gamepadMove = { x: 0, z: 0 };
     gamepadHeld = active;
     return;
@@ -2636,9 +2670,10 @@ function pollGamepad() {
       };
       syncShiftMove();
       if (round.riders[0].form === 'cycle') {
-        for (const [name, direction] of Object.entries({ up: 0, right: 1, down: 2, left: 3 }))
-          if (fresh(name)) playerDirection(direction);
+        if (fresh('left')) playerTurn(-1);
+        if (fresh('right')) playerTurn(1);
       }
+      setThrottleSource('gamepad', round.riders[0].form === 'cycle' && active.has('up'));
       if (fresh('confirm')) { if (online) onlineAction({ type: 'form' });
         else { requestShiftForm(round, 'YOU'); handleEvents(); } }
       if (round.riders[0].form === 'foot' && fresh('disc')) {
@@ -2650,13 +2685,15 @@ function pollGamepad() {
       else if (round.riders[0].form !== 'cycle' && fireSources.has('gamepad'))
         setFireSource('gamepad', false);
     } else {
-      for (const [name, direction] of Object.entries({ up: 0, right: 1, down: 2, left: 3 }))
-        if (fresh(name)) playerDirection(direction);
+      if (fresh('left')) playerTurn(-1);
+      if (fresh('right')) playerTurn(1);
+      setThrottleSource('gamepad', active.has('up'));
       if (active.has('disc') !== fireSources.has('gamepad'))
         setFireSource('gamepad', active.has('disc'));
     }
-  } else if (fireSources.has('gamepad')) {
-    setFireSource('gamepad', false);
+  } else {
+    if (fireSources.has('gamepad')) setFireSource('gamepad', false);
+    if (throttleSources.has('gamepad')) setThrottleSource('gamepad', false);
   }
   if (fresh('confirm') && ['ready', 'operation-brief', 'shift-brief', 'won', 'lost', 'paused'].includes(mode)) {
     ui.start.click();
@@ -2859,9 +2896,16 @@ gamepadInput.addEventListener('change', () => {
     gamepadMove = { x: 0, z: 0 };
     gamepadHeld.clear();
     fireSources.delete('gamepad');
+    throttleSources.delete('gamepad');
     syncFire();
+    syncThrottle();
     syncShiftMove();
   }
+});
+autoDriveInput.addEventListener('change', () => {
+  autoDrive = autoDriveInput.checked;
+  writeLocal(AUTO_DRIVE_KEY, String(autoDrive));
+  syncAutoDrive();
 });
 captionsInput.addEventListener('change', () => {
   captionsEnabled = captionsInput.checked;
@@ -2882,7 +2926,7 @@ document.querySelector('#reset-settings').addEventListener('click', () => {
       CAMERA_KEY, CAMERA_MODE_KEY, REDUCE_FLASHES_KEY, QUALITY_KEY, BINDINGS_KEY,
       OLD_BINDINGS_KEY, PREVIOUS_BINDINGS_KEY,
       TOUCH_SIZE_KEY, TOUCH_PLACEMENT_KEY, RENDER_SCALE_KEY, CAMERA_MOTION_KEY,
-      FLASH_INTENSITY_KEY, GAMEPAD_KEY, CAPTIONS_KEY]) localStorage.removeItem(key);
+      FLASH_INTENSITY_KEY, GAMEPAD_KEY, CAPTIONS_KEY, AUTO_DRIVE_KEY]) localStorage.removeItem(key);
     location.reload();
   } catch {
     storageAvailable = false;
@@ -2921,17 +2965,20 @@ if (touchToggle) {
 window.matchMedia('(any-pointer: coarse)').addEventListener?.('change', syncTouchControls);
 document.getElementById('left').addEventListener('pointerdown', event => {
   event.preventDefault();
-  playerDirection(3);
+  playerTurn(-1);
 });
 document.getElementById('right').addEventListener('pointerdown', event => {
   event.preventDefault();
-  playerDirection(1);
+  playerTurn(1);
 });
-for (const [id, direction] of [['up', 0], ['down', 2]])
-  document.getElementById(id).addEventListener('pointerdown', event => {
-    event.preventDefault();
-    playerDirection(direction);
-  });
+const forwardTouch = document.getElementById('up');
+forwardTouch.addEventListener('pointerdown', event => {
+  event.preventDefault();
+  forwardTouch.setPointerCapture(event.pointerId);
+  setThrottleSource('touch-cycle', true);
+});
+for (const type of ['pointerup', 'pointercancel', 'lostpointercapture'])
+  forwardTouch.addEventListener(type, () => setThrottleSource('touch-cycle', false));
 canvas.addEventListener('pointerdown', () => {
   if (!online && mode === 'countdown') launch();
 });
@@ -2994,10 +3041,13 @@ window.addEventListener('keydown', event => {
     }
     if (shiftDirection) {
       event.preventDefault();
-      shiftKeys.add(action);
-      syncShiftMove();
-      if (round.riders[0].form === 'cycle' && !event.repeat) {
-        playerDirection({ up: 0, right: 1, down: 2, left: 3 }[action]);
+      if (round.riders[0].form === 'cycle') {
+        if (action === 'up') setThrottleSource('keyboard', true);
+        else if (!event.repeat && action === 'left') playerTurn(-1);
+        else if (!event.repeat && action === 'right') playerTurn(1);
+      } else {
+        shiftKeys.add(action);
+        syncShiftMove();
       }
       return;
     }
@@ -3007,7 +3057,9 @@ window.addEventListener('keydown', event => {
     setFireSource('keyboard', true);
   } else if (mode === 'running' && !interactive && shiftDirection) {
     event.preventDefault();
-    playerDirection({ up: 0, right: 1, down: 2, left: 3 }[action]);
+    if (action === 'up') setThrottleSource('keyboard', true);
+    else if (action === 'left') playerTurn(-1);
+    else if (action === 'right') playerTurn(1);
   } else if ((action === 'pause' || event.key === 'Escape') && !editing) {
     event.preventDefault();
     pause();
@@ -3027,6 +3079,7 @@ window.addEventListener('keyup', event => {
   const action = keyAction(event.key);
   if (action) shiftKeys.delete(action);
   if (action === 'fire') setFireSource('keyboard', false);
+  if (action === 'up') setThrottleSource('keyboard', false);
   syncShiftMove();
 });
 window.addEventListener('blur', () => {
@@ -3034,7 +3087,9 @@ window.addEventListener('blur', () => {
   gamepadMove = { x: 0, z: 0 };
   gamepadHeld.clear();
   fireSources.clear();
+  throttleSources.clear();
   syncFire();
+  syncThrottle();
   syncShiftMove();
 });
 for (const button of shiftTouch.querySelectorAll('[data-move]')) {
@@ -3042,12 +3097,21 @@ for (const button of shiftTouch.querySelectorAll('[data-move]')) {
   button.addEventListener('pointerdown', event => {
     event.preventDefault();
     if (sessionMode !== 'shift' || mode !== 'running') return;
-    shiftKeys.add(move);
-    syncShiftMove();
-    if (round.riders[0].form === 'cycle')
-      playerDirection({ up: 0, right: 1, down: 2, left: 3 }[move]);
+    button.setPointerCapture(event.pointerId);
+    if (round.riders[0].form === 'cycle') {
+      if (move === 'up') setThrottleSource('touch-shift', true);
+      else if (move === 'left') playerTurn(-1);
+      else if (move === 'right') playerTurn(1);
+    } else {
+      shiftKeys.add(move);
+      syncShiftMove();
+    }
   });
-  const release = () => { shiftKeys.delete(move); syncShiftMove(); };
+  const release = () => {
+    shiftKeys.delete(move);
+    if (move === 'up') setThrottleSource('touch-shift', false);
+    syncShiftMove();
+  };
   button.addEventListener('pointerup', release);
   button.addEventListener('pointercancel', release);
   button.addEventListener('lostpointercapture', release);
@@ -3120,6 +3184,7 @@ flashIntensitySelect.value = flashIntensity;
 touchSizeSelect.value = touchSize;
 touchPlacementSelect.value = touchPlacement;
 gamepadInput.checked = gamepadEnabled;
+autoDriveInput.checked = autoDrive;
 captionsInput.checked = captionsEnabled;
 syncBindingButtons();
 syncStorageStatus();

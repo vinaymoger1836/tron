@@ -1,5 +1,5 @@
 import { getMap } from './maps.js';
-import { createLanRound, drainEvents, queueDirection, setCycleFire, stepRound, STEP } from './simulation.js';
+import { createLanRound, drainEvents, queueTurn, setCycleAutoDrive, setCycleThrottle, setCycleFire, stepRound, STEP } from './simulation.js';
 
 const $ = selector => document.querySelector(selector);
 const canvas = $('#arena');
@@ -7,9 +7,12 @@ const ctx = canvas.getContext('2d');
 const panel = $('#panel');
 const live = $('#status-live');
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const AUTO_DRIVE_KEY = 'tron-grid-run-auto-drive';
+let autoDrive = true;
+try { autoDrive = localStorage.getItem(AUTO_DRIVE_KEY) !== 'false'; } catch {}
 const state = {
   role: null, info: null, selfId: null, view: null, peer: null, channel: null,
-  inviteNonce: null, peers: new Map(), room: null, timer: null, heldFire: false,
+  inviteNonce: null, peers: new Map(), room: null, timer: null, heldFire: false, heldThrottle: false,
   lastPhase: null, lastRound: 0,
 };
 function say(message) { if (live.textContent !== message) live.textContent = message; }
@@ -92,7 +95,7 @@ function reset(message = '') {
   state.peer?.close();
   state.role = null; state.info = null; state.selfId = null; state.view = null;
   state.peer = null; state.channel = null; state.room = null;
-  state.inviteNonce = null; state.heldFire = false; state.lastPhase = null;
+  state.inviteNonce = null; state.heldFire = false; state.heldThrottle = false; state.lastPhase = null;
   $('#setup').hidden = false; $('#room').hidden = true; panel.hidden = false;
   $('#touch').hidden = true; $('#countdown').hidden = true; $('#pause').hidden = true;
   $('#scorebar').replaceChildren(); $('#room-code-top').textContent = 'NO ROOM';
@@ -274,9 +277,12 @@ function receiveHostMessage(peer, raw) {
   const now = Math.floor(performance.now() / 1000);
   if (peer.inputSecond !== now) { peer.inputSecond = now; peer.inputCount = 0; }
   if (++peer.inputCount > 40) return;
-  if (message.action === 'direction' && Number.isInteger(message.direction) &&
-      message.direction >= 0 && message.direction <= 3)
-    queueDirection(state.room.round, peer.player.id, message.direction);
+  if (message.action === 'turn' && (message.sign === -1 || message.sign === 1))
+    queueTurn(state.room.round, peer.player.id, message.sign);
+  if (message.action === 'auto-drive' && typeof message.enabled === 'boolean')
+    setCycleAutoDrive(state.room.round, peer.player.id, message.enabled);
+  if (message.action === 'throttle' && typeof message.held === 'boolean')
+    setCycleThrottle(state.room.round, peer.player.id, message.held);
   if (message.action === 'fire' && typeof message.held === 'boolean')
     setCycleFire(state.room.round, peer.player.id, message.held);
 }
@@ -295,7 +301,8 @@ function snapshot(selfId) {
       pickups: round.pickups,
       riders: round.riders.map(r => ({ id: r.id, x: r.x, z: r.z, dir: r.dir,
         color: r.color, style: r.style, alive: r.alive, ammo: r.ammo,
-        rocketReady: r.rocketReady, nitroUntil: r.nitroUntil })),
+        rocketReady: r.rocketReady, nitroUntil: r.nitroUntil,
+        autoDrive: r.autoDrive, throttleHeld: r.throttleHeld })),
       segments: round.segments.map(s => ({ id: s.id, ownerId: s.ownerId,
         x1: s.x1, z1: s.z1, x2: s.x2, z2: s.z2, active: s.active })),
       bullets: round.bullets.map(b => ({ ownerId: b.ownerId, x: b.x, z: b.z, rocket: b.rocket })),
@@ -330,7 +337,7 @@ function finishRound() {
   room.result = { winnerId, winnerName: winner?.name || null,
     crashes: room.crashes, matchWinnerId: winner?.wins >= 3 ? winnerId : null };
   room.phase = room.result.matchWinnerId ? 'match-result' : 'round-result';
-  room.round.riders.forEach(r => { r.fireHeld = false; });
+  room.round.riders.forEach(r => { r.fireHeld = false; r.throttleHeld = false; });
   broadcast();
 }
 function tickRoom(now) {
@@ -376,23 +383,38 @@ function localAction(value) {
       room.beforePause = room.phase;
       room.remaining = room.deadline - performance.now();
       room.phase = 'paused';
-      if (room.round) room.round.riders.forEach(r => { r.fireHeld = false; });
+      if (room.round) room.round.riders.forEach(r => { r.fireHeld = false; r.throttleHeld = false; });
     }
     broadcast();
   } else if (room.phase === 'running') {
-    if (value.type === 'direction') queueDirection(room.round, 'P1', value.direction);
+    if (value.type === 'turn') queueTurn(room.round, 'P1', value.sign);
+    if (value.type === 'auto-drive') setCycleAutoDrive(room.round, 'P1', value.enabled);
+    if (value.type === 'throttle') setCycleThrottle(room.round, 'P1', value.held);
     if (value.type === 'fire') setCycleFire(room.round, 'P1', value.held);
   }
 }
 function action(value) {
   if (!state.role) return;
   if (state.role === 'host') localAction(value);
-  else if (state.channel?.readyState === 'open' && ['direction', 'fire'].includes(value.type))
+  else if (state.channel?.readyState === 'open' &&
+      ['turn', 'auto-drive', 'throttle', 'fire'].includes(value.type))
     state.channel.send(JSON.stringify({ type: 'input', action: value.type,
-      direction: value.direction, held: value.held }));
+      sign: value.sign, enabled: value.enabled, held: value.held }));
 }
-function direction(value) {
-  if (state.view?.phase === 'running') action({ type: 'direction', direction: value });
+function turn(sign) {
+  if (state.view?.phase === 'running') action({ type: 'turn', sign });
+}
+function throttle(held) {
+  if (state.heldThrottle === held) return;
+  state.heldThrottle = held;
+  if (state.view?.phase === 'running') action({ type: 'throttle', held });
+}
+function setAutoDrive(enabled) {
+  autoDrive = enabled;
+  $('#auto-drive').checked = enabled;
+  $('#room-auto-drive').checked = enabled;
+  try { localStorage.setItem(AUTO_DRIVE_KEY, String(enabled)); } catch {}
+  if (state.view?.phase === 'running') action({ type: 'auto-drive', enabled });
 }
 function fire(held) {
   if (state.heldFire === held) return;
@@ -404,8 +426,10 @@ function receiveView(view) {
   const key = view.phase + ':' + view.roundNumber;
   if (key !== state.lastPhase) {
     state.lastPhase = key;
-    if (view.phase !== 'running') state.heldFire = false;
+    if (view.phase !== 'running') { state.heldFire = false; state.heldThrottle = false; }
     if (view.phase === 'running') {
+      state.heldThrottle = false;
+      action({ type: 'auto-drive', enabled: autoDrive });
       say('Heat ' + view.roundNumber + ' started.');
       canvas.focus({ preventScroll: true });
     } else if (view.phase === 'round-result' || view.phase === 'match-result') {
@@ -616,10 +640,18 @@ $('#copy-response').addEventListener('click', () => copyField('#response-output'
 $('#start').addEventListener('click', () => action({ type: 'start' }));
 $('#pause').addEventListener('click', () => action({ type: 'pause' }));
 $('#leave').addEventListener('click', () => reset('You left the room.'));
-for (const [id, value] of [['up', 0], ['right', 1], ['down', 2], ['left', 3]])
+for (const [id, sign] of [['left', -1], ['right', 1]])
   $('#' + id).addEventListener('pointerdown', event => {
-    event.preventDefault(); direction(value);
+    event.preventDefault(); turn(sign);
   });
+const forwardButton = $('#up');
+forwardButton.addEventListener('pointerdown', event => {
+  event.preventDefault();
+  forwardButton.setPointerCapture(event.pointerId);
+  throttle(true);
+});
+for (const type of ['pointerup', 'pointercancel', 'lostpointercapture'])
+  forwardButton.addEventListener(type, () => throttle(false));
 $('#fire').addEventListener('pointerdown', event => {
   event.preventDefault();
   event.currentTarget.setPointerCapture(event.pointerId);
@@ -629,10 +661,12 @@ for (const type of ['pointerup', 'pointercancel', 'lostpointercapture'])
   $('#fire').addEventListener(type, () => fire(false));
 document.addEventListener('keydown', event => {
   if (interactiveFocus()) return;
-  const movement = { ArrowUp: 0, w: 0, W: 0, ArrowRight: 1, d: 1, D: 1,
-    ArrowDown: 2, s: 2, S: 2, ArrowLeft: 3, a: 3, A: 3 }[event.key];
-  if (!event.repeat && movement !== undefined) {
-    event.preventDefault(); direction(movement);
+  if (['w', 'W', 'ArrowUp'].includes(event.key)) {
+    event.preventDefault(); throttle(true);
+  } else if (!event.repeat && ['a', 'A', 'ArrowLeft'].includes(event.key)) {
+    event.preventDefault(); turn(-1);
+  } else if (!event.repeat && ['d', 'D', 'ArrowRight'].includes(event.key)) {
+    event.preventDefault(); turn(1);
   } else if (['e', 'E', ' '].includes(event.key)) {
     event.preventDefault(); fire(true);
   } else if (!event.repeat && ['p', 'P'].includes(event.key) &&
@@ -641,12 +675,17 @@ document.addEventListener('keydown', event => {
   }
 });
 document.addEventListener('keyup', event => {
+  if (['w', 'W', 'ArrowUp'].includes(event.key)) throttle(false);
   if (['e', 'E', ' '].includes(event.key)) fire(false);
 });
-window.addEventListener('blur', () => fire(false));
+window.addEventListener('blur', () => { fire(false); throttle(false); });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) fire(false);
+  if (document.hidden) { fire(false); throttle(false); }
 });
+$('#auto-drive').checked = autoDrive;
+$('#room-auto-drive').checked = autoDrive;
+for (const id of ['auto-drive', 'room-auto-drive'])
+  $('#' + id).addEventListener('change', event => setAutoDrive(event.target.checked));
 function fillRoomLink() {
   if (location.hash.startsWith('#room=')) $('#join-link').value = location.href;
 }

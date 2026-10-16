@@ -335,9 +335,13 @@ function explodeRocket(round, bullet, x, z) {
   round.events.push({ type: 'rocket-explode', riderId: bullet.ownerId, x, z });
 }
 function turn(round, rider, sign) {
-  closeTrail(round, rider);
-  rider.ignoreSegmentId = rider.segment?.id ?? null;
-  rider.distanceSinceTurn = 0;
+  if (Math.hypot(rider.x - rider.segment.x1, rider.z - rider.segment.z1) < EPS) {
+    round.segments.splice(round.segments.indexOf(rider.segment), 1);
+  } else {
+    closeTrail(round, rider);
+    rider.ignoreSegmentId = rider.segment.id;
+    rider.distanceSinceTurn = 0;
+  }
   rider.dir = (rider.dir + sign + 4) % 4;
   rider.lastTurnAt = round.elapsed;
   openTrail(round, rider);
@@ -478,7 +482,9 @@ export function stepShiftRound(round) {
       rider.dir = Math.abs(direction[0]) > Math.abs(direction[1])
         ? direction[0] > 0 ? 1 : 3 : direction[1] > 0 ? 2 : 0;
     }
-    const speed = round.elapsed < rider.recoveryUntil ? 0 : SPEED[rider.form] * (round.elapsed < rider.nitroUntil ? 1.5 : 1);
+    const canMove = rider.form !== 'cycle' || rider.autoDrive || rider.throttleHeld;
+    const speed = round.elapsed < rider.recoveryUntil || !canMove ? 0
+      : SPEED[rider.form] * (round.elapsed < rider.nitroUntil ? 1.5 : 1);
     const dx = direction[0] * speed * STEP, dz = direction[1] * speed * STEP;
     return { rider, dx, dz,
       hit: worldHit(round, rider, rider.x, rider.z, dx, dz, RADIUS[rider.form]) };

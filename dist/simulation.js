@@ -197,6 +197,8 @@ export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles, diff
       ammo: ROUND_AMMO,
       nextShotAt: 0,
       fireHeld: false,
+      autoDrive: true,
+      throttleHeld: false,
     };
     rider.segment = newSegment(round, rider);
     round.riders.push(rider);
@@ -222,6 +224,20 @@ export function queueTurn(round, riderId, sign) {
   if (readyAt > round.elapsed + EPSILON) {
     round.events.push({ type: 'turn-queued', riderId, sign });
   }
+  return true;
+}
+
+export function setCycleAutoDrive(round, riderId, enabled) {
+  const rider = round.riders.find(r => r.id === riderId);
+  if (!rider || typeof enabled !== 'boolean') return false;
+  rider.autoDrive = enabled;
+  return true;
+}
+
+export function setCycleThrottle(round, riderId, held) {
+  const rider = round.riders.find(r => r.id === riderId);
+  if (!rider || typeof held !== 'boolean') return false;
+  rider.throttleHeld = held;
   return true;
 }
 
@@ -510,10 +526,14 @@ function decideAI(round, rider) {
 }
 function applyTurn(round, rider, sign) {
   const priorFree = freeDistance(round, rider, rider.dir, 3);
-  rider.segment.active = false;
-  rider.segment.closedAt = round.elapsed;
-  rider.ignoreSegmentId = rider.segment.id;
-  rider.distanceSinceTurn = 0;
+  if (Math.hypot(rider.x - rider.segment.x1, rider.z - rider.segment.z1) < EPSILON) {
+    round.segments.splice(round.segments.indexOf(rider.segment), 1);
+  } else {
+    rider.segment.active = false;
+    rider.segment.closedAt = round.elapsed;
+    rider.ignoreSegmentId = rider.segment.id;
+    rider.distanceSinceTurn = 0;
+  }
   rider.dir = (rider.dir + sign + 4) % 4;
   rider.segment = newSegment(round, rider);
   round.segments.push(rider.segment);
@@ -652,7 +672,8 @@ export function stepRound(round) {
   round.bullets = round.bullets.filter(bullet => moveBullet(round, bullet));
 
   const proposals = round.riders.filter(r => r.alive).map(rider => {
-    const distance = round.speed * (round.elapsed < rider.nitroUntil ? 1.5 : 1) * STEP;
+    const distance = (rider.autoDrive || rider.throttleHeld ? 1 : 0) *
+      round.speed * (round.elapsed < rider.nitroUntil ? 1.5 : 1) * STEP;
     const [vx, vz] = DIR[rider.dir];
     const dx = vx * distance;
     const dz = vz * distance;
