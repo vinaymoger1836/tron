@@ -246,7 +246,7 @@ function tickRoom(room, now) {
     for (const event of drainEvents(room.round)) {
       if (event.type === 'crash') room.crashes.push({
         riderId: event.riderId, reason: event.reason, by: event.by || null });
-      if (['pickup', 'rocket-explode', 'arena-shrink'].includes(event.type)) {
+      if (['pickup', 'pickup-spawn', 'rocket-explode', 'arena-shrink'].includes(event.type)) {
         room.effects.push({ ...event, id: ++room.effectSeq, at: Date.now() });
         if (room.effects.length > 16) room.effects.shift();
       }
@@ -400,6 +400,11 @@ async function handleApi(req, res, pathname) {
         room.players.forEach(p => { p.wins = 0; });
       }
       nextRound(room);
+      return json(res, 200, { ok: true });
+    }
+    if (room.round && ['countdown', 'paused', 'connection-wait'].includes(room.phase) &&
+        body.type === 'auto-drive' && typeof body.enabled === 'boolean') {
+      setCycleAutoDrive(room.round, player.id, body.enabled);
       return json(res, 200, { ok: true });
     }
     if (room.phase !== 'running') return fail(res, 409, 'Wait for the round to begin.');

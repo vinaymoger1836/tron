@@ -273,7 +273,9 @@ function dropPeer(nonce) {
 function receiveHostMessage(peer, raw) {
   let message;
   try { message = JSON.parse(raw); } catch { return; }
-  if (!peer.connected || state.room?.phase !== 'running' || message?.type !== 'input') return;
+  if (!peer.connected || !['countdown', 'running'].includes(state.room?.phase) ||
+      message?.type !== 'input') return;
+  if (state.room.phase === 'countdown' && message.action !== 'auto-drive') return;
   const now = Math.floor(performance.now() / 1000);
   if (peer.inputSecond !== now) { peer.inputSecond = now; peer.inputCount = 0; }
   if (++peer.inputCount > 40) return;
@@ -386,6 +388,8 @@ function localAction(value) {
       if (room.round) room.round.riders.forEach(r => { r.fireHeld = false; r.throttleHeld = false; });
     }
     broadcast();
+  } else if (room.phase === 'countdown' && value.type === 'auto-drive') {
+    setCycleAutoDrive(room.round, 'P1', value.enabled);
   } else if (room.phase === 'running') {
     if (value.type === 'turn') queueTurn(room.round, 'P1', value.sign);
     if (value.type === 'auto-drive') setCycleAutoDrive(room.round, 'P1', value.enabled);
@@ -414,7 +418,8 @@ function setAutoDrive(enabled) {
   $('#auto-drive').checked = enabled;
   $('#room-auto-drive').checked = enabled;
   try { localStorage.setItem(AUTO_DRIVE_KEY, String(enabled)); } catch {}
-  if (state.view?.phase === 'running') action({ type: 'auto-drive', enabled });
+  if (['countdown', 'running'].includes(state.view?.phase))
+    action({ type: 'auto-drive', enabled });
 }
 function fire(held) {
   if (state.heldFire === held) return;
@@ -427,9 +432,10 @@ function receiveView(view) {
   if (key !== state.lastPhase) {
     state.lastPhase = key;
     if (view.phase !== 'running') { state.heldFire = false; state.heldThrottle = false; }
+    if (view.phase === 'countdown' || view.phase === 'running')
+      action({ type: 'auto-drive', enabled: autoDrive });
     if (view.phase === 'running') {
       state.heldThrottle = false;
-      action({ type: 'auto-drive', enabled: autoDrive });
       say('Heat ' + view.roundNumber + ' started.');
       canvas.focus({ preventScroll: true });
     } else if (view.phase === 'round-result' || view.phase === 'match-result') {

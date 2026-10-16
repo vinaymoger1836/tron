@@ -1327,6 +1327,9 @@ function onlineReceive(view) {
       } else if (effect.type === 'arena-shrink') {
         showToast('GRID SHRINKING / ' + effect.limit);
         announce('Grid shrinking. New limit ' + effect.limit + '.');
+      } else if (effect.type === 'pickup-spawn') {
+        showToast(effect.pickup.toUpperCase() + ' SPAWNED / CHECK RADAR');
+        announce(effect.pickup + ' booster spawned. Check the radar.');
       } else if (effect.type === 'pickup' && effect.riderId === view.selfId) {
         showToast(effect.pickup.toUpperCase() + ' PICKED UP');
         announce(effect.pickup + ' picked up.');
@@ -1363,6 +1366,7 @@ function onlineReceive(view) {
       announce('Online ' + view.mode + ' heat ' + view.roundNumber + ' started.');
     } else if (view.phase === 'countdown') {
       mode = 'countdown';
+      onlineAction({ type: 'auto-drive', enabled: autoDrive });
       hideOverlay();
       countdown.classList.add('show');
       announce('Online heat starting.');
@@ -1753,7 +1757,8 @@ function setThrottleSource(source, held) {
 }
 function syncAutoDrive() {
   if (online) {
-    if (mode === 'running') onlineAction({ type: 'auto-drive', enabled: autoDrive });
+    if (mode === 'running' || mode === 'countdown' || mode === 'paused')
+      onlineAction({ type: 'auto-drive', enabled: autoDrive });
   } else setCycleAutoDrive(round, 'YOU', autoDrive);
   syncControlHints();
 }
@@ -2097,6 +2102,9 @@ function handleEvents() {
     } else if (event.type === 'shift-denied' && event.riderId === 'YOU') {
       showToast(event.reason.toUpperCase());
       announce(event.reason + '.');
+    } else if (event.type === 'pickup-spawn') {
+      showToast(event.pickup.toUpperCase() + ' SPAWNED / CHECK RADAR');
+      announce(event.pickup + ' booster spawned. Check the radar.');
     } else if (event.type === 'pickup') {
       if (event.riderId === 'YOU') {
         showToast(event.pickup.toUpperCase() + ' PICKED UP');

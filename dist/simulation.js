@@ -118,11 +118,6 @@ export function createOperationRound({ id = 'portal', seed = 1, difficulty = 'st
     collapseIndex: 0,
   };
   round.dynamicObstacles = [];
-  // Timed missions keep their pickups inside the authored containment rings.
-  for (const [index, pickup] of round.pickups.entries()) {
-    pickup.x = mission.spawn.x + [3, -3, 3][index];
-    pickup.z = mission.spawn.z - [6, 9, 12][index];
-  }
   return round;
 }
 
