@@ -48,7 +48,7 @@ Solo play remains usable as a static site. Online rooms require the persistent g
 
 ## Deploy the online game
 
-Run this repository as **one persistent Node.js 20+ or Docker web service** with HTTPS at the public edge. The included `Dockerfile` starts the full site and room server. Set `TRON_PUBLIC_ORIGIN` to the exact public HTTPS origin, such as `https://grid.example.com`, without a trailing path. The host platform supplies `PORT`; if it does not, the server uses port 8000. Use `npm start` when deploying without Docker. Configure one instance and a service that does not sleep during a match. The health endpoint is `/healthz`.
+Run this repository as **one persistent Node.js 20+ or Docker web service** with HTTPS at the public edge. The included `Dockerfile` starts the full site and room server. On Render, the server uses `RENDER_EXTERNAL_URL` automatically. On another host, set `TRON_PUBLIC_ORIGIN` to the exact public HTTPS origin, such as `https://grid.example.com`, without a trailing path. The host platform supplies `PORT`; the Docker image defaults to port 10000, and direct Node startup defaults to port 8000. Use `npm start` when deploying without Docker. Configure one instance and a service that does not sleep during a match. The health endpoint is `/healthz`.
 
 Give players that public URL. The entire game, room API, and live match stream are served from it. This online mode cannot run on a static-only Vercel deployment because it needs a continuously running match process. A separate Vercel static deployment can still run solo play and the manual browser peer room; its landing menu detects that no online room server is available.
 

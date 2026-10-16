@@ -1,6 +1,6 @@
 import { createLanServer } from './lan-server.mjs';
 
-const value = process.env.TRON_PUBLIC_ORIGIN;
+const value = process.env.TRON_PUBLIC_ORIGIN || process.env.RENDER_EXTERNAL_URL;
 if (!value) throw new Error("Set TRON_PUBLIC_ORIGIN to this server\'s public HTTPS URL.");
 let origin;
 try { origin = new URL(value); }
