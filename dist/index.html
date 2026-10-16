@@ -64,6 +64,7 @@
     body.touch-compact .touch-controls{left:50%;right:auto;transform:translateX(-50%);width:min(400px,100%);padding:0 12px}
     body.touch-raised .touch-controls{bottom:calc(95px + env(safe-area-inset-bottom))}
     body.touch-raised .shift-touch{bottom:calc(76px + env(safe-area-inset-bottom))}
+    @media(max-width:760px){.cycle-weapon-status{position:fixed;left:50%;bottom:calc(160px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:2}body.touch-raised .cycle-weapon-status{bottom:calc(230px + env(safe-area-inset-bottom))}}
     @media(max-width:760px){.binding-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.run-archive li{font-size:11px}}
     @media(max-height:450px){.run-archive ol{max-height:100px}}
     .cue-caption{position:fixed;z-index:3;left:50%;top:29%;transform:translateX(-50%);padding:5px 11px;background:#071a28e8;border:1px solid #6cbdcc;color:#e9fdff;font:700 10px Orbitron,monospace;letter-spacing:.1em;pointer-events:none;text-align:center;max-width:90vw}
