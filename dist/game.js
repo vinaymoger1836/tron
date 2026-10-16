@@ -8,6 +8,9 @@ import { createShiftRound, stepShiftRound, setShiftMove, queueShiftTurn, request
 const canvas = document.querySelector('#game');
 const radar = document.querySelector('#radar');
 const overlay = document.querySelector('#overlay');
+const menuHub = document.querySelector('#menu-hub');
+const menuHubOpen = document.querySelector('#menu-hub-open');
+const menuTabs = [...document.querySelectorAll('.menu-tab')];
 const countdown = document.querySelector('#countdown');
 const statusLive = document.querySelector('#status-live');
 const touchControls = document.querySelector('.touch-controls');
@@ -775,7 +778,40 @@ function setBackgroundInert(inert) {
   touchControls.inert = inert;
 }
 
+let menuHubReturnFocus = null;
+function activateMenuTab(tab, focus = true) {
+  for (const item of menuTabs) {
+    const selected = item === tab;
+    item.setAttribute('aria-selected', String(selected));
+    item.tabIndex = selected ? 0 : -1;
+    document.getElementById(item.getAttribute('aria-controls')).hidden = !selected;
+  }
+  if (focus) tab.focus({ preventScroll: true });
+}
+function openMenuHub() {
+  if (overlay.classList.contains('hidden') || !menuHub.hidden) return;
+  menuHubReturnFocus = document.activeElement;
+  overlay.inert = true;
+  overlay.setAttribute('aria-hidden', 'true');
+  menuHub.hidden = false;
+  activateMenuTab(menuTabs.find(tab => tab.getAttribute('aria-selected') === 'true') || menuTabs[0]);
+}
+function closeMenuHub(restoreFocus = true) {
+  if (menuHub.hidden) return;
+  menuHub.hidden = true;
+  if (captureBinding) {
+    captureBinding = null;
+    bindingStatus.textContent = 'Binding change cancelled.';
+    syncBindingButtons();
+  }
+  const overlayHidden = overlay.classList.contains('hidden');
+  overlay.inert = overlayHidden;
+  overlay.setAttribute('aria-hidden', String(overlayHidden));
+  if (restoreFocus && !overlayHidden) (menuHubReturnFocus || menuHubOpen).focus({ preventScroll: true });
+  menuHubReturnFocus = null;
+}
 function setOverlay(eyebrow, title, deck, button) {
+  closeMenuHub(false);
   ui.eyebrow.textContent = eyebrow;
   ui.title.innerHTML = title;
   ui.deck.textContent = deck;
@@ -797,6 +833,7 @@ function setOverlay(eyebrow, title, deck, button) {
 }
 
 function hideOverlay() {
+  closeMenuHub(false);
   ++overlayFocusToken;
   overlay.classList.add('hidden');
   overlay.setAttribute('aria-hidden', 'true');
@@ -2233,6 +2270,12 @@ function pollGamepad() {
   if (button(0)) active.add('confirm');
   if (button(1)) active.add('disc');
   if (button(9)) active.add('pause');
+  if (!menuHub.hidden) {
+    if (fireSources.delete('gamepad')) syncFire();
+    gamepadMove = { x: 0, z: 0 };
+    gamepadHeld = active;
+    return;
+  }
   const fresh = action => active.has(action) && !gamepadHeld.has(action);
   if (mode === 'running') {
     if (sessionMode === 'shift') {
@@ -2335,6 +2378,37 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
+menuHubOpen.addEventListener('click', openMenuHub);
+document.querySelector('#menu-hub-close').addEventListener('click', () => closeMenuHub());
+document.querySelector('#menu-hub-backdrop').addEventListener('click', () => closeMenuHub());
+for (const tab of menuTabs) tab.addEventListener('click', () => activateMenuTab(tab, false));
+menuHub.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !captureBinding) {
+    event.preventDefault();
+    event.stopPropagation();
+    closeMenuHub();
+    return;
+  }
+  const index = menuTabs.indexOf(event.target);
+  if (index >= 0 && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+    event.preventDefault();
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? menuTabs.length - 1
+      : (index + (event.key === 'ArrowRight' ? 1 : -1) + menuTabs.length) % menuTabs.length;
+    activateMenuTab(menuTabs[next]);
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const items = [...menuHub.querySelectorAll('button, select, input, a, [tabindex]')]
+    .filter(item => item.tabIndex >= 0 && !item.disabled && !item.closest('[hidden]') &&
+      item.getClientRects().length > 0 && getComputedStyle(item).visibility === 'visible');
+  const first = items[0], last = items[items.length - 1];
+  if (!first) return;
+  if ((event.shiftKey && document.activeElement === first) ||
+      (!event.shiftKey && document.activeElement === last)) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus({ preventScroll: true });
+  }
+});
 overlay.addEventListener('keydown', event => {
   if (event.key !== 'Tab' || overlay.classList.contains('hidden')) return;
   const items = [...overlay.querySelectorAll('button, select, input, summary, a')]
@@ -2518,6 +2592,7 @@ window.addEventListener('keydown', event => {
     syncBindingButtons();
     return;
   }
+  if (!menuHub.hidden) return;
   const action = keyAction(event.key);
   const shiftDirection = ['up', 'left', 'down', 'right'].includes(action);
   if (event.repeat && !(sessionMode === 'shift' && mode === 'running' && shiftDirection)) return;
