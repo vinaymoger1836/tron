@@ -345,7 +345,7 @@ let round = createRound();
 const onlineCode = new URLSearchParams(location.search).get('onlineRoom')?.toUpperCase();
 const online = /^[A-Z0-9]{6}$/.test(onlineCode || '') ? { code: onlineCode, view: null,
   controller: null, retry: null, connected: false, heldFire: false, heldThrottle: false, lastMove: '',
-  lastPhase: '', lastRound: 0 } : null;
+  lastPhase: '', lastRound: 0, frames: [], visualTime: 0, scene: null } : null;
 let mode = 'ready';
 let pausedFrom = 'running';
 let visualTime = 0;
@@ -1341,7 +1341,22 @@ function onlineReceive(view) {
       rebuildStatic(getMap(round.map));
       camera = [7, 13, 31];
       target = [0, 0, 0];
+      online.frames = [];
+      online.scene = null;
       online.lastRound = view.roundNumber;
+    }
+    if (view.phase === 'running') {
+      const frames = online.frames;
+      if (!frames.length || round.tick > frames[frames.length - 1].tick) {
+        frames.push(round);
+        online.scene = null;
+        if (frames.length === 1) online.visualTime = Math.max(0, round.elapsed - .08);
+        if (frames.length > 8) frames.shift();
+      }
+    } else {
+      online.frames = [];
+      online.scene = null;
+      online.visualTime = round.elapsed;
     }
   }
   const key = view.phase + ':' + view.roundNumber;
@@ -1457,6 +1472,8 @@ async function onlineConnect() {
   } catch (error) {
     if (controller.signal.aborted) return;
     online.connected = false;
+    online.frames = [];
+    online.scene = null;
     online.lastPhase = '';
     online.heldFire = false;
     fireSources.clear();
@@ -2397,8 +2414,42 @@ function operationMesh(out, scene) {
   }
 }
 function displayRound() {
-  return mode === 'highlight' && highlight
-    ? highlight.frames[highlight.index] : round;
+  if (mode === 'highlight' && highlight) return highlight.frames[highlight.index];
+  if (!online || mode !== 'running' || online.frames.length < 2) return round;
+  const frames = online.frames;
+  const time = online.visualTime;
+  const latestTick = frames[frames.length - 1].tick;
+  if (online.scene && online.scene.elapsed === time &&
+      online.sceneLatestTick === latestTick) return online.scene;
+  let nextIndex = frames.findIndex(frame => frame.elapsed >= time);
+  if (nextIndex < 0) nextIndex = frames.length - 1;
+  if (nextIndex === 0) return frames[0];
+  const previous = frames[nextIndex - 1];
+  const next = frames[nextIndex];
+  const span = next.elapsed - previous.elapsed;
+  const alpha = span > 0 ? Math.max(0, Math.min(1, (time - previous.elapsed) / span)) : 1;
+  const priorRiders = new Map(previous.riders.map(rider => [rider.id, rider]));
+  const riders = next.riders.map(rider => {
+    const prior = priorRiders.get(rider.id);
+    if (!prior || !prior.alive || !rider.alive ||
+        prior.form !== rider.form ||
+        (rider.form === 'cycle' && prior.dir !== rider.dir)) return rider;
+    return { ...rider,
+      x: prior.x + (rider.x - prior.x) * alpha,
+      z: prior.z + (rider.z - prior.z) * alpha };
+  });
+  const riderById = new Map(riders.map(rider => [rider.id, rider]));
+  const priorSegments = new Map(previous.segments.map(segment => [segment.id, segment]));
+  const segments = next.segments.map(segment => {
+    const prior = priorSegments.get(segment.id);
+    if (!prior || (prior.x2 === segment.x2 && prior.z2 === segment.z2)) return segment;
+    return { ...segment, rider: riderById.get(segment.ownerId),
+      x2: prior.x2 + (segment.x2 - prior.x2) * alpha,
+      z2: prior.z2 + (segment.z2 - prior.z2) * alpha };
+  });
+  online.scene = { ...next, elapsed: time, riders, segments };
+  online.sceneLatestTick = latestTick;
+  return online.scene;
 }
 function cameraPose(player) {
   const direction=DIR[player.dir];
@@ -2756,6 +2807,12 @@ function frame(now) {
       spawnDerez({...highlight.event,riderId:'YOU'});
     }
     if(highlight.elapsed>=highlight.duration) completeHighlight();
+  }
+  if (online && mode === 'running' && online.frames.length) {
+    const latest = online.frames[online.frames.length - 1];
+    const desired = Math.max(0, latest.elapsed - .08);
+    const pace = Math.max(.8, Math.min(1.2, 1 + (desired - online.visualTime) * 3));
+    online.visualTime = Math.min(latest.elapsed, online.visualTime + realDt * pace);
   }
   if (sessionMode === 'operations' && mode === 'running') updateOperationHud();
   if (mode === 'running') updateCycleWeaponHud();
