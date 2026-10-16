@@ -1,4 +1,4 @@
-﻿import { createRound, sweptCircle, STEP } from './simulation.js';
+﻿import { createRound, sweptCircle, STEP, FLIGHT, airborne, requestFlight, settleFlight } from './simulation.js';
 import { getMap, spawnClear } from './maps.js';
 import { updateArenaRules, ROUND_END } from './arena-rules.js';
 
@@ -54,6 +54,7 @@ function worldHit(round, rider, x, z, dx, dz, radius, skipId = null) {
     if (t !== null && (!hit || t < hit.t)) hit = { t, reason: 'obstacle', by: wall.id };
   }
   for (const segment of round.segments) {
+    if (airborne(round, rider)) break;
     if (segment === rider?.segment && rider.form === 'cycle') continue;
     if (segment.id === skipId || (segment.id === rider?.ignoreSegmentId &&
         rider.distanceSinceTurn < 0.72)) continue;
@@ -170,7 +171,7 @@ export function queueShiftDirection(round, id, direction) {
 }
 export function requestShiftForm(round, id) {
   const rider = round.riders.find(r => r.id === id);
-  if (!rider || !rider.alive || round.outcome) return false;
+  if (!rider || !rider.alive || round.outcome || rider.flightKind) return false;
   if (round.elapsed < rider.formReadyAt || round.elapsed < rider.recoveryUntil) {
     round.events.push({ type: 'shift-denied', riderId: id, reason: 'Form system recharging' });
     return false;
@@ -335,16 +336,16 @@ function explodeRocket(round, bullet, x, z) {
   round.events.push({ type: 'rocket-explode', riderId: bullet.ownerId, x, z });
 }
 function turn(round, rider, sign) {
-  if (Math.hypot(rider.x - rider.segment.x1, rider.z - rider.segment.z1) < EPS) {
+  if (rider.segment && Math.hypot(rider.x - rider.segment.x1, rider.z - rider.segment.z1) < EPS) {
     round.segments.splice(round.segments.indexOf(rider.segment), 1);
-  } else {
+  } else if (rider.segment) {
     closeTrail(round, rider);
     rider.ignoreSegmentId = rider.segment.id;
     rider.distanceSinceTurn = 0;
   }
   rider.dir = (rider.dir + sign + 4) % 4;
   rider.lastTurnAt = round.elapsed;
-  openTrail(round, rider);
+  if (!airborne(round, rider)) openTrail(round, rider);
   round.events.push({ type: 'turn', riderId: rider.id, sign });
 }
 function spaceAhead(round, rider, dir, length = 10) {
@@ -371,6 +372,12 @@ function aiDecision(round, rider) {
       return;
     }
     setShiftFire(round, rider.id, false);
+    if (forwardHit?.reason === 'trail' && front > 1.1 && front < 3.6 &&
+        left < front + 2 && right < front + 2 &&
+        requestFlight(round, rider.id, round.elapsed >= rider.jetReadyAt ? 'jet' : 'sail')) {
+      round.shift.aiIntent = 'lifting over a wall';
+      return;
+    }
     if (round.elapsed > rider.tactic.footAt + (rider.tactic.preferCycle ? 2.1 : 0) && dist < 29 &&
         (front < 8 || round.elapsed > rider.tactic.footAt + 1.3 ||
           random(round) < (target.form === 'foot' ? .55 : .38) + rider.tactic.aggression * .25) &&
@@ -463,6 +470,7 @@ function moveDisc(round, disc) {
 export function stepShiftRound(round) {
   if (round.outcome) return round;
   updateArenaRules(round);
+  for (const rider of round.riders) if (rider.alive) settleFlight(round, rider);
   const ai = round.multiplayer ? null : round.riders.find(r => !r.isPlayer);
   if (ai?.alive) aiDecision(round, ai);
   for (const rider of round.riders) {
@@ -484,7 +492,8 @@ export function stepShiftRound(round) {
     }
     const canMove = rider.form !== 'cycle' || rider.autoDrive || rider.throttleHeld;
     const speed = round.elapsed < rider.recoveryUntil || !canMove ? 0
-      : SPEED[rider.form] * (round.elapsed < rider.nitroUntil ? 1.5 : 1);
+      : SPEED[rider.form] * (round.elapsed < rider.nitroUntil ? 1.5 : 1) *
+        (airborne(round, rider) ? FLIGHT[rider.flightKind].speed : 1);
     const dx = direction[0] * speed * STEP, dz = direction[1] * speed * STEP;
     return { rider, dx, dz,
       hit: worldHit(round, rider, rider.x, rider.z, dx, dz, RADIUS[rider.form]) };
@@ -494,7 +503,8 @@ export function stepShiftRound(round) {
     for (let b = a + 1; b < moves.length; b++) {
       const hit = actorHit(moves[a].rider, moves[b].rider,
         moves[a].dx, moves[a].dz, moves[b].dx, moves[b].dz);
-      if (hit !== null) actorCollisions.push({ a, b, t: hit });
+      if (hit !== null && !airborne(round, moves[a].rider) && !airborne(round, moves[b].rider))
+        actorCollisions.push({ a, b, t: hit });
     }
   actorCollisions.sort((a, b) => a.t - b.t);
   for (const { a, b, t } of actorCollisions)
@@ -507,7 +517,7 @@ export function stepShiftRound(round) {
     const fraction = hit ? Math.max(0, Math.min(1, hit.t)) : 1;
     rider.x += dx * fraction; rider.z += dz * fraction;
     rider.distanceSinceTurn += Math.hypot(dx, dz) * fraction;
-    if (rider.form === 'cycle') {
+    if (rider.form === 'cycle' && rider.segment) {
       rider.segment.x2 = rider.x; rider.segment.z2 = rider.z;
     }
     if (hit) {

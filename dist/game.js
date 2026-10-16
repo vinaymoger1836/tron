@@ -1,4 +1,4 @@
-﻿import { createRound, createDuelRound, createArenaRound, createOperationRound, DUEL_RIVALS, DIFFICULTIES, drainEvents, queueTurn, stepRound, setCycleAutoDrive, setCycleThrottle, setCycleFire, STEP } from './simulation.js';
+﻿import { createRound, createDuelRound, createArenaRound, createOperationRound, DUEL_RIVALS, DIFFICULTIES, drainEvents, queueTurn, stepRound, setCycleAutoDrive, setCycleThrottle, setCycleFire, requestFlight, STEP } from './simulation.js';
 import { MAPS, getMap } from './maps.js';
 import { createArenaMatch, recordArenaRound, nextArenaRound, arenaWon } from './arena.js';
 import { createMatch, recordRound, nextRound, roundSeed } from './match.js';
@@ -206,7 +206,7 @@ const GAMEPAD_KEY = 'tron-grid-run-gamepad';
 const CAPTIONS_KEY = 'tron-grid-run-captions';
 const AUTO_DRIVE_KEY = 'tron-grid-run-auto-drive';
 const DAILY_RULES_VERSION = 3;
-const DEFAULT_BINDINGS = Object.freeze({ left: 'a', right: 'd', up: 'w', down: 's', form: 'f', fire: 'e', disc: 'space', pause: 'p', sound: 'm' });
+const DEFAULT_BINDINGS = Object.freeze({ left: 'a', right: 'd', up: 'w', down: 's', form: 'f', fire: 'e', disc: 'space', jet: 'q', sail: 'r', pause: 'p', sound: 'm' });
 let storageAvailable = true;
 
 function readLocal(key) {
@@ -249,6 +249,10 @@ function readBindings() {
       .map(([, key]) => key));
     next.fire = ['e', 'f', 'q', 'r'].find(key => !occupied.has(key)) || 'e';
   }
+  for (const action of ['jet','sail']) if (!saved[action]) {
+    const occupied = new Set(Object.entries(next).filter(([key]) => key !== action).map(([,value]) => value));
+    if (occupied.has(next[action])) next[action] = ['q','r','t','g','h','j','k'].find(key => !occupied.has(key));
+  }
   if (new Set(Object.values(next)).size !== Object.keys(next).length)
     return { ...DEFAULT_BINDINGS };
   return next;
@@ -258,7 +262,7 @@ function readHistory() {
   try { saved = JSON.parse(readLocal(HISTORY_KEY) || '[]'); } catch { return []; }
   if (!Array.isArray(saved)) return [];
   return saved.filter(item => item && typeof item === 'object' &&
-    ['duel','arena','operations','shift'].includes(item.mode) &&
+    ['duel','arena','operations','traversal','shift'].includes(item.mode) &&
     ['won','lost','draw'].includes(item.outcome) &&
     Number.isFinite(item.score) && item.score >= 0 &&
     typeof item.date === 'string' && typeof item.map === 'string' && MAPS[item.map])
@@ -289,7 +293,8 @@ function readRecordBook() {
     }
   } catch { storageAvailable = false; }
   records.operations = Math.max(Number(records.operations) || 0,
-    ...Object.values(operationProgress).map(entry => entry.best || 0));
+    ...Object.entries(operationProgress).filter(([id]) => id !== 'transit').map(([,entry]) => entry.best || 0));
+  records.traversal = Math.max(Number(records.traversal) || 0, operationProgress.transit?.best || 0);
   return records;
 }
 function dailyForDate(date = new Date()) {
@@ -593,6 +598,7 @@ function renderHistory() {
     const summary = document.createElement('span');
     const label = item.challenge ? 'Daily ' + item.challenge.day :
       item.mode === 'operations' ? (item.operation || 'Operation') :
+      item.mode === 'traversal' ? 'Solar Transit' :
       item.mode === 'shift' ? 'Grid Shift' :
       item.mode.toUpperCase() + ' / ' + (getMap(item.map)?.name || item.map);
     summary.textContent = item.date.slice(0, 10) + ' / ' + label +
@@ -616,7 +622,7 @@ function recordRun(outcome, score) {
   if (outcome === 'won') badges.push('victor');
   if (runBadgeEvents.has('clean-trap')) badges.push('trap');
   if (runBadgeEvents.has('close-call')) badges.push('escape');
-  if (sessionMode === 'operations' && operationFlow.kind === 'journey' && outcome === 'won') badges.push('journey');
+  if (isMissionMode() && operationFlow.kind === 'journey' && outcome === 'won') badges.push('journey');
   if (sessionMode === 'shift' && outcome === 'won' && runBadgeEvents.has('form-switch')) badges.push('shift');
   if (dailyChallenge && outcome === 'won') badges.push('daily');
   for (const badge of badges) earnedBadges[badge] = true;
@@ -679,17 +685,18 @@ function playHistoryHighlight(item) {
   announce('Run archive highlight. Press Escape or Exit Highlight to return.');
 }
 function loadBest() {
-  if (sessionMode === 'operations') {
+  if (isMissionMode()) {
     const key = operationFlow?.kind === 'journey' ? 'journey'
-      : operationFlow?.sequence[0] || (operationSelect.value === 'journey' ? 'journey' : operationSelect.value);
+      : operationFlow?.sequence[0] || (sessionMode === 'traversal' ? 'transit' : operationSelect.value === 'journey' ? 'journey' : operationSelect.value);
     best = operationProgress[key]?.best || 0;
     return;
   }
   const value = Number(readLocal(scoreKey()));
   best = Number.isFinite(value) && value >= 0 ? value : 0;
 }
+function isMissionMode() { return sessionMode === 'operations' || sessionMode === 'traversal'; }
 function updateOperationHud() {
-  if (sessionMode !== 'operations' || mode === 'ready') {
+  if (!isMissionMode() || mode === 'ready') {
     operationHud.hidden = true;
     return;
   }
@@ -699,7 +706,9 @@ function updateOperationHud() {
   objectiveTitle.textContent = mission.name.toUpperCase() + ' / ' + mission.objective;
   const remaining = mission.timeLimit === null ? '' :
     ' / ' + Math.max(0, Math.ceil(mission.timeLimit - round.elapsed)) + 's left';
-  if (mission.kind === 'checkpoints')
+  if (mission.kind === 'traversal')
+    objectiveProgress.textContent = 'Spans ' + op.progress + '/' + mission.gaps.length + remaining;
+  else if (mission.kind === 'checkpoints')
     objectiveProgress.textContent = 'Gate ' + Math.min(op.progress + 1, mission.gates.length) + '/' + mission.gates.length + remaining;
   else if (mission.kind === 'scanner')
     objectiveProgress.textContent = 'Sweeps ' + op.pulseIndex + '/' + mission.pulses.length + remaining;
@@ -744,7 +753,7 @@ function updateShiftHud() {
 }
 function updateHud() {
   if (online) { updateOnlineHud(); return; }
-  const points = sessionMode === 'operations'
+  const points = isMissionMode()
     ? (operationFlow?.points || 0) + round.score
     : match && sessionMode !== 'lesson'
       ? match.points + (match.resultRecorded ? 0 : round.score) : round.score;
@@ -757,10 +766,10 @@ function updateHud() {
       getMap(round.map).name.toUpperCase();
   } else if (sessionMode === 'shift') {
     ui.matchline.textContent = 'GRID SHIFT / ECHO / TWO FORMS';
-  } else if (sessionMode === 'operations') {
+  } else if (isMissionMode()) {
     const stage = operationFlow?.index ?? 0;
     const total = operationFlow?.sequence.length ?? 1;
-    ui.matchline.textContent = 'OPERATION / ' + getOperation(round.operation.id).name.toUpperCase() +
+    ui.matchline.textContent = (sessionMode === 'traversal' ? 'TRANSIT / ' : 'OPERATION / ') + getOperation(round.operation.id).name.toUpperCase() +
       (operationFlow?.kind === 'journey' ? ' / ' + (stage+1) + '/' + total : '');
   } else if (sessionMode === 'lesson') ui.matchline.textContent = 'LESSON / GRID BASICS';
   else ui.matchline.textContent = sessionMode === 'duel' ? 'DUEL / FIRST TO 3' : 'ARENA / SURVIVE 2 OF 3';
@@ -768,14 +777,33 @@ function updateHud() {
     getMap(round.map).name.toUpperCase() + ' / ' + (match?.roundNumber || '01');
   ui.best.textContent = String(best).padStart(5, '0');
   document.querySelector('#rivals-label').textContent =
-    sessionMode === 'operations' ? 'Progress' : sessionMode === 'shift' ? 'HP' : 'Rivals';
-  ui.rivals.textContent = sessionMode === 'operations'
+    isMissionMode() ? 'Progress' : sessionMode === 'shift' ? 'HP' : 'Rivals';
+  ui.rivals.textContent = isMissionMode()
     ? String(round.operation.progress || round.operation.pulseIndex || round.operation.collapseIndex || 0).padStart(2, '0')
     : sessionMode === 'shift' ? String(round.riders.find(r => !r.isPlayer)?.hp ?? 0).padStart(2, '0')
     : String(round.riders.filter(r => !r.isPlayer && r.alive).length).padStart(2, '0');
   updateOperationHud();
   updateShiftHud();
   updateCycleWeaponHud();
+  updateFlightHud();
+}
+function updateFlightHud() {
+  const panel = document.querySelector('#flight-panel');
+  const player = round.riders.find(r => r.isPlayer);
+  const visible = mode !== 'ready' && !!player && sessionMode !== 'lesson';
+  panel.hidden = !visible;
+  if (!visible) return;
+  for (const kind of ['jet', 'sail']) {
+    const button = document.querySelector('#flight-' + kind);
+    const remaining = Math.max(0, (player[kind + 'ReadyAt'] || 0) - round.elapsed);
+    const active = player.flightKind === kind && round.elapsed < player.flightUntil;
+    button.textContent = kind.toUpperCase() + ' ' + (active ? 'ACTIVE' : remaining > 0 ? remaining.toFixed(1) + 'S' : keyLabel(kind));
+    button.disabled = mode !== 'running' || !player.alive || player.form === 'foot' ||
+      !!player.flightKind || remaining > 0;
+    button.setAttribute('aria-label', active ? kind + ' active' : remaining > 0
+      ? kind + ' recharging, ' + remaining.toFixed(1) + ' seconds'
+      : 'Activate ' + (kind === 'jet' ? 'light jet' : 'solar sail') + ' with ' + keyLabel(kind));
+  }
 }
 function updateCycleWeaponHud() {
   const player = round.riders.find(r => r.isPlayer);
@@ -1001,16 +1029,16 @@ function syncControlHints(shift = online ? sessionMode === 'shift' : modeSelect.
   const key = action => '<kbd>' + keyLabel(action) + '</kbd>';
   document.querySelector('#controls-hint').innerHTML =
     key('left') + key('right') + ' TURN ' + key('up') + ' FORWARD ' +
-    key('fire') + ' FIRE ' + (shift ? key('form') + ' FORM ' + key('disc') + ' DISC ' : '') +
+    key('fire') + ' FIRE ' + key('jet') + ' JET ' + key('sail') + ' SAIL ' + (shift ? key('form') + ' FORM ' + key('disc') + ' DISC ' : '') +
     key('pause') + ' PAUSE';
   document.querySelector('#panel-footer').innerHTML = shift
     ? 'CYCLE <span>' + keyLabel('left') + '/' + keyLabel('right') + ' TURN / ' +
       keyLabel('up') + ' FORWARD</span> &nbsp;&middot;&nbsp; FOOT <span>' +
       [keyLabel('up'),keyLabel('left'),keyLabel('down'),keyLabel('right')].join(' ') +
       ' MOVE</span> &nbsp;&middot;&nbsp; <span>' + keyLabel('form') + ' FORM / ' +
-      keyLabel('fire') + ' FIRE / ' + keyLabel('disc') + ' DISC</span>'
+      keyLabel('fire') + ' FIRE / ' + keyLabel('disc') + ' DISC / ' + keyLabel('jet') + ' JET / ' + keyLabel('sail') + ' SAIL</span>'
     : 'KEYBOARD <span>' + keyLabel('left') + '/' + keyLabel('right') +
-      ' TURN / ' + keyLabel('up') + ' FORWARD</span> &nbsp;&middot;&nbsp; TOUCH <span>TURN + FORWARD + FIRE</span>';
+      ' TURN / ' + keyLabel('up') + ' FORWARD / ' + keyLabel('jet') + ' JET / ' + keyLabel('sail') + ' SAIL</span> &nbsp;&middot;&nbsp; TOUCH <span>TURN + FORWARD + FIRE</span>';
 }
 function syncBindingButtons() {
   for (const button of document.querySelectorAll('[data-bind]')) {
@@ -1075,7 +1103,7 @@ function launch() {
   lastFrame = performance.now();
   beep(730, 0.2, 'triangle', 0.06);
   effectMotif('wall');
-  announce(sessionMode === 'operations' ? 'Go. ' + getOperation(round.operation.id).objective : sessionMode === 'shift' ? 'Go. Derez Echo using your disc or light wall. Hold ' + keyLabel('fire') + ' to fire 24 mounted bullets.' : 'Go. Survive the Grid. Hold ' + keyLabel('fire') + ' to fire your 24 mounted bullets.');
+  announce(isMissionMode() ? 'Go. ' + getOperation(round.operation.id).objective : sessionMode === 'shift' ? 'Go. Derez Echo using your disc or light wall. Hold ' + keyLabel('fire') + ' to fire 24 mounted bullets.' : 'Go. Survive the Grid. Hold ' + keyLabel('fire') + ' to fire your 24 mounted bullets.');
   const token = generation;
   setTimeout(() => { if (token === generation && mode === 'running') hideCountdown(); }, 420);
 }
@@ -1084,8 +1112,8 @@ function selectedOperationId() {
   return operationSelect.value === 'journey' ? 'portal' : operationSelect.value;
 }
 function drawMapPreview() {
-  const operations = modeSelect.value === 'operations';
-  const mission = operations ? getOperation(selectedOperationId()) : null;
+  const operations = modeSelect.value === 'operations' || modeSelect.value === 'traversal';
+  const mission = operations ? getOperation(modeSelect.value === 'traversal' ? 'transit' : selectedOperationId()) : null;
   const map = getMap(mission?.map || mapSelect.value);
   const ctx = mapPreview.getContext('2d');
   const size = mapPreview.height;
@@ -1109,6 +1137,12 @@ function drawMapPreview() {
     ctx.fillStyle = index === 0 ? '#73eaff' : ['#ffa353','#c78aff','#ffdf72'][index-1];
     ctx.beginPath(); ctx.arc(at(spawn.x),at(spawn.z),3.5,0,Math.PI*2); ctx.fill();
   });
+  if (mission?.gaps) {
+    for (const gap of mission.gaps) {
+      ctx.fillStyle = gap.kind === 'jet' ? '#b96c39' : '#348bad';
+      ctx.fillRect(at(gap.minX), at(gap.minZ), (gap.maxX-gap.minX)*scale, (gap.maxZ-gap.minZ)*scale);
+    }
+  }
   if (mission?.gates) {
     ctx.strokeStyle = '#ffe18b';
     for (const gate of mission.gates)
@@ -1120,14 +1154,15 @@ function drawMapPreview() {
   ctx.fillText((mission?.name || map.name).toUpperCase(), size + 12, 23);
   ctx.font = '12px Rajdhani, sans-serif';
   ctx.fillText(map.obstacles.length ? map.obstacles.length + ' fixed barriers' : 'Open circuit', size + 12, 45);
-  ctx.fillText('CYAN = YOU', size + 12, 68);
+  ctx.fillText(mission?.gaps ? 'DOT = YOU / BARS = GAPS' : 'CYAN = YOU', size + 12, 68);
   mapPreview.setAttribute('aria-label', (mission?.name || map.name) + ' layout with ' +
-    map.obstacles.length + ' fixed barriers and ' + spawns.length + ' spawn positions');
+    (mission?.gaps ? 'a jet gap, sail gap, and finish line' :
+      map.obstacles.length + ' fixed barriers and ' + spawns.length + ' spawn positions'));
   mapTip.textContent = modeSelect.value === 'shift'
     ? map.cue + ' Hold fire while mounted to shoot up to 24 wall-breaking bullets; dismount to move freely and throw a returning disc. Two disc hits derez a rival.'
     : operations
     ? mission.objective + ' ' + mission.tip +
-      (operationSelect.value === 'journey' ? ' The journey links all three operations.' : '')
+      (modeSelect.value === 'operations' && operationSelect.value === 'journey' ? ' The journey links all three operations.' : '')
     : map.cue + (ruleSelect.value === 'decay' && modeSelect.value === 'arena'
       ? ' Advanced: closed walls pulse before fading after 10 seconds.' : ' Light walls remain until the heat ends.') +
       (legacyBest ? ' Legacy best ' + legacyBest + ' is preserved.' : '');
@@ -1148,13 +1183,15 @@ function syncSetup() {
   difficultySelect.disabled = daily;
   mapSelect.disabled = daily;
   const duel = modeSelect.value === 'duel' || daily;
-  const operations = modeSelect.value === 'operations';
+  const traversal = modeSelect.value === 'traversal';
+  const operations = modeSelect.value === 'operations' || traversal;
   const shift = modeSelect.value === 'shift';
   document.querySelector('#rival-field').hidden = !duel;
+  document.querySelector('#difficulty-field').hidden = traversal;
   document.querySelector('#rule-field').hidden = duel || operations || shift;
   document.querySelector('#map-field').hidden = operations;
-  document.querySelector('#operation-field').hidden = !operations;
-  document.querySelector('#final-rival-field').hidden = !operations || operationSelect.value !== 'journey';
+  document.querySelector('#operation-field').hidden = !operations || traversal;
+  document.querySelector('#final-rival-field').hidden = !operations || traversal || operationSelect.value !== 'journey';
   const profile = DUEL_RIVALS[rivalSelect.value];
   const difficultyHint = {
     rookie: 'Reacts later; speed stays equal.',
@@ -1165,6 +1202,7 @@ function syncSetup() {
     ? 'UTC ' + dailyChallenge.day + ' / rules v' + dailyChallenge.version + ' / seed ' + dailyChallenge.seed + '. Same map, rival, and Standard rules on every replay today.'
     : shift
     ? 'Echo has the same 24-bullet mounted gun, foot disc, and mounting rules. Read its form before closing distance.'
+    : traversal ? getOperation('transit').briefing
     : operations
     ? operationSelect.value === 'journey'
       ? 'Three linked operations with skippable briefings. Final Sentinel challenge is optional.'
@@ -1172,17 +1210,21 @@ function syncSetup() {
     : duel
       ? profile.id + ' / ' + profile.style.toUpperCase() + ' / ' + profile.cue + '. ' + difficultyHint[difficultySelect.value]
       : 'Three different AI styles per heat. Survive at least 2 of 3 heats; each heat adds to your score.';
-  ui.start.textContent = operations ? 'OPEN OPERATIONS' : shift ? 'ENTER GRID SHIFT'
+  ui.start.textContent = traversal ? 'ENTER SOLAR TRANSIT' : operations ? 'OPEN OPERATIONS' : shift ? 'ENTER GRID SHIFT'
     : daily ? 'START DAILY SIGNAL' : duel ? 'ENTER DUEL' : 'ENTER ARENA';
   document.querySelector('#mode-guide').textContent = daily
     ? 'Offline challenge / First to three. Your best for this UTC day is stored only in this browser.'
     : shift ? 'Two forms / Ride to build and cut walls, then dismount to dodge and throw. Your walls remain lethal.'
+    : traversal ? 'Timed solo course / Jet over the amber gap, then sail over the cyan gap.'
     : operations ? 'Solo mission / Follow the objective and watch its warning panel.'
     : duel ? 'First to three / Turn into open space and trap one rival.'
     : 'Three heats / Survive at least two against three rivals. Trails: solid you, dashed Hunter, dotted Survivor, paired Trapper.';
   if (gamepadEnabled) document.querySelector('#mode-guide').textContent +=
     ' Gamepad: left/right turns, up moves forward in manual drive, A changes form, B uses the current weapon, Start pauses.';
-  canvas.setAttribute('aria-label', shift ? '3D Grid Shift cycle and disc arena' : '3D light cycle arena');
+  canvas.setAttribute('aria-label', traversal ? '3D Solar Transit course with two gaps and a finish line' :
+    shift ? '3D Grid Shift cycle and disc arena' : '3D light cycle arena');
+  radar.setAttribute('aria-label', traversal ? 'Solar Transit radar. Amber jet gap, cyan sail gap, and green finish line.' :
+    'Arena radar. Cartridges mark ammo, a lightning bolt marks nitro, and a rocket marks rockets.');
   syncControlHints(shift);
   drawMapPreview();
   updateArchive();
@@ -1190,7 +1232,7 @@ function syncSetup() {
     sessionMode = daily ? 'duel' : modeSelect.value;
     round = shift ? createShiftRound({ seed: 1, difficulty: difficultySelect.value, map: mapSelect.value })
       : operations
-      ? createOperationRound({ id: selectedOperationId(), seed: 1, difficulty: difficultySelect.value })
+      ? createOperationRound({ id: traversal ? 'transit' : selectedOperationId(), seed: 1, difficulty: traversal ? 'standard' : difficultySelect.value })
       : duel
         ? createDuelRound({ seed: 1, rival: rivalSelect.value, difficulty: difficultySelect.value, map: mapSelect.value })
         : createArenaRound({ seed: 1, difficulty: difficultySelect.value, map: mapSelect.value, rule: ruleSelect.value });
@@ -1518,7 +1560,7 @@ function showMenu() {
   syncSetup();
   renderHistory();
   setOverlay('CHOOSE YOUR CIRCUIT', 'ENTER THE <span>GRID<small>01</small></span>',
-    'Choose Duel, Arena, Operations, Grid Shift, or the offline Daily Signal. Grid Shift lets you dismount, throw a disc, and remount in clear space.', ui.start.textContent);
+    'Choose Duel, Arena, Operations, Solar Transit, Grid Shift, or the offline Daily Signal. Grid Shift lets you dismount, throw a disc, and remount in clear space.', ui.start.textContent);
   announce('Choose a mode, including the offline Daily Signal. A short playable cycle lesson is available.');
 }
 
@@ -1551,23 +1593,24 @@ function showOperationBrief() {
   updateHud();
   const count = operationFlow.kind === 'journey'
     ? (operationFlow.index + 1) + '/' + operationFlow.sequence.length : 'SOLO';
-  setOverlay('OPERATION ' + count, mission.name.toUpperCase().replace(' ', '<br>'),
+  setOverlay(sessionMode === 'traversal' ? 'TIMED TRANSIT' : 'OPERATION ' + count, mission.name.toUpperCase().replace(' ', '<br>'),
     mission.briefing + ' Objective: ' + mission.objective + ' ' + mission.tip,
     'LAUNCH');
   announce(mission.name + '. ' + mission.objective + ' Press Launch or Skip Story to begin.');
 }
 function startOperationFlow() {
-  const journey = operationSelect.value === 'journey';
+  const traversal = modeSelect.value === 'traversal';
+  const journey = !traversal && operationSelect.value === 'journey';
   runBadgeEvents = new Set();
   operationFlow = {
     kind: journey ? 'journey' : 'single',
     sequence: journey
       ? [...JOURNEY, ...(finalRivalInput.checked ? ['sentinel'] : [])]
-      : [operationSelect.value],
+      : [traversal ? 'transit' : operationSelect.value],
     index: 0, points: 0, seed: randomSeed(),
-    difficulty: difficultySelect.value, status: 'brief',
+    difficulty: traversal ? 'standard' : difficultySelect.value, status: 'brief',
   };
-  sessionMode = 'operations';
+  sessionMode = traversal ? 'traversal' : 'operations';
   showOperationBrief();
 }
 
@@ -1600,7 +1643,7 @@ function beginRound() {
   fireSources.clear();
   if (sessionMode === 'shift') runBadgeEvents = new Set();
   round = sessionMode === 'shift' ? createShiftRound({ seed: randomSeed(), difficulty: difficultySelect.value, map: mapSelect.value })
-    : sessionMode === 'operations'
+    : isMissionMode()
     ? createOperationRound({ id: operationFlow.sequence[operationFlow.index],
         seed: operationStageSeed(), difficulty: operationFlow.difficulty })
     : sessionMode === 'duel'
@@ -1617,7 +1660,7 @@ function beginRound() {
   highlightCard.hidden=true;
   captureReplayFrame(true);
   mode = 'countdown';
-  countdownRemaining = sessionMode === 'operations' && operationFlow.index > 0 ? 1.5 : match && match.roundNumber > 1 ? 1.5 : 3;
+  countdownRemaining = isMissionMode() && operationFlow.index > 0 ? 1.5 : match && match.roundNumber > 1 ? 1.5 : 3;
   countdownNumber = Math.ceil(countdownRemaining);
   accumulator = 0;
   lastFrame = performance.now();
@@ -1648,7 +1691,7 @@ function beginRound() {
   activateAudio();
   beep(440, 0.08, 'triangle', 0.03);
   syncAudioMix();
-  announce(sessionMode === 'lesson' ? 'Lesson starting. Turn left or right.' : sessionMode === 'shift' ? 'Grid Shift starting. Cut walls with ' + keyLabel('fire') + ', dismount with ' + keyLabel('form') + ', and throw with ' + keyLabel('disc') + '.' : sessionMode === 'operations' ? getOperation(round.operation.id).name + '. ' + getOperation(round.operation.id).objective + ' Starting in three, two, one.' : 'Round starting. Three, two, one.');
+  announce(sessionMode === 'lesson' ? 'Lesson starting. Turn left or right.' : sessionMode === 'shift' ? 'Grid Shift starting. Cut walls with ' + keyLabel('fire') + ', dismount with ' + keyLabel('form') + ', and throw with ' + keyLabel('disc') + '.' : isMissionMode() ? getOperation(round.operation.id).name + '. ' + getOperation(round.operation.id).objective + ' Starting in three, two, one.' : 'Round starting. Three, two, one.');
 }
 
 function start() {
@@ -1669,7 +1712,8 @@ function start() {
     else beginRound();
     return;
   }
-  if (modeSelect.value === 'operations' && (mode === 'ready' || sessionMode === 'operations')) {
+  if ((modeSelect.value === 'operations' || modeSelect.value === 'traversal') &&
+      (mode === 'ready' || isMissionMode())) {
     if (mode === 'ready' || !operationFlow || operationFlow.status === 'complete') {
       startOperationFlow();
     } else if (mode === 'operation-brief' || operationFlow.status === 'retry') {
@@ -1749,6 +1793,15 @@ function pause() {
   }
 }
 
+function playerFlight(kind) {
+  if (mode !== 'running' || sessionMode === 'lesson') return;
+  const player = round.riders.find(r => r.isPlayer);
+  if (!player || !player.alive || player.form === 'foot') { showToast('MOUNT TO FLY'); return; }
+  if (online) { onlineAction({ type: 'flight', kind }); return; }
+  if (!requestFlight(round, player.id, kind)) { showToast(kind.toUpperCase() + ' NOT READY'); return; }
+  handleEvents();
+  updateFlightHud();
+}
 function playerTurn(sign) {
   if (mode !== 'running') return;
   if (online) {
@@ -1818,6 +1871,7 @@ function crashMessage(outcome) {
   if (outcome.reason === 'collapse') return 'The collapse ring caught you.';
   if (outcome.reason === 'hazard') return (outcome.by || 'A hazard') + ' struck your cycle.';
   if (outcome.reason === 'timeout') return 'Time ran out before ' + (outcome.by || 'the objective') + '.';
+  if (outcome.reason === 'gap') return 'You fell into the gap. Lift off before the edge and land beyond it.';
   if (outcome.reason === 'obstacle') return 'You hit a barrier.';
   if (outcome.reason === 'rider') return 'You collided with ' + (outcome.by || 'another rider') + '.';
   if (outcome.reason === 'trail') {
@@ -1900,6 +1954,7 @@ function captureReplayFrame(force=false) {
   const riderMap=new Map(round.riders.map(r=>[r.id,{
     id:r.id,x:r.x,z:r.z,dir:r.dir,alive:r.alive,isPlayer:r.isPlayer,
     style:r.style,color:r.color,form:r.form,formChangedAt:r.formChangedAt,
+    flightKind:r.flightKind,flightStartedAt:r.flightStartedAt,flightUntil:r.flightUntil,
   }]));
   replayFrames.push({
     time:round.elapsed, elapsed:round.elapsed, limit:round.limit,
@@ -1981,7 +2036,8 @@ function finishOperation(event) {
       (operationFlow.status === 'next' ? 'Next: ' + getOperation(operationFlow.sequence[operationFlow.index + 1]).name + '.'
         : operationFlow.kind === 'journey' ? 'Journey complete. Total ' + operationFlow.points + ' points.' : 'Best ' + best + ' points.')
     : 'Retry this operation or return to selection. ' + mission.tip;
-  setOverlay(won ? 'OPERATION COMPLETE' : 'OPERATION FAILED',
+  setOverlay(sessionMode === 'traversal' ? (won ? 'TRANSIT COMPLETE' : 'TRANSIT FAILED') :
+    (won ? 'OPERATION COMPLETE' : 'OPERATION FAILED'),
     won ? 'ROUTE <span>SECURED</span>' : 'SIGNAL <span>LOST</span>',
     reason + ' ' + result,
     won ? operationFlow.status === 'next' ? 'NEXT OPERATION' : 'NEW RUN' : 'RETRY OPERATION');
@@ -2020,7 +2076,7 @@ function finishShift(event) {
 }
 function finish(event) {
   if (sessionMode === 'shift') { finishShift(event); return; }
-  if (sessionMode === 'operations') { finishOperation(event); return; }
+  if (isMissionMode()) { finishOperation(event); return; }
   if (sessionMode === 'lesson') { finishLesson(false, event); return; }
   mode=event.kind;
   syncAudioMix();
@@ -2084,7 +2140,16 @@ function finish(event) {
 function handleEvents() {
   for (const event of drainEvents(round)) {
     if (event.type==='turn') turnLean.set(event.riderId,{value:event.sign*.27,age:0});
-    if (event.type === 'turn-queued' && event.riderId === 'YOU') {
+    if (event.type === 'flight-start' && event.riderId === 'YOU') {
+      showToast(event.kind === 'jet' ? 'LIGHT JET / LIFT' : 'SOLAR SAIL / GLIDE');
+      showCaption(event.kind === 'jet' ? 'LIGHT JET' : 'SOLAR SAIL');
+      announce(event.kind === 'jet' ? 'Light jet active.' : 'Solar sail active.');
+      beep(event.kind === 'jet' ? 840 : 610, .15, 'triangle', .025);
+      updateFlightHud();
+    } else if (event.type === 'flight-land' && event.riderId === 'YOU') {
+      announce('Landed.');
+      updateFlightHud();
+    } else if (event.type === 'turn-queued' && event.riderId === 'YOU') {
       showToast(event.sign < 0 ? 'LEFT TURN QUEUED' : 'RIGHT TURN QUEUED');
       beep(340, 0.045, 'triangle', 0.015);
     } else if (event.type === 'turn' && event.riderId === 'YOU') {
@@ -2440,7 +2505,20 @@ function operationMesh(out, scene) {
   if (!op) return;
   const mission=getOperation(op.id);
   const elapsed=scene.time ?? scene.elapsed;
-  if (mission.kind === 'checkpoints') {
+  if (mission.kind === 'traversal') {
+    mission.gaps.forEach((gap, index) => {
+      const color = gap.kind === 'jet' ? [1,.51,.19] : [.28,.78,1];
+      const cx = (gap.minX + gap.maxX)/2, cz = (gap.minZ + gap.maxZ)/2;
+      const sx = gap.maxX-gap.minX, sz = gap.maxZ-gap.minZ;
+      box(out,cx,.035,cz,sx,.07,sz,[.005,.015,.025]);
+      for (const edge of [gap.minZ,gap.maxZ])
+        box(out,cx,.1,edge,sx,.2,.23,color,2);
+      for (let x=-48;x<=48;x+=8)
+        box(out,x,.035,cz,.16,.07,sz,color,.7);
+      if (index < op.progress) box(out,cx,.035,cz,sx,.08,.16,[.12,.85,.45],2);
+    });
+    box(out,0,.11,mission.finishZ,102,.22,.25,[.18,1,.61],2);
+  } else if (mission.kind === 'checkpoints') {
     mission.gates.forEach((gate,index)=>{
       const cx=(gate.minX+gate.maxX)/2, cz=(gate.minZ+gate.maxZ)/2;
       const sx=gate.maxX-gate.minX, sz=gate.maxZ-gate.minZ;
@@ -2581,8 +2659,24 @@ function draw(renderDt) {
     pickupMesh(dynamic, pickup);
   for (const segment of scene.segments) trailMesh(dynamic, segment, scene.time ?? scene.elapsed);
   for (const rider of scene.riders) if (rider.alive) {
+    const meshStart = dynamic.length;
     if (scene.shift && rider.form === 'foot') footMesh(dynamic, rider);
     else bikeMesh(dynamic, rider);
+    if (rider.flightKind && scene.elapsed < rider.flightUntil) {
+      const duration = rider.flightUntil - rider.flightStartedAt;
+      const progress = Math.max(0,Math.min(1,(scene.elapsed-rider.flightStartedAt)/duration));
+      const height = (rider.flightKind === 'jet' ? 1.5 : 1.15) *
+        Math.min(1,progress*5,(1-progress)*5);
+      for (let i=meshStart+1;i<dynamic.length;i+=7) dynamic[i]+=height;
+      if (rider.flightKind === 'sail') {
+        if (rider.dir%2===0) box(dynamic,rider.x,height+1.1,rider.z,3.2,.09,.5,[.51,.91,1],1.6);
+        else box(dynamic,rider.x,height+1.1,rider.z,.5,.09,3.2,[.51,.91,1],1.6);
+        box(dynamic,rider.x,height+1.2,rider.z,.25,.45,.25,[.75,1,1],2);
+      } else {
+        const aft = [[0,1],[-1,0],[0,-1],[1,0]][rider.dir];
+        box(dynamic,rider.x+aft[0]*1.1,height+.38,rider.z+aft[1]*1.1,.4,.35,.4,[1,.53,.18],2);
+      }
+    }
     if (scene.shift && !reducedMotion.matches && scene.elapsed - rider.formChangedAt < .55)
       shiftFormRing(dynamic, rider, scene.elapsed - rider.formChangedAt);
   }
@@ -2644,7 +2738,15 @@ function drawRadar() {
   }
   if(scene.operation || round.operation) {
     const op=scene.operation || round.operation, mission=getOperation(op.id);
-    if(mission.kind==='checkpoints') {
+    if(mission.kind==='traversal') {
+      mission.gaps.forEach(gap => {
+        ctx.fillStyle=gap.kind==='jet' ? '#a45934' : '#327fa0';
+        ctx.fillRect(at(gap.minX),at(gap.minZ),(gap.maxX-gap.minX)*scale,(gap.maxZ-gap.minZ)*scale);
+      });
+      ctx.strokeStyle='#4bf2a9';ctx.lineWidth=2;
+      ctx.beginPath();ctx.moveTo(at(-51),at(mission.finishZ));
+      ctx.lineTo(at(51),at(mission.finishZ));ctx.stroke();
+    } else if(mission.kind==='checkpoints') {
       mission.gates.forEach((gate,index)=>{
         const open=(scene.time ?? scene.elapsed)>=gate.openFrom && (scene.time ?? scene.elapsed)<gate.openUntil;
         ctx.strokeStyle=index<op.progress ? '#537a83' : open ? '#5ff7ab' : '#ff7b53';
@@ -2763,6 +2865,8 @@ function pollGamepad() {
   if (axisZ > .4 || button(13)) active.add('down');
   if (button(0)) active.add('confirm');
   if (button(1)) active.add('disc');
+  if (button(6)) active.add('jet');
+  if (button(7)) active.add('sail');
   if (button(9)) active.add('pause');
   if (!menuHub.hidden) {
     if (fireSources.delete('gamepad')) syncFire();
@@ -2773,6 +2877,8 @@ function pollGamepad() {
   }
   const fresh = action => active.has(action) && !gamepadHeld.has(action);
   if (mode === 'running') {
+    if (fresh('jet')) playerFlight('jet');
+    if (fresh('sail')) playerFlight('sail');
     if (sessionMode === 'shift') {
       gamepadMove = {
         x: Number(active.has('right')) - Number(active.has('left')),
@@ -2865,8 +2971,9 @@ function frame(now) {
     const pace = Math.max(.8, Math.min(1.2, 1 + (desired - online.visualTime) * 3));
     online.visualTime = Math.min(latest.elapsed, online.visualTime + realDt * pace);
   }
-  if (sessionMode === 'operations' && mode === 'running') updateOperationHud();
+  if (isMissionMode() && mode === 'running') updateOperationHud();
   if (mode === 'running') updateCycleWeaponHud();
+  if (mode !== 'ready') updateFlightHud();
   if (sessionMode === 'shift' && mode === 'running') {
     updateShiftHud();
     if (!online) ui['rival-intent'].textContent = 'ECHO / ' + round.shift.aiIntent.toUpperCase();
@@ -3079,6 +3186,8 @@ if (touchToggle) {
   });
 }
 window.matchMedia('(any-pointer: coarse)').addEventListener?.('change', syncTouchControls);
+for (const button of document.querySelectorAll('[data-flight]'))
+  button.addEventListener('click', () => playerFlight(button.dataset.flight));
 document.getElementById('left').addEventListener('pointerdown', event => {
   event.preventDefault();
   playerTurn(-1);
@@ -3131,6 +3240,11 @@ window.addEventListener('keydown', event => {
   if (mode === 'highlight' && (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ')) {
     event.preventDefault();
     completeHighlight();
+    return;
+  }
+  if (mode === 'running' && !interactive && (action === 'jet' || action === 'sail')) {
+    event.preventDefault();
+    playerFlight(action);
     return;
   }
   if (sessionMode === 'shift' && mode === 'running' && !interactive) {
@@ -3279,7 +3393,7 @@ canvas.addEventListener('webglcontextrestored', () => {
 });
 window.addEventListener('resize', resize);
 
-modeSelect.value = ['duel', 'arena', 'operations', 'shift', 'daily'].includes(readLocal(MODE_KEY)) ? readLocal(MODE_KEY) : 'duel';
+modeSelect.value = ['duel', 'arena', 'operations', 'traversal', 'shift', 'daily'].includes(readLocal(MODE_KEY)) ? readLocal(MODE_KEY) : 'duel';
 operationSelect.value = ['portal', 'sweep', 'collapse', 'journey'].includes(readLocal(OPERATION_KEY)) ? readLocal(OPERATION_KEY) : 'portal';
 finalRivalInput.checked = readLocal(FINAL_RIVAL_KEY) !== 'false';
 syncLookOptions();

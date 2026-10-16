@@ -1,5 +1,19 @@
 // Original PvE set pieces. Rectangles here drive both collision and rendering.
 export const OPERATIONS = Object.freeze({
+  transit: {
+    id: 'transit', name: 'Solar Transit', map: 'classic', kind: 'traversal',
+    objective: 'Cross the jet gap, then the sail gap, and reach the finish before time runs out.',
+    briefing: 'Two broken spans block the northbound route. Lift over the first with the light jet, then glide over the second with the solar sail.',
+    tip: 'Use the jet just before the amber gap, then the sail just before the cyan gap. Land beyond each gap.',
+    hudTip: 'Amber gap: jet (Q). Cyan gap: sail (R).',
+    timeLimit: 12, spawn: { x: 0, z: 22, dir: 0 },
+    gaps: [
+      { id: 'Jet gap', kind: 'jet', minX: -52, maxX: 52, minZ: 10, maxZ: 15 },
+      { id: 'Sail gap', kind: 'sail', minX: -52, maxX: 52, minZ: -12, maxZ: -2 },
+    ],
+    finishZ: -32,
+    reward: { look: null, lore: 'The light jet clears short breaks; a solar sail carries momentum across a longer span.' },
+  },
   portal: {
     id: 'portal', name: 'Portal Run', map: 'solar', kind: 'checkpoints',
     objective: 'Cross three gates in order before the timer ends.',

@@ -1,5 +1,5 @@
 ﻿import { getMap } from './maps.js';
-import { createLanRound, drainEvents, queueTurn, setCycleAutoDrive, setCycleThrottle, setCycleFire, stepRound, STEP } from './simulation.js';
+import { createLanRound, drainEvents, queueTurn, setCycleAutoDrive, setCycleThrottle, setCycleFire, requestFlight, stepRound, STEP } from './simulation.js';
 import { drawPickupIcon } from './pickup-icons.js';
 
 const $ = selector => document.querySelector(selector);
@@ -288,6 +288,8 @@ function receiveHostMessage(peer, raw) {
     setCycleThrottle(state.room.round, peer.player.id, message.held);
   if (message.action === 'fire' && typeof message.held === 'boolean')
     setCycleFire(state.room.round, peer.player.id, message.held);
+  if (message.action === 'flight' && ['jet','sail'].includes(message.kind))
+    requestFlight(state.room.round, peer.player.id, message.kind);
 }
 function snapshot(selfId) {
   const room = state.room, round = room.round;
@@ -305,6 +307,8 @@ function snapshot(selfId) {
       riders: round.riders.map(r => ({ id: r.id, x: r.x, z: r.z, dir: r.dir,
         color: r.color, style: r.style, alive: r.alive, ammo: r.ammo,
         rocketReady: r.rocketReady, nitroUntil: r.nitroUntil,
+        flightKind: r.flightKind, flightUntil: r.flightUntil,
+        jetReadyAt: r.jetReadyAt, sailReadyAt: r.sailReadyAt,
         autoDrive: r.autoDrive, throttleHeld: r.throttleHeld })),
       segments: round.segments.map(s => ({ id: s.id, ownerId: s.ownerId,
         x1: s.x1, z1: s.z1, x2: s.x2, z2: s.z2, active: s.active })),
@@ -396,15 +400,19 @@ function localAction(value) {
     if (value.type === 'auto-drive') setCycleAutoDrive(room.round, 'P1', value.enabled);
     if (value.type === 'throttle') setCycleThrottle(room.round, 'P1', value.held);
     if (value.type === 'fire') setCycleFire(room.round, 'P1', value.held);
+    if (value.type === 'flight') requestFlight(room.round, 'P1', value.kind);
   }
 }
 function action(value) {
   if (!state.role) return;
   if (state.role === 'host') localAction(value);
   else if (state.channel?.readyState === 'open' &&
-      ['turn', 'auto-drive', 'throttle', 'fire'].includes(value.type))
+      ['turn', 'auto-drive', 'throttle', 'fire', 'flight'].includes(value.type))
     state.channel.send(JSON.stringify({ type: 'input', action: value.type,
-      sign: value.sign, enabled: value.enabled, held: value.held }));
+      sign: value.sign, enabled: value.enabled, held: value.held, kind: value.kind }));
+}
+function flight(kind) {
+  if (state.view?.phase === 'running') action({ type: 'flight', kind });
 }
 function turn(sign) {
   if (state.view?.phase === 'running') action({ type: 'turn', sign });
@@ -523,6 +531,13 @@ function renderUi(view) {
     }
     scores.append(item);
   }
+  const self = view.round?.riders.find(r => r.id === view.selfId);
+  for (const kind of ['jet','sail']) {
+    const button = $('#' + kind);
+    const remaining = Math.max(0,(self?.[kind + 'ReadyAt'] || 0) - (view.round?.elapsed || 0));
+    button.textContent = kind.toUpperCase() + ' ' + (self?.flightKind === kind ? 'ON' : remaining > 0 ? Math.ceil(remaining) + 'S' : kind === 'jet' ? 'Q' : 'R');
+    button.disabled = !active || !self?.alive || !!self.flightKind || remaining > 0;
+  }
   $('#start').hidden = state.role !== 'host' ||
     !['lobby', 'round-result', 'match-result'].includes(view.phase);
   $('#start').disabled = view.players.length !== view.maxPlayers ||
@@ -617,6 +632,10 @@ function frame() {
       ctx.beginPath();
       ctx.moveTo(0, -10); ctx.lineTo(7, 8); ctx.lineTo(0, 4); ctx.lineTo(-7, 8);
       ctx.closePath(); ctx.fill(); ctx.stroke();
+      if (rider.flightKind && round.elapsed < rider.flightUntil) {
+        ctx.strokeStyle = rider.flightKind === 'jet' ? '#ffbe74' : '#9cecff';
+        ctx.lineWidth = 3;ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.stroke();
+      }
       ctx.restore();
       const label = view.players.find(p => p.id === rider.id);
       ctx.font = '700 12px Rajdhani, Arial, sans-serif';
@@ -644,6 +663,9 @@ for (const [id, sign] of [['left', -1], ['right', 1]])
   $('#' + id).addEventListener('pointerdown', event => {
     event.preventDefault(); turn(sign);
   });
+for (const kind of ['jet','sail']) $('#' + kind).addEventListener('pointerdown', event => {
+  event.preventDefault(); flight(kind);
+});
 const forwardButton = $('#up');
 forwardButton.addEventListener('pointerdown', event => {
   event.preventDefault();
@@ -667,6 +689,8 @@ document.addEventListener('keydown', event => {
     event.preventDefault(); turn(-1);
   } else if (!event.repeat && ['d', 'D', 'ArrowRight'].includes(event.key)) {
     event.preventDefault(); turn(1);
+  } else if (!event.repeat && ['q','Q','r','R'].includes(event.key)) {
+    event.preventDefault();flight(event.key.toLowerCase() === 'q' ? 'jet' : 'sail');
   } else if (['e', 'E', ' '].includes(event.key)) {
     event.preventDefault(); fire(true);
   } else if (!event.repeat && ['p', 'P'].includes(event.key) &&

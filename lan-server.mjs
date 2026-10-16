@@ -4,14 +4,15 @@ import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { randomBytes, randomInt } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { createLanRound, drainEvents, queueDirection, queueTurn, setCycleAutoDrive, setCycleThrottle, setCycleFire, stepRound, STEP } from './dist/simulation.js';
+import { createLanRound, drainEvents, queueDirection, queueTurn, setCycleAutoDrive, setCycleThrottle, setCycleFire, requestFlight, stepRound, STEP } from './dist/simulation.js';
 import { MAPS } from './dist/maps.js';
 import { createShiftRound, queueShiftDirection, queueShiftTurn, requestShiftForm, setShiftFire,
   setShiftMove, stepShiftRound, throwShiftDisc } from './dist/grid-shift.js';
 
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dist');
 const STATIC = new Set(['index.html', 'lan.html', 'lan.js', 'peer.html', 'peer.js', 'game.js', 'simulation.js',
-  'maps.js', 'match.js', 'arena.js', 'operations.js', 'grid-shift.js', 'arena-rules.js']);
+  'maps.js', 'match.js', 'arena.js', 'operations.js', 'grid-shift.js', 'arena-rules.js',
+  'pickup-icons.js']);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8' };
 const ROOM_TTL = 60 * 60 * 1000;
 const RECONNECT_MS = 15000;
@@ -122,6 +123,8 @@ function snapshot(room, selfId) {
         color: r.color, style: r.style, alive: r.alive, ammo: r.ammo,
         form: r.form || 'cycle', hp: r.hp ?? null,
         nitroUntil: r.nitroUntil, rocketReady: r.rocketReady,
+        flightKind: r.flightKind, flightStartedAt: r.flightStartedAt,
+        flightUntil: r.flightUntil, jetReadyAt: r.jetReadyAt, sailReadyAt: r.sailReadyAt,
         autoDrive: r.autoDrive, throttleHeld: r.throttleHeld,
         formReadyAt: r.formReadyAt ?? null, discReadyAt: r.discReadyAt ?? null,
         recoveryUntil: r.recoveryUntil ?? 0, formChangedAt: r.formChangedAt ?? -10 })),
@@ -429,6 +432,8 @@ async function handleApi(req, res, pathname) {
         Number.isFinite(body.x) && Number.isFinite(body.z) &&
         Math.abs(body.x) <= 1 && Math.abs(body.z) <= 1) {
       setShiftMove(room.round, player.id, body.x, body.z);
+    } else if (body.type === 'flight' && ['jet', 'sail'].includes(body.kind)) {
+      requestFlight(room.round, player.id, body.kind);
     } else if (room.mode === 'shift' && body.type === 'form') {
       if (!requestShiftForm(room.round, player.id))
         return fail(res, 409, room.round.events.at(-1)?.reason || 'Form unavailable.');

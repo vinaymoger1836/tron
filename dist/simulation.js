@@ -194,6 +194,8 @@ export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles, diff
       fireHeld: false,
       autoDrive: true,
       throttleHeld: false,
+      flightKind: null, flightStartedAt: -Infinity, flightUntil: 0,
+      jetReadyAt: 0, sailReadyAt: 0,
     };
     rider.segment = newSegment(round, rider);
     round.riders.push(rider);
@@ -203,6 +205,45 @@ export function createRound({ seed = 1, riders = DEFAULT_RIDERS, obstacles, diff
   return round;
 }
 
+export const FLIGHT = Object.freeze({
+  jet: { duration: .8, cooldown: 5, speed: 1.7 },
+  sail: { duration: 2.0, cooldown: 7, speed: 1.22 },
+});
+export function airborne(round, rider) {
+  return Boolean(rider?.flightKind && round.elapsed < rider.flightUntil);
+}
+export function requestFlight(round, riderId, kind) {
+  const rider = round.riders.find(r => r.id === riderId);
+  const spec = FLIGHT[kind];
+  if (!spec || !rider?.alive || round.outcome || rider.flightKind ||
+      rider.form === 'foot' || round.elapsed < rider[kind + 'ReadyAt']) return false;
+  rider.flightKind = kind;
+  rider.flightStartedAt = round.elapsed;
+  rider.flightUntil = round.elapsed + spec.duration;
+  rider[kind + 'ReadyAt'] = round.elapsed + spec.cooldown;
+  if (rider.segment) {
+    rider.segment.active = false;
+    rider.segment.closedAt = round.elapsed;
+    if (Math.hypot(rider.x - rider.segment.x1, rider.z - rider.segment.z1) < EPSILON)
+      round.segments.splice(round.segments.indexOf(rider.segment), 1);
+    rider.segment = null;
+  }
+  round.events.push({ type: 'flight-start', riderId, kind });
+  round.actionLog.push({ tick: round.tick, riderId, action: kind });
+  return true;
+}
+export function settleFlight(round, rider) {
+  if (!rider.flightKind || round.elapsed < rider.flightUntil) return;
+  const kind = rider.flightKind;
+  rider.flightKind = null;
+  rider.flightUntil = 0;
+  rider.ignoreSegmentId = null;
+  rider.distanceSinceTurn = Infinity;
+  const segment = newSegment(round, rider);
+  rider.segment = segment;
+  round.segments.push(segment);
+  round.events.push({ type: 'flight-land', riderId: rider.id, kind });
+}
 export function drainEvents(round) {
   return round.events.splice(0);
 }
@@ -305,14 +346,16 @@ function staticHit(round, rider, x, z, dx, dz, radius = RIDER_RADIUS) {
   }
 
   for (const obstacle of round.dynamicObstacles) {
+    if (obstacle.kind === 'gap' && airborne(round, rider) && rider.flightKind === obstacle.flightKind) continue;
     const t = sweptBox(x, z, dx, dz,
       obstacle.minX - radius, obstacle.maxX + radius,
       obstacle.minZ - radius, obstacle.maxZ + radius);
     if (t !== null && (!hit || t < hit.t))
-      hit = { t, reason: 'hazard', by: obstacle.id };
+      hit = { t, reason: obstacle.kind === 'gap' ? 'gap' : 'hazard', by: obstacle.id };
   }
 
   for (const segment of round.segments) {
+    if (airborne(round, rider)) break;
     if (segment === rider?.segment) continue;
     if (segment.id === rider?.ignoreSegmentId &&
         rider.distanceSinceTurn < CORNER_CLEARANCE) continue;
@@ -421,8 +464,10 @@ function explodeRocket(round, bullet, x, z) {
   for (const rider of round.riders) {
     if (!rider.alive || rider.id === bullet.ownerId || Math.hypot(rider.x - x, rider.z - z) > 3.2) continue;
     rider.alive = false;
-    rider.segment.active = false;
-    rider.segment.closedAt = round.elapsed;
+    if (rider.segment) {
+      rider.segment.active = false;
+      rider.segment.closedAt = round.elapsed;
+    }
     round.events.push({ type: 'crash', riderId: rider.id, reason: 'rocket', by: bullet.ownerId, x: rider.x, z: rider.z });
     if (!round.multiplayer && !rider.isPlayer) {
       round.score += 250;
@@ -513,6 +558,8 @@ function decideAI(round, rider) {
   const forward = choices[0];
   const safeDistance = round.speed * (level.interval + 0.18);
   const safeTurns = choices.slice(1).filter(choice => choice.distance > safeDistance);
+  if (forwardHit?.reason === 'trail' && front > 1.1 && front < 3.6 && !safeTurns.length &&
+      requestFlight(round, rider.id, round.elapsed >= rider.jetReadyAt ? 'jet' : 'sail')) return;
   const best = safeTurns.sort((a, b) => b.score - a.score)[0];
   if (best && (forward.distance < safeDistance || best.score > forward.score + level.margin)) {
     queueTurn(round, rider.id, best.sign);
@@ -521,17 +568,19 @@ function decideAI(round, rider) {
 }
 function applyTurn(round, rider, sign) {
   const priorFree = freeDistance(round, rider, rider.dir, 3);
-  if (Math.hypot(rider.x - rider.segment.x1, rider.z - rider.segment.z1) < EPSILON) {
+  if (rider.segment && Math.hypot(rider.x - rider.segment.x1, rider.z - rider.segment.z1) < EPSILON) {
     round.segments.splice(round.segments.indexOf(rider.segment), 1);
-  } else {
+  } else if (rider.segment) {
     rider.segment.active = false;
     rider.segment.closedAt = round.elapsed;
     rider.ignoreSegmentId = rider.segment.id;
     rider.distanceSinceTurn = 0;
   }
   rider.dir = (rider.dir + sign + 4) % 4;
-  rider.segment = newSegment(round, rider);
-  round.segments.push(rider.segment);
+  if (!airborne(round, rider)) {
+    rider.segment = newSegment(round, rider);
+    round.segments.push(rider.segment);
+  }
   rider.lastTurnAt = round.elapsed;
   const nearMiss = priorFree < 2.4;
   round.events.push({ type: 'turn', riderId: rider.id, sign, nearMiss });
@@ -552,7 +601,12 @@ function prepareOperation(round) {
   op.warning = '';
   op.nextLimit = null;
   op.beam = null;
-  if (mission.kind === 'checkpoints') {
+  if (mission.kind === 'traversal') {
+    round.dynamicObstacles = mission.gaps.map(gap => ({ ...gap, kind: 'gap', flightKind: gap.kind }));
+    op.warning = op.progress < mission.gaps.length
+      ? mission.gaps[op.progress].id + ': use ' + mission.gaps[op.progress].kind.toUpperCase() + ' before the edge'
+      : 'Both spans cleared. Reach the finish line.';
+  } else if (mission.kind === 'checkpoints') {
     for (const [index, gate] of mission.gates.entries()) {
       const open = t >= gate.openFrom && t < gate.openUntil;
       if (!open) round.dynamicObstacles.push({ ...gate, id: gate.id + ' shutter' });
@@ -619,7 +673,19 @@ function completeOperation(round, bonus) {
 function updateOperationProgress(round, player) {
   const op = round.operation;
   const mission = getOperation(op.id);
-  if (mission.kind === 'checkpoints') {
+  if (mission.kind === 'traversal') {
+    const gap = mission.gaps[op.progress];
+    if (gap && player.z < gap.minZ - RIDER_RADIUS) {
+      op.progress++;
+      round.score += 400;
+      round.scoreBreakdown.checkpoint += 400;
+      round.events.push({ type: 'operation-checkpoint', progress: op.progress, total: mission.gaps.length, name: gap.id });
+    }
+    if (op.progress === mission.gaps.length && player.z <= mission.finishZ)
+      completeOperation(round, 1000 + Math.floor((mission.timeLimit - round.elapsed) * 50));
+    if (!round.outcome && round.elapsed >= mission.timeLimit)
+      round.outcome = { kind: 'lost', reason: 'timeout', by: 'finish line' };
+  } else if (mission.kind === 'checkpoints') {
     const gate = mission.gates[op.progress];
     if (gate && round.elapsed >= gate.openFrom && round.elapsed < gate.openUntil &&
         player.x >= gate.minX && player.x <= gate.maxX &&
@@ -652,6 +718,7 @@ export function stepRound(round) {
   }
   for (const rider of round.riders) {
     if (!rider.alive) continue;
+    settleFlight(round, rider);
     if (rider.controller === 'ai') decideAI(round, rider);
     const pending = rider.pendingTurn;
     if (!pending) continue;
@@ -668,7 +735,8 @@ export function stepRound(round) {
 
   const proposals = round.riders.filter(r => r.alive).map(rider => {
     const distance = (rider.autoDrive || rider.throttleHeld ? 1 : 0) *
-      round.speed * (round.elapsed < rider.nitroUntil ? 1.5 : 1) * STEP;
+      round.speed * (round.elapsed < rider.nitroUntil ? 1.5 : 1) *
+      (airborne(round, rider) ? FLIGHT[rider.flightKind].speed : 1) * STEP;
     const [vx, vz] = DIR[rider.dir];
     const dx = vx * distance;
     const dz = vz * distance;
@@ -682,7 +750,8 @@ export function stepRound(round) {
   for (let i = 0; i < proposals.length; i++) {
     for (let j = i + 1; j < proposals.length; j++) {
       const t = movingRiderHit(proposals[i], proposals[j]);
-      if (t !== null) riderEncounters.push({ i, j, t });
+      if (t !== null && !airborne(round, proposals[i].rider) && !airborne(round, proposals[j].rider))
+        riderEncounters.push({ i, j, t });
     }
   }
   riderEncounters.sort((a, b) => a.t - b.t);
@@ -700,13 +769,14 @@ export function stepRound(round) {
     const fraction = hit ? Math.max(0, Math.min(1, hit.t)) : 1;
     rider.x += dx * fraction;
     rider.z += dz * fraction;
-    rider.segment.x2 = rider.x;
-    rider.segment.z2 = rider.z;
+    if (rider.segment) { rider.segment.x2 = rider.x; rider.segment.z2 = rider.z; }
     rider.distanceSinceTurn += Math.hypot(dx, dz) * fraction;
     if (hit) {
       rider.alive = false;
-      rider.segment.active = false;
-      rider.segment.closedAt = round.elapsed + STEP * fraction;
+      if (rider.segment) {
+        rider.segment.active = false;
+        rider.segment.closedAt = round.elapsed + STEP * fraction;
+      }
       round.events.push({
         type: 'crash', riderId: rider.id,
         reason: hit.reason, by: hit.by,
