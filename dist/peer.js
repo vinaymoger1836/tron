@@ -1,5 +1,5 @@
 import { getMap } from './maps.js';
-import { createLanRound, drainEvents, queueTurn, setCycleFire, stepRound, STEP } from './simulation.js';
+import { createLanRound, drainEvents, queueDirection, setCycleFire, stepRound, STEP } from './simulation.js';
 
 const $ = selector => document.querySelector(selector);
 const canvas = $('#arena');
@@ -274,8 +274,9 @@ function receiveHostMessage(peer, raw) {
   const now = Math.floor(performance.now() / 1000);
   if (peer.inputSecond !== now) { peer.inputSecond = now; peer.inputCount = 0; }
   if (++peer.inputCount > 40) return;
-  if (message.action === 'turn' && (message.sign === -1 || message.sign === 1))
-    queueTurn(state.room.round, peer.player.id, message.sign);
+  if (message.action === 'direction' && Number.isInteger(message.direction) &&
+      message.direction >= 0 && message.direction <= 3)
+    queueDirection(state.room.round, peer.player.id, message.direction);
   if (message.action === 'fire' && typeof message.held === 'boolean')
     setCycleFire(state.room.round, peer.player.id, message.held);
 }
@@ -291,11 +292,13 @@ function snapshot(selfId) {
     })),
     round: round ? {
       tick: round.tick, elapsed: round.elapsed, limit: round.limit, map: round.map,
+      pickups: round.pickups,
       riders: round.riders.map(r => ({ id: r.id, x: r.x, z: r.z, dir: r.dir,
-        color: r.color, style: r.style, alive: r.alive, ammo: r.ammo })),
+        color: r.color, style: r.style, alive: r.alive, ammo: r.ammo,
+        rocketReady: r.rocketReady, nitroUntil: r.nitroUntil })),
       segments: round.segments.map(s => ({ id: s.id, ownerId: s.ownerId,
         x1: s.x1, z1: s.z1, x2: s.x2, z2: s.z2, active: s.active })),
-      bullets: round.bullets.map(b => ({ ownerId: b.ownerId, x: b.x, z: b.z })),
+      bullets: round.bullets.map(b => ({ ownerId: b.ownerId, x: b.x, z: b.z, rocket: b.rocket })),
       crashes: room.crashes,
     } : null,
   };
@@ -377,19 +380,19 @@ function localAction(value) {
     }
     broadcast();
   } else if (room.phase === 'running') {
-    if (value.type === 'turn') queueTurn(room.round, 'P1', value.sign);
+    if (value.type === 'direction') queueDirection(room.round, 'P1', value.direction);
     if (value.type === 'fire') setCycleFire(room.round, 'P1', value.held);
   }
 }
 function action(value) {
   if (!state.role) return;
   if (state.role === 'host') localAction(value);
-  else if (state.channel?.readyState === 'open' && ['turn', 'fire'].includes(value.type))
+  else if (state.channel?.readyState === 'open' && ['direction', 'fire'].includes(value.type))
     state.channel.send(JSON.stringify({ type: 'input', action: value.type,
-      sign: value.sign, held: value.held }));
+      direction: value.direction, held: value.held }));
 }
-function turn(sign) {
-  if (state.view?.phase === 'running') action({ type: 'turn', sign });
+function direction(value) {
+  if (state.view?.phase === 'running') action({ type: 'direction', direction: value });
 }
 function fire(held) {
   if (state.heldFire === held) return;
@@ -436,6 +439,10 @@ function renderUi(view) {
     paused: 'HOST PAUSED',
   };
   $('#room-phase').textContent = labels[view.phase] || 'PEER ROOM';
+  const selfRider = view.round?.riders.find(rider => rider.id === view.selfId);
+  $('#fire').textContent = selfRider?.rocketReady ? 'ROCKET 1' : 'FIRE';
+  $('#fire').setAttribute('aria-label', selfRider?.rocketReady
+    ? 'Fire one rocket' : 'Hold to fire wall gun');
   $('#room-title').innerHTML = view.phase === 'match-result'
     ? 'GRID <span>SECURED</span>' : view.phase === 'round-result'
       ? 'HEAT <span>ENDED</span>' : 'GRID <span>OPEN</span>';
@@ -477,7 +484,10 @@ function renderUi(view) {
     const rider = view.round?.riders.find(r => r.id === player.id);
     if (rider) {
       const ammo = document.createElement('span');
-      ammo.textContent = ' / ' + (rider.alive ? rider.ammo + ' SHOTS' : 'DEREZZED');
+      ammo.textContent = ' / ' + (rider.alive
+        ? (rider.rocketReady ? 'ROCKET 1 + ' : '') + rider.ammo + ' SHOTS' +
+          (rider.nitroUntil > view.round.elapsed ? ' / NITRO' : '')
+        : 'DEREZZED');
       item.append(ammo);
     }
     scores.append(item);
@@ -525,6 +535,11 @@ function frame() {
   ctx.strokeStyle = rgb(map.palette.rail, .9);
   ctx.lineWidth = 3;
   ctx.strokeRect(x(-limit), y(-limit), size, size);
+  if (round?.limit < limit) {
+    ctx.strokeStyle = '#ff6d53';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(x(-round.limit), y(-round.limit), round.limit * 2 * scale, round.limit * 2 * scale);
+  }
   ctx.fillStyle = rgb(map.palette.obstacle, .95);
   ctx.strokeStyle = rgb(map.palette.rail, .55);
   for (const obstacle of map.obstacles) {
@@ -537,6 +552,15 @@ function frame() {
     ctx.fill(); ctx.stroke();
   }
   if (round) {
+    for (const pickup of round.pickups || []) if (pickup.active) {
+      ctx.fillStyle = { ammo: '#4ddcff', nitro: '#64ff83', rocket: '#ff9c4d' }[pickup.type];
+      ctx.fillRect(x(pickup.x)-7, y(pickup.z)-7, 14, 14);
+      ctx.fillStyle = '#06131b';
+      ctx.font = 'bold 11px Orbitron, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText({ ammo: 'A', nitro: 'N', rocket: 'R' }[pickup.type],
+        x(pickup.x), y(pickup.z) + 4);
+    }
     const riders = new Map(round.riders.map(r => [r.id, r]));
     for (const segment of round.segments) {
       const rider = riders.get(segment.ownerId);
@@ -553,8 +577,8 @@ function frame() {
       ctx.setLineDash([]);
     }
     for (const bullet of round.bullets) {
-      ctx.fillStyle = '#ffe6a5';
-      ctx.beginPath(); ctx.arc(x(bullet.x), y(bullet.z), 3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = bullet.rocket ? '#ff9c4d' : '#ffe6a5';
+      ctx.beginPath(); ctx.arc(x(bullet.x), y(bullet.z), bullet.rocket ? 5 : 3, 0, Math.PI * 2); ctx.fill();
     }
     for (const rider of round.riders) {
       if (!rider.alive) continue;
@@ -592,8 +616,10 @@ $('#copy-response').addEventListener('click', () => copyField('#response-output'
 $('#start').addEventListener('click', () => action({ type: 'start' }));
 $('#pause').addEventListener('click', () => action({ type: 'pause' }));
 $('#leave').addEventListener('click', () => reset('You left the room.'));
-$('#left').addEventListener('pointerdown', event => { event.preventDefault(); turn(-1); });
-$('#right').addEventListener('pointerdown', event => { event.preventDefault(); turn(1); });
+for (const [id, value] of [['up', 0], ['right', 1], ['down', 2], ['left', 3]])
+  $('#' + id).addEventListener('pointerdown', event => {
+    event.preventDefault(); direction(value);
+  });
 $('#fire').addEventListener('pointerdown', event => {
   event.preventDefault();
   event.currentTarget.setPointerCapture(event.pointerId);
@@ -603,10 +629,10 @@ for (const type of ['pointerup', 'pointercancel', 'lostpointercapture'])
   $('#fire').addEventListener(type, () => fire(false));
 document.addEventListener('keydown', event => {
   if (interactiveFocus()) return;
-  if (!event.repeat && ['ArrowLeft', 'a', 'A'].includes(event.key)) {
-    event.preventDefault(); turn(-1);
-  } else if (!event.repeat && ['ArrowRight', 'd', 'D'].includes(event.key)) {
-    event.preventDefault(); turn(1);
+  const movement = { ArrowUp: 0, w: 0, W: 0, ArrowRight: 1, d: 1, D: 1,
+    ArrowDown: 2, s: 2, S: 2, ArrowLeft: 3, a: 3, A: 3 }[event.key];
+  if (!event.repeat && movement !== undefined) {
+    event.preventDefault(); direction(movement);
   } else if (['e', 'E', ' '].includes(event.key)) {
     event.preventDefault(); fire(true);
   } else if (!event.repeat && ['p', 'P'].includes(event.key) &&

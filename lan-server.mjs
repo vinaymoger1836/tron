@@ -4,14 +4,14 @@ import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { randomBytes, randomInt } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { createLanRound, drainEvents, queueTurn, setCycleFire, stepRound, STEP } from './dist/simulation.js';
+import { createLanRound, drainEvents, queueDirection, queueTurn, setCycleFire, stepRound, STEP } from './dist/simulation.js';
 import { MAPS } from './dist/maps.js';
-import { createShiftRound, queueShiftTurn, requestShiftForm, setShiftFire,
+import { createShiftRound, queueShiftDirection, queueShiftTurn, requestShiftForm, setShiftFire,
   setShiftMove, stepShiftRound, throwShiftDisc } from './dist/grid-shift.js';
 
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dist');
 const STATIC = new Set(['index.html', 'lan.html', 'lan.js', 'peer.html', 'peer.js', 'game.js', 'simulation.js',
-  'maps.js', 'match.js', 'arena.js', 'operations.js', 'grid-shift.js']);
+  'maps.js', 'match.js', 'arena.js', 'operations.js', 'grid-shift.js', 'arena-rules.js']);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8' };
 const ROOM_TTL = 60 * 60 * 1000;
 const RECONNECT_MS = 15000;
@@ -116,21 +116,24 @@ function snapshot(room, selfId) {
     })),
     round: round ? {
       tick: round.tick, elapsed: round.elapsed, limit: round.limit, map: round.map,
+      pickups: round.pickups,
       rule: round.rule, trailLifetime: Number.isFinite(round.trailLifetime) ? round.trailLifetime : null,
       riders: round.riders.map(r => ({ id: r.id, x: r.x, z: r.z, dir: r.dir,
         color: r.color, style: r.style, alive: r.alive, ammo: r.ammo,
         form: r.form || 'cycle', hp: r.hp ?? null,
+        nitroUntil: r.nitroUntil, rocketReady: r.rocketReady,
         formReadyAt: r.formReadyAt ?? null, discReadyAt: r.discReadyAt ?? null,
         recoveryUntil: r.recoveryUntil ?? 0, formChangedAt: r.formChangedAt ?? -10 })),
       segments: round.segments.map(s => ({ id: s.id, ownerId: s.ownerId,
         x1: s.x1, z1: s.z1, x2: s.x2, z2: s.z2, active: s.active,
         closedAt: s.closedAt ?? -1 })),
       bullets: (round.shift?.bullets || round.bullets)
-        .map(b => ({ ownerId: b.ownerId, x: b.x, z: b.z })),
+        .map(b => ({ ownerId: b.ownerId, x: b.x, z: b.z, rocket: b.rocket })),
       shift: round.shift ? { timeLimit: round.shift.timeLimit,
         discs: round.shift.discs.map(d => ({ ownerId: d.ownerId, x: d.x, z: d.z,
           returning: d.returning })) } : null,
       crashes: room.crashes,
+      effects: room.effects.filter(effect => Date.now() - effect.at < 1100),
     } : null,
   };
 }
@@ -151,6 +154,7 @@ function nextRound(room) {
   room.round = room.mode === 'shift' ? createShiftRound(options)
     : createLanRound({ ...options, map: room.map });
   room.crashes = [];
+  room.effects = [];
   room.result = null;
   room.phase = 'countdown';
   room.deadline = Date.now() + 3000;
@@ -238,9 +242,14 @@ function tickRoom(room, now) {
   while (room.accumulator >= STEP && steps < 16 && !room.round.outcome) {
     if (room.mode === 'shift') stepShiftRound(room.round);
     else stepRound(room.round);
-    for (const event of drainEvents(room.round))
+    for (const event of drainEvents(room.round)) {
       if (event.type === 'crash') room.crashes.push({
         riderId: event.riderId, reason: event.reason, by: event.by || null });
+      if (['pickup', 'rocket-explode', 'arena-shrink'].includes(event.type)) {
+        room.effects.push({ ...event, id: ++room.effectSeq, at: Date.now() });
+        if (room.effects.length > 16) room.effects.shift();
+      }
+    }
     room.accumulator -= STEP;
     steps++;
   }
@@ -294,7 +303,7 @@ async function handleApi(req, res, pathname) {
     const host = createPlayer('P1', body.name);
     const room = { code: code(), map: body.map, mode, rule, maxPlayers, hostId: host.id,
       players: [host], phase: 'lobby', round: null, roundNumber: 0,
-      result: null, crashes: [], touched: Date.now(), lastBroadcast: 0,
+      result: null, crashes: [], effects: [], effectSeq: 0, touched: Date.now(), lastBroadcast: 0,
       lastTickAt: performance.now(), accumulator: 0 };
     rooms.set(room.code, room);
     seatCookie(res, host);
@@ -395,7 +404,11 @@ async function handleApi(req, res, pathname) {
     const second = Math.floor(Date.now() / 1000);
     if (player.lastInputAt !== second) { player.lastInputAt = second; player.inputCount = 0; }
     if (++player.inputCount > 40) return fail(res, 429, 'Too many inputs.');
-    if (body.type === 'turn' && (body.sign === -1 || body.sign === 1)) {
+    if (body.type === 'direction' && Number.isInteger(body.direction) &&
+        body.direction >= 0 && body.direction <= 3) {
+      if (room.mode === 'shift') queueShiftDirection(room.round, player.id, body.direction);
+      else queueDirection(room.round, player.id, body.direction);
+    } else if (body.type === 'turn' && (body.sign === -1 || body.sign === 1)) {
       if (room.mode === 'shift') queueShiftTurn(room.round, player.id, body.sign);
       else queueTurn(room.round, player.id, body.sign);
     } else if (body.type === 'fire' && typeof body.held === 'boolean') {

@@ -1,11 +1,12 @@
 ﻿import { createRound, sweptCircle, STEP } from './simulation.js';
 import { getMap, spawnClear } from './maps.js';
+import { updateArenaRules, ROUND_END } from './arena-rules.js';
 
 const DIR = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 const EPS = 1e-8;
 const SPEED = { cycle: 10.6, foot: 5.2, disc: 22, bullet: 48 };
 const RADIUS = { cycle: 0.36, foot: 0.28 };
-const TIME_LIMIT = 90;
+const TIME_LIMIT = ROUND_END;
 const FORM_COOLDOWN = 1.15;
 const FORM_RECOVERY = 0.36;
 const DISC_COOLDOWN = 1.45;
@@ -160,6 +161,13 @@ export function queueShiftTurn(round, id, sign) {
   round.actionLog.push({ tick: round.tick, riderId: id, action: 'turn', sign });
   return true;
 }
+export function queueShiftDirection(round, id, direction) {
+  const rider = round.riders.find(r => r.id === id);
+  if (!rider || rider.form !== 'cycle' || !Number.isInteger(direction) ||
+      direction < 0 || direction > 3 || direction === rider.dir ||
+      direction === (rider.dir + 2) % 4) return false;
+  return queueShiftTurn(round, id, (direction - rider.dir + 4) % 4 === 1 ? 1 : -1);
+}
 export function requestShiftForm(round, id) {
   const rider = round.riders.find(r => r.id === id);
   if (!rider || !rider.alive || round.outcome) return false;
@@ -227,24 +235,26 @@ export function throwShiftDisc(round, id) {
 }
 function shootBullet(round, rider) {
   if (!rider.alive || rider.form !== 'cycle' || round.outcome ||
-      round.elapsed < rider.recoveryUntil || rider.ammo <= 0 ||
+      round.elapsed < rider.recoveryUntil || (rider.ammo <= 0 && !rider.rocketReady) ||
       round.elapsed + EPS < rider.nextShotAt) return false;
   const [vx, vz] = DIR[rider.dir];
   round.shift.bullets.push({ ownerId: rider.id, x: rider.x + vx * .8,
-    z: rider.z + vz * .8, vx, vz, traveled: 0 });
-  rider.ammo--;
+    z: rider.z + vz * .8, vx, vz, traveled: 0, rocket: rider.rocketReady });
+  if (rider.rocketReady) rider.rocketReady = false;
+  else rider.ammo--;
   rider.nextShotAt = round.elapsed + FIRE_INTERVAL;
   if (!rider.ammo) rider.fireHeld = false;
-  round.events.push({ type: 'bullet-fire', riderId: rider.id, ammo: rider.ammo });
+  round.events.push({ type: 'bullet-fire', riderId: rider.id, ammo: rider.ammo,
+    rocket: round.shift.bullets.at(-1).rocket });
   round.actionLog.push({ tick: round.tick, riderId: rider.id, action: 'fire' });
   return true;
 }
 export function setShiftFire(round, id, held) {
   const rider = round.riders.find(r => r.id === id);
   if (!rider || !rider.alive || round.outcome) return false;
-  rider.fireHeld = Boolean(held && rider.form === 'cycle' && rider.ammo > 0);
-  if (rider.fireHeld) shootBullet(round, rider);
-  return rider.fireHeld || !held;
+  rider.fireHeld = Boolean(held && rider.form === 'cycle' && (rider.ammo > 0 || rider.rocketReady));
+  const fired = rider.fireHeld && shootBullet(round, rider);
+  return Boolean(rider.fireHeld || fired || !held);
 }
 function cutTrail(round, segment, x, z) {
   const dx = segment.x2 - segment.x1, dz = segment.z2 - segment.z1;
@@ -280,10 +290,15 @@ function moveBullet(round, bullet) {
       target.z - RADIUS[target.form] - .12, target.z + RADIUS[target.form] + .12))
     .filter(t => t !== null).sort((a, b) => a - b)[0];
   if (riderHit !== undefined && (!hit || riderHit < hit.t)) {
-    round.events.push({ type: 'bullet-blocked', riderId: bullet.ownerId, reason: 'rider' });
+    if (bullet.rocket) explodeRocket(round, bullet, bullet.x + dx * riderHit, bullet.z + dz * riderHit);
+    else round.events.push({ type: 'bullet-blocked', riderId: bullet.ownerId, reason: 'rider' });
     return false;
   }
   if (hit) {
+    if (bullet.rocket) {
+      explodeRocket(round, bullet, bullet.x + dx * hit.t, bullet.z + dz * hit.t);
+      return false;
+    }
     if (hit.segment) {
       const x = bullet.x + dx * hit.t, z = bullet.z + dz * hit.t;
       cutTrail(round, hit.segment, x, z);
@@ -294,7 +309,30 @@ function moveBullet(round, bullet) {
     return false;
   }
   bullet.x += dx; bullet.z += dz; bullet.traveled += travel;
+  if (bullet.rocket && bullet.traveled >= BULLET_RANGE - EPS) {
+    explodeRocket(round, bullet, bullet.x, bullet.z);
+    return false;
+  }
   return bullet.traveled < BULLET_RANGE - EPS;
+}
+function explodeRocket(round, bullet, x, z) {
+  for (const segment of [...round.segments]) {
+    const px = Math.max(Math.min(x, Math.max(segment.x1, segment.x2)), Math.min(segment.x1, segment.x2));
+    const pz = Math.max(Math.min(z, Math.max(segment.z1, segment.z2)), Math.min(segment.z1, segment.z2));
+    if (Math.hypot(px - x, pz - z) <= 3) cutTrail(round, segment, px, pz);
+  }
+  for (const rider of round.riders) {
+    if (!rider.alive || rider.id === bullet.ownerId || Math.hypot(rider.x - x, rider.z - z) > 3.2) continue;
+    rider.hp -= 2;
+    if (rider.hp <= 0) {
+      rider.alive = false;
+      closeTrail(round, rider);
+      round.events.push({ type: 'crash', riderId: rider.id, reason: 'rocket',
+        by: bullet.ownerId, x: rider.x, z: rider.z });
+      if (!round.multiplayer && !rider.isPlayer) round.score += 250;
+    }
+  }
+  round.events.push({ type: 'rocket-explode', riderId: bullet.ownerId, x, z });
 }
 function turn(round, rider, sign) {
   closeTrail(round, rider);
@@ -420,6 +458,7 @@ function moveDisc(round, disc) {
 }
 export function stepShiftRound(round) {
   if (round.outcome) return round;
+  updateArenaRules(round);
   const ai = round.multiplayer ? null : round.riders.find(r => !r.isPlayer);
   if (ai?.alive) aiDecision(round, ai);
   for (const rider of round.riders) {
@@ -439,7 +478,7 @@ export function stepShiftRound(round) {
       rider.dir = Math.abs(direction[0]) > Math.abs(direction[1])
         ? direction[0] > 0 ? 1 : 3 : direction[1] > 0 ? 2 : 0;
     }
-    const speed = round.elapsed < rider.recoveryUntil ? 0 : SPEED[rider.form];
+    const speed = round.elapsed < rider.recoveryUntil ? 0 : SPEED[rider.form] * (round.elapsed < rider.nitroUntil ? 1.5 : 1);
     const dx = direction[0] * speed * STEP, dz = direction[1] * speed * STEP;
     return { rider, dx, dz,
       hit: worldHit(round, rider, rider.x, rider.z, dx, dz, RADIUS[rider.form]) };

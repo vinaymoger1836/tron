@@ -1,7 +1,7 @@
 ﻿// Collision, spawn, presentation and navigation data share these definitions.
 export const MAPS = Object.freeze({
   classic: {
-    id: 'classic', name: 'Classic Grid', limit: 34,
+    id: 'classic', name: 'Classic Grid', limit: 52,
     cue: 'Open square. Read every wall and keep an exit in reserve.',
     palette: { floor: [0.008, 0.026, 0.045], wall: [0.018, 0.072, 0.10], rail: [0.06, 0.66, 0.82], obstacle: [0.03, 0.13, 0.17], radar: '#5edff3' },
     obstacles: [],
@@ -11,7 +11,7 @@ export const MAPS = Object.freeze({
     },
   },
   solar: {
-    id: 'solar', name: 'Solar Circuit', limit: 38,
+    id: 'solar', name: 'Solar Circuit', limit: 56,
     cue: 'Long central sight lines; amber pylons reward early lane changes.',
     palette: { floor: [0.035, 0.022, 0.012], wall: [0.13, 0.068, 0.025], rail: [1, 0.54, 0.17], obstacle: [0.18, 0.084, 0.03], radar: '#ffaf59' },
     obstacles: [
@@ -26,7 +26,7 @@ export const MAPS = Object.freeze({
     },
   },
   vault: {
-    id: 'vault', name: 'Data Vault', limit: 36,
+    id: 'vault', name: 'Data Vault', limit: 54,
     cue: 'Round violet nodes split the center. Plan your turn before each narrow passage.',
     palette: { floor: [0.018, 0.014, 0.044], wall: [0.075, 0.035, 0.13], rail: [0.67, 0.34, 1], obstacle: [0.11, 0.05, 0.19], radar: '#b891ff' },
     obstacles: [

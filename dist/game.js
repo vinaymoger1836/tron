@@ -1,9 +1,9 @@
-﻿import { createRound, createDuelRound, createArenaRound, createOperationRound, DUEL_RIVALS, DIFFICULTIES, drainEvents, queueTurn, stepRound, setCycleFire, STEP } from './simulation.js';
+﻿import { createRound, createDuelRound, createArenaRound, createOperationRound, DUEL_RIVALS, DIFFICULTIES, drainEvents, queueDirection, stepRound, setCycleFire, STEP } from './simulation.js';
 import { MAPS, getMap } from './maps.js';
 import { createArenaMatch, recordArenaRound, nextArenaRound, arenaWon } from './arena.js';
 import { createMatch, recordRound, nextRound, roundSeed } from './match.js';
 import { OPERATIONS, JOURNEY, getOperation } from './operations.js';
-import { createShiftRound, stepShiftRound, setShiftMove, queueShiftTurn, requestShiftForm, throwShiftDisc, setShiftFire } from './grid-shift.js';
+import { createShiftRound, stepShiftRound, setShiftMove, queueShiftDirection, requestShiftForm, throwShiftDisc, setShiftFire } from './grid-shift.js';
 
 const canvas = document.querySelector('#game');
 const radar = document.querySelector('#radar');
@@ -202,7 +202,7 @@ const CAMERA_MOTION_KEY = 'tron-grid-run-camera-motion';
 const FLASH_INTENSITY_KEY = 'tron-grid-run-flash-intensity';
 const GAMEPAD_KEY = 'tron-grid-run-gamepad';
 const CAPTIONS_KEY = 'tron-grid-run-captions';
-const DAILY_RULES_VERSION = 2;
+const DAILY_RULES_VERSION = 3;
 const DEFAULT_BINDINGS = Object.freeze({ left: 'a', right: 'd', up: 'w', down: 's', form: 'f', fire: 'e', disc: 'space', pause: 'p', sound: 'm' });
 let storageAvailable = true;
 
@@ -717,18 +717,20 @@ function updateShiftHud() {
   const cooldown = Math.max(0, player.discReadyAt - round.elapsed);
   document.querySelector('#shift-status').textContent =
     'You ' + player.hp + '/2 integrity / ' +
-    (player.form === 'cycle' ? 'Gun ' + player.ammo + '/24 bullets' :
+    (player.form === 'cycle' ? (player.rocketReady ? 'Rocket 1' : 'Gun ' + player.ammo + '/48 bullets') :
       'Disc ' + (disc ? 'returning' : cooldown > 0 ? cooldown.toFixed(1) + 's' : 'ready'));
+  if (round.elapsed < player.nitroUntil)
+    document.querySelector('#shift-status').textContent += ' / NITRO ' + Math.ceil(player.nitroUntil - round.elapsed) + 'S';
   document.querySelector('#shift-rival-status').textContent =
     'Echo ' + rival.hp + '/2 integrity / ' + rival.form.toUpperCase();
   const weaponButton = document.querySelector('#shift-throw');
-  weaponButton.textContent = player.form === 'cycle' ? 'FIRE ' + player.ammo : 'DISC';
-  weaponButton.setAttribute('aria-label', player.form === 'cycle' ? 'Fire wall gun' : 'Throw disc');
+  weaponButton.textContent = player.form === 'cycle' ? (player.rocketReady ? 'ROCKET 1' : 'FIRE ' + player.ammo) : 'DISC';
+  weaponButton.setAttribute('aria-label', player.form === 'cycle' ? (player.rocketReady ? 'Fire one rocket' : 'Fire wall gun') : 'Throw disc');
   weaponButton.disabled = mode !== 'running' || (player.form === 'cycle'
-    ? player.ammo <= 0 || round.elapsed < player.recoveryUntil : disc || cooldown > 0);
+    ? (!player.ammo && !player.rocketReady) || round.elapsed < player.recoveryUntil : disc || cooldown > 0);
   document.querySelector('#shift-tip').textContent =
     player.form === 'cycle' ? keyLabel('fire') + ' hold to fire / ' + keyLabel('form') + ' dismount / ' +
-      keyLabel('left') + ' ' + keyLabel('right') + ' turn / ' +
+      [keyLabel('up'),keyLabel('left'),keyLabel('down'),keyLabel('right')].join(' ') + ' steer / ' +
       Math.max(0, Math.ceil(round.shift.timeLimit - round.elapsed)) + 's'
       : [keyLabel('up'), keyLabel('left'), keyLabel('down'), keyLabel('right')].join(' ') +
         ' move / ' + keyLabel('disc') + ' throw / ' + keyLabel('form') + ' remount / ' +
@@ -775,9 +777,11 @@ function updateCycleWeaponHud() {
   const status = document.querySelector('#cycle-weapon-status');
   const button = document.querySelector('#cycle-fire');
   status.hidden = !active;
-  if (active) status.textContent = 'GUN ' + player.ammo + '/24';
-  button.textContent = 'FIRE ' + (player?.ammo ?? 24);
-  button.disabled = mode !== 'running' || sessionMode === 'shift' || !player?.ammo;
+  if (active) status.textContent = (player.rocketReady ? 'ROCKET 1' : 'GUN ' + player.ammo + '/48') +
+    (round.elapsed < player.nitroUntil ? ' / NITRO ' + Math.ceil(player.nitroUntil - round.elapsed) + 'S' : '');
+  button.textContent = player?.rocketReady ? 'ROCKET 1' : 'FIRE ' + (player?.ammo ?? 24);
+  button.setAttribute('aria-label', player?.rocketReady ? 'Fire one rocket' : 'Fire wall gun');
+  button.disabled = mode !== 'running' || sessionMode === 'shift' || !(player?.ammo || player?.rocketReady);
 }
 function setBackgroundInert(inert) {
   canvas.inert = inert;
@@ -989,19 +993,18 @@ function keyAction(key) {
 }
 function syncControlHints(shift = online ? sessionMode === 'shift' : modeSelect.value === 'shift') {
   const key = action => '<kbd>' + keyLabel(action) + '</kbd>';
-  document.querySelector('#controls-hint').innerHTML = shift
-    ? key('left') + key('right') + ' TURN ' + key('form') + ' FORM ' +
-      key('fire') + ' FIRE ' + key('disc') + ' DISC ' + key('pause') + ' PAUSE'
-    : key('left') + key('right') + ' TURN ' + key('fire') + ' FIRE ' + key('pause') + ' PAUSE ' +
-      key('sound') + ' SOUND';
+  document.querySelector('#controls-hint').innerHTML =
+    key('up') + key('left') + key('down') + key('right') + ' STEER ' +
+    key('fire') + ' FIRE ' + (shift ? key('form') + ' FORM ' + key('disc') + ' DISC ' : '') +
+    key('pause') + ' PAUSE';
   document.querySelector('#panel-footer').innerHTML = shift
-    ? 'CYCLE <span>' + keyLabel('left') + ' ' + keyLabel('right') +
-      ' TURN</span> &nbsp;?&nbsp; FOOT <span>' +
+    ? 'CYCLE <span>' + [keyLabel('up'),keyLabel('left'),keyLabel('down'),keyLabel('right')].join(' ') +
+      ' STEER</span> &nbsp;?&nbsp; FOOT <span>' +
       [keyLabel('up'),keyLabel('left'),keyLabel('down'),keyLabel('right')].join(' ') +
       ' MOVE</span> &nbsp;?&nbsp; <span>' + keyLabel('form') + ' FORM / ' +
       keyLabel('fire') + ' FIRE / ' + keyLabel('disc') + ' DISC</span>'
-    : 'KEYBOARD <span>ARROWS / ' + keyLabel('left') + ' ' + keyLabel('right') +
-      '</span> / ' + keyLabel('fire') + ' FIRE &nbsp;?&nbsp; TOUCH <span>TURN + FIRE</span>';
+    : 'KEYBOARD <span>ARROWS / ' + [keyLabel('up'),keyLabel('left'),keyLabel('down'),keyLabel('right')].join(' ') +
+      '</span> / ' + keyLabel('fire') + ' FIRE &nbsp; TOUCH <span>STEER + FIRE</span>';
 }
 function syncBindingButtons() {
   for (const button of document.querySelectorAll('[data-bind]')) {
@@ -1200,11 +1203,11 @@ function onlineAction(value) {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value),
   }).then(async response => {
-    if (response.ok || ['turn', 'fire', 'move'].includes(value.type)) return;
+    if (response.ok || ['direction', 'fire', 'move'].includes(value.type)) return;
     const body = await response.json().catch(() => ({}));
     showToast(body.error || 'Room action failed.');
   }).catch(() => {
-    if (!['turn', 'fire', 'move'].includes(value.type))
+    if (!['direction', 'fire', 'move'].includes(value.type))
       showToast('Room connection interrupted.');
   });
 }
@@ -1240,21 +1243,23 @@ function updateOnlineShiftHud() {
   const cooldown = Math.max(0, player.discReadyAt - round.elapsed);
   document.querySelector('#shift-status').textContent =
     'You ' + player.hp + '/2 integrity / ' + (player.form === 'cycle'
-      ? 'Gun ' + player.ammo + '/24 bullets'
+      ? (player.rocketReady ? 'Rocket 1' : 'Gun ' + player.ammo + '/48 bullets')
       : 'Disc ' + (discOut ? 'returning' : cooldown > 0 ? cooldown.toFixed(1) + 's' : 'ready'));
+  if (round.elapsed < player.nitroUntil)
+    document.querySelector('#shift-status').textContent += ' / NITRO ' + Math.ceil(player.nitroUntil - round.elapsed) + 'S';
   document.querySelector('#shift-rival-status').textContent = others.map(rider => {
     const name = online.view.players.find(player => player.id === rider.id)?.name || rider.id;
     return name + ' ' + (rider.alive ? rider.hp + '/2 ' + rider.form.toUpperCase() : 'OUT');
   }).join(' / ');
   const weaponButton = document.querySelector('#shift-throw');
-  weaponButton.textContent = player.form === 'cycle' ? 'FIRE ' + player.ammo : 'DISC';
-  weaponButton.setAttribute('aria-label', player.form === 'cycle' ? 'Fire wall gun' : 'Throw disc');
+  weaponButton.textContent = player.form === 'cycle' ? (player.rocketReady ? 'ROCKET 1' : 'FIRE ' + player.ammo) : 'DISC';
+  weaponButton.setAttribute('aria-label', player.form === 'cycle' ? (player.rocketReady ? 'Fire one rocket' : 'Fire wall gun') : 'Throw disc');
   weaponButton.disabled = mode !== 'running' || !player.alive ||
-    (player.form === 'cycle' ? player.ammo <= 0 || round.elapsed < player.recoveryUntil
+    (player.form === 'cycle' ? (!player.ammo && !player.rocketReady) || round.elapsed < player.recoveryUntil
       : discOut || cooldown > 0);
   document.querySelector('#shift-tip').textContent = player.form === 'cycle'
     ? keyLabel('fire') + ' hold to fire / ' + keyLabel('form') + ' dismount / ' +
-      keyLabel('left') + ' ' + keyLabel('right') + ' turn / ' +
+      [keyLabel('up'),keyLabel('left'),keyLabel('down'),keyLabel('right')].join(' ') + ' steer / ' +
       Math.max(0, Math.ceil(round.shift.timeLimit - round.elapsed)) + 's'
     : [keyLabel('up'), keyLabel('left'), keyLabel('down'), keyLabel('right')].join(' ') +
       ' move / ' + keyLabel('disc') + ' throw / ' + keyLabel('form') + ' remount / ' +
@@ -1307,6 +1312,20 @@ function onlineReceive(view) {
   if (view.round) {
     const oldMap = round.map;
     round = onlineRound(view);
+    for (const effect of view.round.effects || []) {
+      if (effect.id <= (online.lastEffectId || 0)) continue;
+      online.lastEffectId = effect.id;
+      if (effect.type === 'rocket-explode') {
+        spawnImpact(effect);
+        showCaption('ROCKET IMPACT');
+      } else if (effect.type === 'arena-shrink') {
+        showToast('GRID SHRINKING / ' + effect.limit);
+        announce('Grid shrinking. New limit ' + effect.limit + '.');
+      } else if (effect.type === 'pickup' && effect.riderId === view.selfId) {
+        showToast(effect.pickup.toUpperCase() + ' PICKED UP');
+        announce(effect.pickup + ' picked up.');
+      }
+    }
     sessionMode = view.mode;
     match = { roundNumber: view.roundNumber };
     if (oldMap !== round.map || online.lastRound !== view.roundNumber) {
@@ -1696,15 +1715,15 @@ function pause() {
   }
 }
 
-function playerTurn(sign) {
+function playerDirection(direction) {
   if (mode !== 'running') return;
   if (online) {
     if (sessionMode !== 'shift' || round.riders[0]?.form === 'cycle')
-      onlineAction({ type: 'turn', sign });
+      onlineAction({ type: 'direction', direction });
     return;
   }
-  if (sessionMode === 'shift') queueShiftTurn(round, 'YOU', sign);
-  else queueTurn(round, 'YOU', sign);
+  if (sessionMode === 'shift') queueShiftDirection(round, 'YOU', direction);
+  else queueDirection(round, 'YOU', direction);
 }
 function syncFire() {
   const held = mode === 'running' && fireSources.size > 0;
@@ -1829,6 +1848,7 @@ function captureReplayFrame(force=false) {
   }]));
   replayFrames.push({
     time:round.elapsed, elapsed:round.elapsed, limit:round.limit,
+    pickups:round.pickups.map(pickup=>({ ...pickup })),
     operation:round.operation ? { ...round.operation,
       beam:round.operation.beam ? { ...round.operation.beam } : null } : null,
     shift:round.shift ? { discs:round.shift.discs.map(disc=>({ ...disc })),
@@ -2045,9 +2065,21 @@ function handleEvents() {
     } else if (event.type === 'shift-denied' && event.riderId === 'YOU') {
       showToast(event.reason.toUpperCase());
       announce(event.reason + '.');
+    } else if (event.type === 'pickup') {
+      if (event.riderId === 'YOU') {
+        showToast(event.pickup.toUpperCase() + ' PICKED UP');
+        announce(event.pickup + ' picked up.');
+        updateHud();
+      }
+    } else if (event.type === 'arena-shrink') {
+      showToast('GRID SHRINKING / ' + event.limit);
+      announce('Grid shrinking. New limit ' + event.limit + '.');
+    } else if (event.type === 'rocket-explode') {
+      spawnImpact(event);
+      showCaption('ROCKET IMPACT');
     } else if (event.type === 'bullet-fire') {
       beep(event.riderId === 'YOU' ? 930 : 690, .1, 'sawtooth', .028);
-      if (event.riderId === 'YOU') announce('Bullet fired. ' + event.ammo + ' left.');
+      if (event.riderId === 'YOU') announce(event.rocket ? 'Rocket fired.' : 'Bullet fired. ' + event.ammo + ' left.');
     } else if (event.type === 'bullet-cut') {
       showToast(event.riderId + ' CUT A WALL');
       effectMotif('wall');
@@ -2259,10 +2291,12 @@ function discMesh(out, disc) {
   box(out, disc.x, y + .03, disc.z, .58, .03, .58, mixColor(c, .48), 2);
 }
 function bulletMesh(out, bullet) {
-  const c = round.riders.find(r => r.id === bullet.ownerId)?.isPlayer ? [.56, 1, .96] : [1, .72, .36];
+  const c = bullet.rocket ? [1, .48, .13] :
+    round.riders.find(r => r.id === bullet.ownerId)?.isPlayer ? [.56, 1, .96] : [1, .72, .36];
   const y = 0;
-  box(out, bullet.x, y + .54, bullet.z, .18, .15, .18, c, 2);
-  box(out, bullet.x, y + .04, bullet.z, .28, .035, .28, mixColor(c, .4), 2);
+  const size = bullet.rocket ? .42 : .18;
+  box(out, bullet.x, y + .54, bullet.z, size, .15, size, c, 2);
+  box(out, bullet.x, y + .04, bullet.z, size + .1, .035, size + .1, mixColor(c, .4), 2);
 }
 function gateMesh(out) {
   const duration=match?.roundNumber>1 ? 1.5 : 3;
@@ -2389,6 +2423,15 @@ function draw(renderDt) {
   const dynamic = [];
   gateMesh(dynamic);
   operationMesh(dynamic, scene);
+  if (scene.limit < getMap(round.map).limit) boundaryMesh(dynamic, scene.limit, [1, .28, .12], 1.2);
+  for (const pickup of scene.pickups || []) if (pickup.active) {
+    const color = { ammo: [.25, .85, 1], nitro: [.25, 1, .4], rocket: [1, .54, .18] }[pickup.type];
+    const shape = pickup.type === 'nitro' ? [.46, 1.1, .46]
+      : pickup.type === 'rocket' ? [1.1, .48, .54] : [.78, .48, .78];
+    box(dynamic, pickup.x, shape[1] / 2 + .08, pickup.z,
+      shape[0], shape[1], shape[2], color, 2);
+    box(dynamic, pickup.x, .04, pickup.z, 1.25, .08, 1.25, color, 2);
+  }
   for (const segment of scene.segments) trailMesh(dynamic, segment, scene.time ?? scene.elapsed);
   for (const rider of scene.riders) if (rider.alive) {
     if (scene.shift && rider.form === 'foot') footMesh(dynamic, rider);
@@ -2443,6 +2486,13 @@ function drawRadar() {
   if(playLimit < limit) {
     ctx.strokeStyle='#ff6d53';
     ctx.strokeRect(at(-playLimit),at(-playLimit),playLimit*2*scale,playLimit*2*scale);
+  }
+  for (const pickup of scene.pickups || []) if (pickup.active) {
+    ctx.fillStyle = { ammo: '#4ddcff', nitro: '#64ff83', rocket: '#ff9c4d' }[pickup.type];
+    ctx.font = 'bold 12px Orbitron, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText({ ammo: 'A', nitro: 'N', rocket: 'R' }[pickup.type],
+      at(pickup.x), at(pickup.z) + 4);
   }
   ctx.fillStyle = map.palette.radar;
   for (const o of map.obstacles) {
@@ -2586,8 +2636,8 @@ function pollGamepad() {
       };
       syncShiftMove();
       if (round.riders[0].form === 'cycle') {
-        if (fresh('left')) playerTurn(-1);
-        if (fresh('right')) playerTurn(1);
+        for (const [name, direction] of Object.entries({ up: 0, right: 1, down: 2, left: 3 }))
+          if (fresh(name)) playerDirection(direction);
       }
       if (fresh('confirm')) { if (online) onlineAction({ type: 'form' });
         else { requestShiftForm(round, 'YOU'); handleEvents(); } }
@@ -2600,8 +2650,8 @@ function pollGamepad() {
       else if (round.riders[0].form !== 'cycle' && fireSources.has('gamepad'))
         setFireSource('gamepad', false);
     } else {
-      if (fresh('left')) playerTurn(-1);
-      if (fresh('right')) playerTurn(1);
+      for (const [name, direction] of Object.entries({ up: 0, right: 1, down: 2, left: 3 }))
+        if (fresh(name)) playerDirection(direction);
       if (active.has('disc') !== fireSources.has('gamepad'))
         setFireSource('gamepad', active.has('disc'));
     }
@@ -2871,12 +2921,17 @@ if (touchToggle) {
 window.matchMedia('(any-pointer: coarse)').addEventListener?.('change', syncTouchControls);
 document.getElementById('left').addEventListener('pointerdown', event => {
   event.preventDefault();
-  playerTurn(-1);
+  playerDirection(3);
 });
 document.getElementById('right').addEventListener('pointerdown', event => {
   event.preventDefault();
-  playerTurn(1);
+  playerDirection(1);
 });
+for (const [id, direction] of [['up', 0], ['down', 2]])
+  document.getElementById(id).addEventListener('pointerdown', event => {
+    event.preventDefault();
+    playerDirection(direction);
+  });
 canvas.addEventListener('pointerdown', () => {
   if (!online && mode === 'countdown') launch();
 });
@@ -2942,8 +2997,7 @@ window.addEventListener('keydown', event => {
       shiftKeys.add(action);
       syncShiftMove();
       if (round.riders[0].form === 'cycle' && !event.repeat) {
-        if (action === 'left') playerTurn(-1);
-        if (action === 'right') playerTurn(1);
+        playerDirection({ up: 0, right: 1, down: 2, left: 3 }[action]);
       }
       return;
     }
@@ -2951,12 +3005,9 @@ window.addEventListener('keydown', event => {
   if (mode === 'running' && !interactive && action === 'fire') {
     event.preventDefault();
     setFireSource('keyboard', true);
-  } else if (mode === 'running' && !interactive && action === 'left') {
+  } else if (mode === 'running' && !interactive && shiftDirection) {
     event.preventDefault();
-    playerTurn(-1);
-  } else if (mode === 'running' && !interactive && action === 'right') {
-    event.preventDefault();
-    playerTurn(1);
+    playerDirection({ up: 0, right: 1, down: 2, left: 3 }[action]);
   } else if ((action === 'pause' || event.key === 'Escape') && !editing) {
     event.preventDefault();
     pause();
@@ -2993,8 +3044,8 @@ for (const button of shiftTouch.querySelectorAll('[data-move]')) {
     if (sessionMode !== 'shift' || mode !== 'running') return;
     shiftKeys.add(move);
     syncShiftMove();
-    if (round.riders[0].form === 'cycle' && (move === 'left' || move === 'right'))
-      playerTurn(move === 'left' ? -1 : 1);
+    if (round.riders[0].form === 'cycle')
+      playerDirection({ up: 0, right: 1, down: 2, left: 3 }[move]);
   });
   const release = () => { shiftKeys.delete(move); syncShiftMove(); };
   button.addEventListener('pointerup', release);

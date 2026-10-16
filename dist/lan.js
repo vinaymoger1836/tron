@@ -174,11 +174,11 @@ function receive(view) {
 }
 const MODE_DETAILS = {
   duel: { name: 'Duel', summary: 'First rider to win three heats takes the match.',
-    rules: 'Duel: first to three heat wins. Arrow keys or A/D turn; hold E to fire up to 24 wall-cutting bullets.' },
+    rules: 'Duel: first to three heat wins. WASD or arrows steer in four directions; direct reverse is blocked. Hold E to fire.' },
   arena: { name: 'Arena', summary: 'Three heats. The most heat wins takes the match; a tie is a draw.',
-    rules: 'Arena: exactly three heats. The rider with the most heat wins takes the match. Arrow keys or A/D turn; hold E to fire.' },
-  shift: { name: 'Grid Shift', summary: 'First to three heat wins. Each heat lasts at most 90 seconds on the selected map.',
-    rules: 'Grid Shift: A/D or Left/Right steer the cycle, hold E to fire, F changes form. On foot use WASD or arrows to move and Space to throw a disc at the nearest rider. Two disc hits derez a rider. At 90 seconds, the surviving rider with the most integrity wins; ties are draws.' },
+    rules: 'Arena: exactly three heats. The rider with the most heat wins takes the match. WASD or arrows steer in four directions; hold E to fire.' },
+  shift: { name: 'Grid Shift', summary: 'First to three heat wins. The Grid begins shrinking after three minutes.',
+    rules: 'Grid Shift: WASD or arrows steer the cycle, hold E to fire, F changes form. On foot use WASD or arrows to move and Space to throw a disc at the nearest rider. Two disc hits derez a rider. The Grid shrinks after three minutes. At five minutes, the surviving rider with the most integrity wins; ties are draws.' },
 };
 function modeName(mode) { return MODE_DETAILS[mode]?.name || MODE_DETAILS.duel.name; }
 function toast(message) {
