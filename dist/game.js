@@ -4,6 +4,7 @@ import { createArenaMatch, recordArenaRound, nextArenaRound, arenaWon } from './
 import { createMatch, recordRound, nextRound, roundSeed } from './match.js';
 import { OPERATIONS, JOURNEY, getOperation } from './operations.js';
 import { createShiftRound, stepShiftRound, setShiftMove, queueShiftTurn, requestShiftForm, throwShiftDisc, setShiftFire } from './grid-shift.js';
+import { BOLT_POINTS, BOLT_TRIANGLES, drawPickupIcon } from './pickup-icons.js';
 
 const canvas = document.querySelector('#game');
 const radar = document.querySelector('#radar');
@@ -2355,6 +2356,67 @@ function bulletMesh(out, bullet) {
   box(out, bullet.x, y + .54, bullet.z, size, .15, size, c, 2);
   box(out, bullet.x, y + .04, bullet.z, size + .1, .035, size + .1, mixColor(c, .4), 2);
 }
+function pickupColumn(out, x, y, z, radius, height, color) {
+  const count = 10, top = y + height;
+  for (let index = 0; index < count; index++) {
+    const a = index * Math.PI * 2 / count;
+    const b = (index + 1) * Math.PI * 2 / count;
+    const start = [x + Math.cos(a) * radius, y, z + Math.sin(a) * radius];
+    const end = [x + Math.cos(b) * radius, y, z + Math.sin(b) * radius];
+    quad(out, start, end, [end[0], top, end[2]],
+      [start[0], top, start[2]], color, 2);
+    vertex(out, [x, top, z], color, 2);
+    vertex(out, [start[0], top, start[2]], color, 2);
+    vertex(out, [end[0], top, end[2]], color, 2);
+  }
+}
+function pickupCone(out, x, y, z, radius, height, color) {
+  const count = 10;
+  for (let index = 0; index < count; index++) {
+    const a = index * Math.PI * 2 / count;
+    const b = (index + 1) * Math.PI * 2 / count;
+    vertex(out, [x + Math.cos(a) * radius, y, z + Math.sin(a) * radius], color, 2);
+    vertex(out, [x + Math.cos(b) * radius, y, z + Math.sin(b) * radius], color, 2);
+    vertex(out, [x, y + height, z], color, 2);
+  }
+}
+function pickupMesh(out, pickup) {
+  const { x, z, type } = pickup;
+  const color = { ammo: [.25, .85, 1], nitro: [.25, 1, .4],
+    rocket: [1, .54, .18] }[type];
+  if (!color) return;
+  // A thin locator stays visible when the icon is viewed from above.
+  box(out, x, .035, z, 1.7, .06, .1, color, 2);
+  box(out, x, .035, z, .1, .06, 1.7, color, 2);
+  if (type === 'ammo') {
+    for (const offset of [-.43, 0, .43]) {
+      const px = x + offset;
+      pickupColumn(out, px, .28, z, .16, .9, color);
+      pickupCone(out, px, 1.18, z, .16, .3, [.78, .98, 1]);
+      box(out, px, .25, z, .36, .13, .36, [.08, .32, .39], 2);
+    }
+  } else if (type === 'nitro') {
+    // Crossed lightning silhouettes remain legible from every camera angle.
+    for (const axis of ['x', 'z']) {
+      for (const triangle of BOLT_TRIANGLES) {
+        for (const index of triangle) {
+          const [side, height] = BOLT_POINTS[index];
+          vertex(out, axis === 'x' ? [x + side * 1.55, .22 + height * 1.1, z]
+            : [x, .22 + height * 1.1, z + side * 1.55], color, 2);
+        }
+      }
+    }
+  } else {
+    pickupColumn(out, x, .42, z, .24, 1.18, [.65, .29, .09]);
+    pickupCone(out, x, 1.6, z, .27, .53, color);
+    pickupColumn(out, x, 1.27, z, .255, .15, color);
+    for (const side of [-1, 1]) {
+      box(out, x + side * .36, .58, z, .36, .58, .11, color, 2);
+      box(out, x, .58, z + side * .36, .11, .58, .36, color, 2);
+    }
+    box(out, x, .29, z, .2, .34, .2, [1, .82, .35], 2);
+  }
+}
 function gateMesh(out) {
   const duration=match?.roundNumber>1 ? 1.5 : 3;
   const progress=mode==='ready' ? 0 : reducedMotion.matches ? 1 : mode==='countdown'
@@ -2515,14 +2577,8 @@ function draw(renderDt) {
   gateMesh(dynamic);
   operationMesh(dynamic, scene);
   if (scene.limit < getMap(round.map).limit) boundaryMesh(dynamic, scene.limit, [1, .28, .12], 1.2);
-  for (const pickup of scene.pickups || []) if (pickup.active) {
-    const color = { ammo: [.25, .85, 1], nitro: [.25, 1, .4], rocket: [1, .54, .18] }[pickup.type];
-    const shape = pickup.type === 'nitro' ? [.46, 1.1, .46]
-      : pickup.type === 'rocket' ? [1.1, .48, .54] : [.78, .48, .78];
-    box(dynamic, pickup.x, shape[1] / 2 + .08, pickup.z,
-      shape[0], shape[1], shape[2], color, 2);
-    box(dynamic, pickup.x, .04, pickup.z, 1.25, .08, 1.25, color, 2);
-  }
+  for (const pickup of scene.pickups || []) if (pickup.active)
+    pickupMesh(dynamic, pickup);
   for (const segment of scene.segments) trailMesh(dynamic, segment, scene.time ?? scene.elapsed);
   for (const rider of scene.riders) if (rider.alive) {
     if (scene.shift && rider.form === 'foot') footMesh(dynamic, rider);
@@ -2578,13 +2634,8 @@ function drawRadar() {
     ctx.strokeStyle='#ff6d53';
     ctx.strokeRect(at(-playLimit),at(-playLimit),playLimit*2*scale,playLimit*2*scale);
   }
-  for (const pickup of scene.pickups || []) if (pickup.active) {
-    ctx.fillStyle = { ammo: '#4ddcff', nitro: '#64ff83', rocket: '#ff9c4d' }[pickup.type];
-    ctx.font = 'bold 12px Orbitron, monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText({ ammo: 'A', nitro: 'N', rocket: 'R' }[pickup.type],
-      at(pickup.x), at(pickup.z) + 4);
-  }
+  for (const pickup of scene.pickups || []) if (pickup.active)
+    drawPickupIcon(ctx, pickup.type, at(pickup.x), at(pickup.z), 17);
   ctx.fillStyle = map.palette.radar;
   for (const o of map.obstacles) {
     if (o.shape === 'circle') {

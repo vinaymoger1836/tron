@@ -1,5 +1,6 @@
-import { getMap } from './maps.js';
+﻿import { getMap } from './maps.js';
 import { createLanRound, drainEvents, queueTurn, setCycleAutoDrive, setCycleThrottle, setCycleFire, stepRound, STEP } from './simulation.js';
+import { drawPickupIcon } from './pickup-icons.js';
 
 const $ = selector => document.querySelector(selector);
 const canvas = $('#arena');
@@ -582,15 +583,8 @@ function frame() {
     ctx.fill(); ctx.stroke();
   }
   if (round) {
-    for (const pickup of round.pickups || []) if (pickup.active) {
-      ctx.fillStyle = { ammo: '#4ddcff', nitro: '#64ff83', rocket: '#ff9c4d' }[pickup.type];
-      ctx.fillRect(x(pickup.x)-7, y(pickup.z)-7, 14, 14);
-      ctx.fillStyle = '#06131b';
-      ctx.font = 'bold 11px Orbitron, monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText({ ammo: 'A', nitro: 'N', rocket: 'R' }[pickup.type],
-        x(pickup.x), y(pickup.z) + 4);
-    }
+    for (const pickup of round.pickups || []) if (pickup.active)
+      drawPickupIcon(ctx, pickup.type, x(pickup.x), y(pickup.z), 20);
     const riders = new Map(round.riders.map(r => [r.id, r]));
     for (const segment of round.segments) {
       const rider = riders.get(segment.ownerId);

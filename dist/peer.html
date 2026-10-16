@@ -44,7 +44,7 @@
   </style>
 </head>
 <body>
-  <canvas id="arena" role="img" aria-label="Top-down local peer Grid arena. A is ammo, N is nitro, R is rocket."></canvas><div class="veil"></div>
+  <canvas id="arena" role="img" aria-label="Top-down local peer Grid arena. Cartridges mark ammo, a lightning bolt marks nitro, and a rocket marks rockets."></canvas><div class="veil"></div>
   <header class="top"><a class="brand" href="./index.html">TRON <b>/</b> GRID RUN</a><div class="meta"><span class="tag">BROWSER LAN</span><span id="room-code-top">NO ROOM</span><button id="pause" type="button" hidden>PAUSE</button></div></header>
   <div class="scorebar" id="scorebar" aria-label="Match score"></div>
   <main class="panel" id="panel">
@@ -78,7 +78,7 @@
       </div>
       <div class="actions"><button class="primary" id="start" type="button" hidden>START MATCH</button><button class="secondary" id="leave" type="button">LEAVE ROOM</button></div>
       <p class="notice" id="room-notice" role="status" aria-live="polite"></p>
-      <label class="hint">AUTO DRIVE <input id="room-auto-drive" type="checkbox" checked></label><p class="hint">The host browser runs the match. Keep that tab open. First to three heat wins. A/D or Left/Right turns relative to your cycle; hold W or Up to move forward when Auto Drive is off. Hold E or Space to fire. On the arena, A marks ammo, N nitro, and R a rocket.</p>
+      <label class="hint">AUTO DRIVE <input id="room-auto-drive" type="checkbox" checked></label><p class="hint">The host browser runs the match. Keep that tab open. First to three heat wins. A/D or Left/Right turns relative to your cycle; hold W or Up to move forward when Auto Drive is off. Hold E or Space to fire. On the arena, cartridge icons mark ammo, lightning bolts mark nitro, and rockets mark rocket pickups.</p>
     </section>
   </main>
   <div id="countdown" class="countdown" hidden aria-hidden="true"></div>
