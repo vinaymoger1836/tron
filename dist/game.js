@@ -786,6 +786,7 @@ function activateMenuTab(tab, focus = true) {
     item.tabIndex = selected ? 0 : -1;
     document.getElementById(item.getAttribute('aria-controls')).hidden = !selected;
   }
+  menuHub.querySelector('.menu-hub-body').scrollTop = 0;
   if (focus) tab.focus({ preventScroll: true });
 }
 function openMenuHub() {
