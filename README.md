@@ -12,19 +12,13 @@ py -m http.server 8000 --directory dist
 
 Open [http://localhost:8000](http://localhost:8000). A local HTTP server is needed because the game uses JavaScript modules.
 
-## Play together on a local network
+## Play together from the hosted site
 
-LAN rooms are optional. On one computer connected to the same Wi-Fi or hotspot as the other players, install Node.js 20 or newer and run:
+Open the hosted game on devices connected to the same Wi-Fi or hotspot, then choose **Browser LAN Room** from the landing menu. The host chooses a map and 2, 3, or 4 seats and shares the generated room link. Each friend opens the link and copies their invite code to the host through a message. The host pastes that invite and sends the generated response code back. The friend pastes the response and connects. Repeat the exchange for each friend, then start the match. Players only need the browser and the hosted URL; no local command or install is required.
 
-```powershell
-npm run lan
-```
+The host's browser runs the authoritative fixed-step match and sends live snapshots over direct WebRTC data channels. The room link carries setup details but cannot connect a friend by itself; the two code exchanges replace a signaling server. Keep the host tab open and visible. Refreshing or closing it ends the room. If a guest disconnects, the match returns to the lobby and that friend must exchange new codes. WebRTC uses local connection candidates without a relay, so Wi-Fi networks that isolate devices or block peer connections may prevent play. Share invite and response codes privately because they contain connection details.
 
-The host prints a LAN address such as `http://192.168.1.38:8000/lan.html`. Open that address on the host and on each friend's device. Create a room for 2, 3, or 4 riders, choose a map, and share the displayed link or six-character room code. Once every seat connects, the host starts the match. Each heat uses the same fixed-step movement, trails, collisions, and 24-shot wall gun as the cycle modes. The first rider to win three heats takes the match. LAN play uses a top-down tactical view, keyboard or touch controls, host pause/resume, and a rematch button.
-
-The local host keeps the authoritative match state in memory. A page refresh reconnects to its seat in the same browser; a dropped connection holds the heat for up to 15 seconds before that rider forfeits the heat. Stopping the host process or having the host leave its room ends the session. No account, online matchmaking, cloud relay, or internet connection is needed for devices on the same reachable LAN. The host computer's firewall may need to allow Node.js on a private network. Room traffic uses HTTP on the local network; use a trusted private network.
-
-The ordinary solo site remains static and works without Node. A static deployment cannot host a LAN room by itself.
+The older optional Node LAN host remains available through `npm run lan` for those who want automatic six-character room joining on their local network. Its address is printed in the terminal. It is not required for Browser LAN Room.
 
 ## Game modes
 
@@ -32,7 +26,7 @@ The ordinary solo site remains static and works without Node. A static deploymen
 | --- | --- |
 | Duel | Face one selected rival in a first-to-three match. Choose Vanta (Hunter), Aegis (Survivor), or Knot (Trapper), and Rookie, Standard, or Expert difficulty. |
 | Arena | Play three scored heats against a rotating mix of Hunter, Survivor, and Trapper AI. Survive at least two heats to clear the match. |
-| LAN Room | Play live, local-network heats with 2-4 human riders. First to three heat wins takes the match. Requires the optional local Node host. |
+| LAN Room | Play live heats with 2-4 human riders from the hosted site using direct browser peer connections and manual invite/response codes. |
 | Operations | Play Portal Run, System Sweep, or Arena Collapse alone, or link them into a short journey with an optional Sentinel rival. Timed gates, marked scanner beams, and shrinking rings have visible warnings and exact failure messages. |
 | Grid Shift | Fight Echo in one open arena. Both fighters can ride to draw light walls and hold fire to shoot a 24-bullet mounted gun, dismount to move freely and throw a returning disc, and remount in clear space. Two disc hits derez a rider; the 90-second lockout uses remaining integrity. |
 | Daily Signal | Play an offline, first-to-three Duel with a fixed seed, map, rival, and Standard difficulty for the UTC date. The rules version and seed are shown before play. Replays that day use the same setup; the daily best and recent results are saved locally. |
@@ -48,9 +42,9 @@ Operations show their objective, remaining time, progress, and hazard warnings i
 
 ## Settings and progress
 
-The landing menu keeps mode, difficulty, map, and rule choices visible. Its corner settings button opens Settings, Grid Archive, and Run Archive tabs. The Settings tab offers unlocked trail looks, separate effects and music volume, Close/Standard/Far camera distance, Chase/Tactical camera views, High/Low graphics, render scale, steady or cinematic camera motion, flash intensity, a Reduce flashes option, and visible caption cues. Steady camera motion keeps the arena north-up. Touch controls have normal or large buttons and edge, compact, or raised placement. Optional standard-layout gamepad controls use the left stick or D-pad to steer, A to confirm/change form, hold B to fire the mounted gun in any cycle mode or throw the disc on foot, and Start to pause. Rival trails have distinct stripe positions in the world and dash patterns on radar, so color is not the only cue. The game also respects your browser's reduced-motion preference. The game saves these preferences, mode choices, touch-control choice, a separate local best for each Duel/Arena/Grid Shift mode, map, difficulty, and wall rule, and operation completion/bests in your browser's local storage. Older best scores remain stored and are shown as legacy scores in the menu. The Run Archive stores up to eight recent results, a short finish highlight when storage allows, personal records, and skill badges. Settings can be reset separately, or **Clear Local Data** removes this browser's game preferences, progress, scores, and run history after confirmation. The game still runs when browser storage is unavailable, but new data cannot be saved. There is no account or online leaderboard. Local LAN PvP uses the optional host.
+The landing menu keeps mode, difficulty, map, and rule choices visible. Its corner settings button opens Settings, Grid Archive, and Run Archive tabs. The Settings tab offers unlocked trail looks, separate effects and music volume, Close/Standard/Far camera distance, Chase/Tactical camera views, High/Low graphics, render scale, steady or cinematic camera motion, flash intensity, a Reduce flashes option, and visible caption cues. Steady camera motion keeps the arena north-up. Touch controls have normal or large buttons and edge, compact, or raised placement. Optional standard-layout gamepad controls use the left stick or D-pad to steer, A to confirm/change form, hold B to fire the mounted gun in any cycle mode or throw the disc on foot, and Start to pause. Rival trails have distinct stripe positions in the world and dash patterns on radar, so color is not the only cue. The game also respects your browser's reduced-motion preference. The game saves these preferences, mode choices, touch-control choice, a separate local best for each Duel/Arena/Grid Shift mode, map, difficulty, and wall rule, and operation completion/bests in your browser's local storage. Older best scores remain stored and are shown as legacy scores in the menu. The Run Archive stores up to eight recent results, a short finish highlight when storage allows, personal records, and skill badges. Settings can be reset separately, or **Clear Local Data** removes this browser's game preferences, progress, scores, and run history after confirmation. The game still runs when browser storage is unavailable, but new data cannot be saved. There is no account or online leaderboard. Browser LAN PvP uses manual peer codes; the optional Node host offers automatic local room codes.
 
-Solo play works without a gameplay server. LAN rooms use the optional local host described above. Optional Google Fonts are loaded from Google when a network connection is available.
+Solo play works without a gameplay server. Browser LAN rooms work from the hosted site; the separate Node host is optional. Optional Google Fonts are loaded from Google when a network connection is available.
 
 ## Deploy on Vercel
 
@@ -76,7 +70,8 @@ Vercel documents this setup for [static sites without a build step](https://verc
 - `dist/operations.js` - solo mission definitions, objectives, warnings, and cosmetic rewards.
 - `dist/grid-shift.js` - two-form combat, shared human/AI collisions and disc rules, and Echo tactics.
 - `tests/` — Node.js tests for simulation and match behavior.
-- `dist/lan.html` and `dist/lan.js` — LAN room UI and tactical renderer.
+- `dist/peer.html` and `dist/peer.js` - browser peer room UI, manual connection codes, and tactical renderer.
+- `dist/lan.html` and `dist/lan.js` - optional Node LAN room UI and tactical renderer.
 - `lan-server.mjs` — optional dependency-free LAN HTTP host and authoritative room loop.
 
 To run the available tests, use:
@@ -87,7 +82,7 @@ node --test tests/*.test.mjs
 
 ## Project status
 
-Duel, offline Daily Signal (rules version 2), a 24-bullet mounted gun in every mode, a local run archive, remappable controls, optional gamepad input, comfort settings, three-heat Arena, three maps, three solo operations, a linked journey, Grid Shift two-form combat, a playable cycle lesson, mixed AI riders, cinematic scenery, procedural music/effects, camera views, and crash replays are implemented. Grid Shift currently has one arena, one mounted gun, one returning disc, and one AI rival; broader weapons and hybrid missions remain playtest candidates. Online PvP remains future scope; local LAN rooms are available through the optional host.
+Duel, offline Daily Signal (rules version 2), a 24-bullet mounted gun in every mode, a local run archive, remappable controls, optional gamepad input, comfort settings, three-heat Arena, three maps, three solo operations, a linked journey, Grid Shift two-form combat, a playable cycle lesson, mixed AI riders, cinematic scenery, procedural music/effects, camera views, and crash replays are implemented. Grid Shift currently has one arena, one mounted gun, one returning disc, and one AI rival; broader weapons and hybrid missions remain playtest candidates. Browser LAN rooms support 2-4 local peers from the hosted site through manual codes. The optional Node host supports automatic local room codes. Internet matchmaking remains future scope.
 
 This is an unofficial fan project inspired by TRON. It is not affiliated with or endorsed by Disney.
 
