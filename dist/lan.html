@@ -15,7 +15,7 @@
     .veil{position:fixed;inset:0;pointer-events:none;background:linear-gradient(180deg,#020710d9,transparent 22%,transparent 70%,#020710d9)}
     .top{position:fixed;z-index:2;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;gap:15px;padding:18px calc(24px + env(safe-area-inset-right)) 12px calc(24px + env(safe-area-inset-left));background:#03101fc9;border-bottom:1px solid #296679}
     .brand{font:700 13px Orbitron,monospace;letter-spacing:.17em;color:#6ee9ff;text-decoration:none}.brand b{color:#fff}.meta{display:flex;gap:12px;align-items:center;font:700 11px Orbitron,monospace;letter-spacing:.08em;color:#c4e8ef}.tag{padding:6px 9px;border:1px solid #438da0;background:#061d2b}.top button{border:1px solid #4b9caf;background:#092638;color:#e7fbff;padding:7px 11px;font:700 10px Orbitron,monospace}
-    .scorebar{position:fixed;z-index:2;top:70px;left:24px;right:24px;display:flex;gap:7px;flex-wrap:wrap;pointer-events:none}.score{border:1px solid #315c6b;background:#041622d9;padding:6px 9px;font:700 11px Orbitron,monospace;letter-spacing:.04em}.score.self{border-color:#adf2ff}.score.out{opacity:.55}.score span{color:#9dceda}
+    .scorebar{position:fixed;z-index:2;top:70px;left:24px;right:24px;display:flex;gap:7px;flex-wrap:wrap;pointer-events:none}.score{border:1px solid #315c6b;background:#041622d9;padding:6px 9px;font:700 11px Orbitron,monospace;letter-spacing:.04em}.score.self{border-color:#adf2ff}.score.out{opacity:.55}.score span{color:#9dceda}.score.timer{border-color:#e8b76d;color:#ffe6bd}
     .panel{position:fixed;z-index:3;left:clamp(16px,5vw,70px);top:50%;transform:translateY(-50%);width:min(455px,calc(100vw - 32px));max-height:calc(100dvh - 100px);overflow:auto;overscroll-behavior:contain;background:#041321f2;border:1px solid #58bcd1;box-shadow:0 0 45px #00bfff33;padding:22px 24px}
     .eyebrow{color:#6ce7f7;font:700 10px Orbitron,monospace;letter-spacing:.25em;text-transform:uppercase;margin:0 0 10px}.panel h1{font:800 clamp(30px,5vw,50px)/1.04 Orbitron,monospace;letter-spacing:-.04em;margin:0 0 14px;color:#f0fdff}.panel h1 span{color:#59e5ff}.intro,.message{font-size:17px;line-height:1.35;color:#c4e2e9;margin:0 0 15px}.message{font-size:14px}
     .fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}.fields label{display:flex;flex-direction:column;gap:5px;color:#9ccbd5;font:700 10px Orbitron,monospace;letter-spacing:.08em}.fields label.wide{grid-column:1/-1}.fields input,.fields select,.share input{width:100%;min-width:0;border:1px solid #488ea0;background:#071e2e;color:#eafcff;padding:11px 9px;font:600 16px Rajdhani,Arial,sans-serif}.fields input{text-transform:none}.fields #join-code{text-transform:uppercase;letter-spacing:.12em}
@@ -26,8 +26,9 @@
     .notice{min-height:1.4em;color:#ffd897;font-weight:700;margin:10px 0 0}.notice.error{color:#ffb1a8}
     .touch{display:none;position:fixed;z-index:2;bottom:calc(19px + env(safe-area-inset-bottom));left:0;right:0;justify-content:space-between;gap:9px;padding:0 calc(20px + env(safe-area-inset-right)) 0 calc(20px + env(safe-area-inset-left));pointer-events:none}.touch button{pointer-events:auto;min-width:72px;height:67px;border:1px solid #68dce9;background:#08283cdb;color:#e3fbff;font:700 11px Orbitron,monospace;touch-action:none}.touch #fire{border-color:#ffd69c;color:#ffe7bf}.touch button:active{background:#1a5b74}.touch[hidden]{display:none!important}
     .countdown{position:fixed;z-index:2;top:50%;left:50%;transform:translate(-50%,-50%);font:800 clamp(80px,20vw,180px) Orbitron,monospace;text-shadow:0 0 35px #43daff;color:#e8fdff;pointer-events:none}
+    .action-toast{position:fixed;z-index:3;top:145px;left:50%;transform:translateX(-50%);max-width:min(360px,90vw);margin:0;padding:8px 12px;border:1px solid #e2a871;background:#28180ee8;color:#fff0d7;font:700 12px Rajdhani,Arial,sans-serif;text-align:center;pointer-events:none}
     .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-    @media(any-pointer:coarse){.touch:not([hidden]){display:flex}}
+    @media(any-pointer:coarse){.touch:not([hidden]){display:flex}.touch.shift:not([hidden]){display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}.touch.shift button{width:100%;min-width:0;height:52px;font-size:10px}}
     @media(max-width:640px){.top{padding:12px 14px}.brand{font-size:10px;letter-spacing:.08em}.meta{gap:5px;font-size:9px}.meta .tag{padding:5px}.top button{font-size:9px;padding:6px}.scorebar{top:57px;left:10px;right:10px}.score{font-size:9px;padding:4px 6px}.panel{top:82px;left:10px;transform:none;width:calc(100vw - 20px);max-height:calc(100dvh - 102px);padding:18px}.panel h1{font-size:32px}.intro{font-size:15px}.touch button{min-width:0;flex:1;height:62px}.touch{padding:0 10px}.hint{font-size:12px}}
     @media(max-height:500px){.panel{top:60px;transform:none;max-height:calc(100dvh - 68px)}.scorebar{display:none}.touch button{height:44px}.touch{bottom:8px}}
     @media(prefers-reduced-motion:reduce){.primary,.countdown{box-shadow:none;text-shadow:none}}
@@ -43,7 +44,8 @@
     <section id="setup">
       <p class="eyebrow" id="room-eyebrow">Play with friends online</p><h1 id="room-heading">ONLINE <span>ROOM</span></h1>
       <p class="intro" id="room-intro">Create a room and share its six-digit code. Friends open this site and enter the code to join.</p>
-      <div class="fields"><label class="wide">YOUR RIDER NAME<input id="name" maxlength="18" autocomplete="nickname" value="Rider"></label><label>PLAYERS<select id="players"><option value="2">2 players</option><option value="3">3 players</option><option value="4">4 players</option></select></label><label>MAP<select id="map"><option value="classic">Classic Grid</option><option value="solar">Solar Circuit</option><option value="vault">Data Vault</option></select></label></div>
+      <div class="fields"><label class="wide">YOUR RIDER NAME<input id="name" maxlength="18" autocomplete="nickname" value="Rider"></label><label class="wide">GAME MODE<select id="create-mode"><option value="duel">Duel / first to 3</option><option value="arena">Arena / 3 heats</option><option value="shift">Grid Shift / two forms</option></select></label><label>PLAYERS<select id="players"><option value="2">2 players</option><option value="3">3 players</option><option value="4">4 players</option></select></label><label>MAP<select id="map"><option value="classic">Classic Grid</option><option value="solar">Solar Circuit</option><option value="vault">Data Vault</option></select></label></div>
+      <p class="hint" id="create-mode-tip">The host can change the mode in the waiting room.</p>
       <div class="actions"><button class="primary" id="create" type="button">CREATE ROOM</button></div>
       <hr class="divider"><div class="fields"><label class="wide">JOIN ROOM CODE<input id="join-code" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" autocomplete="off" spellcheck="false" placeholder="000000"></label></div>
       <div class="actions"><button class="secondary" id="join" type="button">JOIN ROOM</button></div>
@@ -53,15 +55,18 @@
     <section id="room" hidden>
       <p class="eyebrow" id="room-phase">Waiting room</p><h1 id="room-title">GRID <span>OPEN</span></h1>
       <p class="message" id="room-message"></p>
-      <ul class="roster" id="roster" aria-label="Players and wins"></ul>
+      <div class="fields" id="host-mode-field"><label class="wide">GAME MODE<select id="room-mode"><option value="duel">Duel / first to 3</option><option value="arena">Arena / 3 heats</option><option value="shift">Grid Shift / two forms</option></select></label></div>
+      <p class="hint" id="mode-summary"></p>
+      <ul class="roster" id="roster" aria-label="Players and score"></ul>
       <div class="room-code-card" id="online-code" hidden><label for="room-code-large">SHARE THIS SIX-DIGIT CODE</label><div class="share"><input id="room-code-large" readonly aria-label="Six-digit room code"><button class="secondary" id="copy-code" type="button">COPY CODE</button></div></div><div id="local-share"><label class="hint" for="share-link">ROOM LINK</label><div class="share"><input id="share-link" readonly aria-label="Room link"><button class="secondary" id="copy-link" type="button">COPY</button></div></div>
       <div class="actions"><button class="primary" id="start" type="button" hidden>START MATCH</button><button class="secondary" id="leave" type="button">LEAVE ROOM</button></div>
       <p class="notice" id="room-notice" role="status" aria-live="polite"></p>
-      <p class="hint">First rider to win three heats takes the match. Arrow keys or A/D turn. Hold E or Space to fire up to 24 wall-cutting bullets. On touch screens use the controls below.</p>
+      <p class="hint" id="room-rules">Duel: first to three heat wins. Arrow keys or A/D turn; hold E to fire up to 24 wall-cutting bullets. Touch controls appear below during play.</p>
     </section>
   </main>
   <div id="countdown" class="countdown" hidden aria-hidden="true"></div>
-  <div class="touch" id="touch" hidden><button id="left" type="button" aria-label="Turn left">TURN LEFT</button><button id="fire" type="button" aria-label="Hold to fire wall gun">FIRE</button><button id="right" type="button" aria-label="Turn right">TURN RIGHT</button></div>
+  <div class="touch" id="touch" hidden><button id="up" type="button" aria-label="Move up on foot" hidden>UP</button><button id="left" type="button" aria-label="Turn left or move left">LEFT</button><button id="down" type="button" aria-label="Move down on foot" hidden>DOWN</button><button id="right" type="button" aria-label="Turn right or move right">RIGHT</button><button id="form" type="button" aria-label="Dismount or remount" hidden>FORM</button><button id="fire" type="button" aria-label="Hold to fire wall gun">FIRE</button><button id="disc" type="button" aria-label="Throw disc on foot" hidden>DISC</button></div>
+  <p id="action-toast" class="action-toast" role="status" aria-live="polite" hidden></p>
   <div class="sr-only" id="status-live" role="status" aria-live="polite" aria-atomic="true"></div>
   <script type="module" src="./lan.js"></script>
 </body>

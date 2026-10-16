@@ -1,4 +1,5 @@
 ﻿import { createRound, STEP } from './simulation.js';
+import { getMap, spawnClear } from './maps.js';
 
 const DIR = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 const EPS = 1e-8;
@@ -96,14 +97,28 @@ function safeMount(round, rider) {
   return round.riders.every(other => other === rider || !other.alive ||
     Math.hypot(other.x - rider.x, other.z - rider.z) > 1.55);
 }
-export function createShiftRound({ seed = 1, difficulty = 'standard' } = {}) {
+export function createShiftRound({ seed = 1, difficulty = 'standard',
+  playerIds = null, roundNumber = 1 } = {}) {
+  if (playerIds && (playerIds.length < 2 || playerIds.length > 4 ||
+      new Set(playerIds).size !== playerIds.length))
+    throw new RangeError('Grid Shift requires two to four distinct riders');
+  const layout = getMap('classic');
+  const colors = [[.15, .88, 1], [1, .47, .18], [.75, .3, 1], [1, .73, .2]];
+  const styles = ['player', 'hunter', 'survivor', 'trapper'];
+  const spawns = playerIds?.length === 2 ? layout.spawns.duel : layout.spawns.arena;
+  const rotation = (Math.max(1, roundNumber) - 1) % (spawns?.length || 1);
+  const riders = playerIds ? playerIds.map((id, index) => {
+    const spawn = spawns[(index + rotation) % spawns.length];
+    if (!spawnClear(layout, spawn)) throw new Error('Unsafe Grid Shift spawn');
+    return { id, ...spawn, color: colors[index], style: styles[index],
+      controller: 'none', isPlayer: false };
+  }) : [
+    { id: 'YOU', x: -8, z: 16, dir: 0, isPlayer: true, controller: 'none' },
+    { id: 'ECHO', x: 8, z: -16, dir: 2, controller: 'none',
+      style: 'hunter', color: [1, .47, .18] },
+  ];
   const round = createRound({ seed, map: 'classic', difficulty,
-    riders: [
-      { id: 'YOU', x: -8, z: 16, dir: 0, isPlayer: true, controller: 'none' },
-      { id: 'ECHO', x: 8, z: -16, dir: 2, controller: 'none',
-        style: 'hunter', color: [1, .47, .18] },
-    ],
-  });
+    riders, multiplayer: Boolean(playerIds) });
   round.shift = { discs: [], bullets: [], timeLimit: TIME_LIMIT, aiIntent: 'reading lanes' };
   for (const rider of round.riders) {
     rider.form = 'cycle';
@@ -157,8 +172,8 @@ export function requestShiftForm(round, id) {
       round.events.push({ type: 'shift-denied', riderId: id, reason: 'No clear dismount lane' });
       return false;
     }
-    const other = round.riders.find(r => r !== rider && r.alive);
-    if (other && Math.hypot(other.x - (rider.x + dx), other.z - (rider.z + dz)) < 1) {
+    if (round.riders.some(other => other !== rider && other.alive &&
+        Math.hypot(other.x - (rider.x + dx), other.z - (rider.z + dz)) < 1)) {
       round.events.push({ type: 'shift-denied', riderId: id, reason: 'Rival blocks dismount' });
       return false;
     }
@@ -194,7 +209,9 @@ export function throwShiftDisc(round, id) {
   if (!rider || !rider.alive || rider.form !== 'foot' || round.outcome ||
       round.elapsed < rider.discReadyAt || round.elapsed < rider.recoveryUntil ||
       round.shift.discs.some(d => d.ownerId === id)) return false;
-  const target = round.riders.find(r => r !== rider && r.alive);
+  const target = round.riders.filter(r => r !== rider && r.alive)
+    .sort((a, b) => Math.hypot(a.x - rider.x, a.z - rider.z) -
+      Math.hypot(b.x - rider.x, b.z - rider.z))[0];
   const vx = target ? target.x - rider.x : DIR[rider.dir][0];
   const vz = target ? target.z - rider.z : DIR[rider.dir][1];
   const length = Math.hypot(vx, vz) || 1;
@@ -255,11 +272,12 @@ function moveBullet(round, bullet) {
   if (travel <= 0) return false;
   const dx = bullet.vx * travel, dz = bullet.vz * travel;
   const hit = worldHit(round, null, bullet.x, bullet.z, dx, dz, .12);
-  const target = round.riders.find(r => r.id !== bullet.ownerId && r.alive);
-  const riderHit = target && boxHit(bullet.x, bullet.z, dx, dz,
-    target.x - RADIUS[target.form] - .12, target.x + RADIUS[target.form] + .12,
-    target.z - RADIUS[target.form] - .12, target.z + RADIUS[target.form] + .12);
-  if (riderHit !== null && riderHit !== undefined && (!hit || riderHit < hit.t)) {
+  const riderHit = round.riders.filter(r => r.id !== bullet.ownerId && r.alive)
+    .map(target => boxHit(bullet.x, bullet.z, dx, dz,
+      target.x - RADIUS[target.form] - .12, target.x + RADIUS[target.form] + .12,
+      target.z - RADIUS[target.form] - .12, target.z + RADIUS[target.form] + .12))
+    .filter(t => t !== null).sort((a, b) => a - b)[0];
+  if (riderHit !== undefined && (!hit || riderHit < hit.t)) {
     round.events.push({ type: 'bullet-blocked', riderId: bullet.ownerId, reason: 'rider' });
     return false;
   }
@@ -359,7 +377,6 @@ function aiDecision(round, rider) {
 function moveDisc(round, disc) {
   const owner = round.riders.find(r => r.id === disc.ownerId);
   if (!owner) return false;
-  const target = round.riders.find(r => r !== owner && r.alive);
   disc.age += STEP;
   if (!disc.returning && disc.age >= 1.15) disc.returning = true;
   if (disc.returning) {
@@ -374,11 +391,15 @@ function moveDisc(round, disc) {
   }
   const dx = disc.vx * SPEED.disc * STEP, dz = disc.vz * SPEED.disc * STEP;
   const impact = disc.returning ? null : worldHit(round, null, disc.x, disc.z, dx, dz, .16);
-  if (impact) disc.returning = true;
-  if (!disc.returning && target &&
-      boxHit(disc.x, disc.z, dx, dz,
-        target.x - RADIUS[target.form] - .24, target.x + RADIUS[target.form] + .24,
-        target.z - RADIUS[target.form] - .24, target.z + RADIUS[target.form] + .24) !== null) {
+  const targetHit = disc.returning ? null : round.riders
+    .filter(r => r !== owner && r.alive)
+    .map(rider => ({ rider, t: boxHit(disc.x, disc.z, dx, dz,
+      rider.x - RADIUS[rider.form] - .24, rider.x + RADIUS[rider.form] + .24,
+      rider.z - RADIUS[rider.form] - .24, rider.z + RADIUS[rider.form] + .24) }))
+    .filter(hit => hit.t !== null).sort((a, b) => a.t - b.t)[0];
+  const target = targetHit && (!impact || targetHit.t <= impact.t + EPS)
+    ? targetHit.rider : null;
+  if (target) {
     target.hp--;
     disc.returning = true;
     round.events.push({ type: 'disc-hit', riderId: target.id, by: owner.id,
@@ -391,12 +412,13 @@ function moveDisc(round, disc) {
         by: owner.id, x: target.x, z: target.z });
     }
   }
-  if (!impact) { disc.x += dx; disc.z += dz; }
+  if (impact) disc.returning = true;
+  else { disc.x += dx; disc.z += dz; }
   return true;
 }
 export function stepShiftRound(round) {
   if (round.outcome) return round;
-  const ai = round.riders.find(r => !r.isPlayer);
+  const ai = round.multiplayer ? null : round.riders.find(r => !r.isPlayer);
   if (ai?.alive) aiDecision(round, ai);
   for (const rider of round.riders) {
     if (!rider.alive || rider.form !== 'cycle' || !rider.pendingTurn) continue;
@@ -420,13 +442,20 @@ export function stepShiftRound(round) {
     return { rider, dx, dz,
       hit: worldHit(round, rider, rider.x, rider.z, dx, dz, RADIUS[rider.form]) };
   });
-  if (moves.length === 2) {
-    const hit = actorHit(moves[0].rider, moves[1].rider,
-      moves[0].dx, moves[0].dz, moves[1].dx, moves[1].dz);
-    if (hit !== null && moves.every(move => !move.hit || hit <= move.hit.t + EPS))
-      for (const move of moves) move.hit = { t: hit, reason: 'rider',
-        by: moves.find(m => m !== move).rider.id };
-  }
+  const actorCollisions = [];
+  for (let a = 0; a < moves.length; a++)
+    for (let b = a + 1; b < moves.length; b++) {
+      const hit = actorHit(moves[a].rider, moves[b].rider,
+        moves[a].dx, moves[a].dz, moves[b].dx, moves[b].dz);
+      if (hit !== null) actorCollisions.push({ a, b, t: hit });
+    }
+  actorCollisions.sort((a, b) => a.t - b.t);
+  for (const { a, b, t } of actorCollisions)
+    if ((!moves[a].hit || t <= moves[a].hit.t + EPS) &&
+        (!moves[b].hit || t <= moves[b].hit.t + EPS)) {
+      moves[a].hit = { t, reason: 'rider', by: moves[b].rider.id };
+      moves[b].hit = { t, reason: 'rider', by: moves[a].rider.id };
+    }
   for (const { rider, dx, dz, hit } of moves) {
     const fraction = hit ? Math.max(0, Math.min(1, hit.t)) : 1;
     rider.x += dx * fraction; rider.z += dz * fraction;
@@ -445,6 +474,21 @@ export function stepShiftRound(round) {
   round.shift.discs = round.shift.discs.filter(disc => moveDisc(round, disc));
   round.tick++;
   round.elapsed = round.tick * STEP;
+  if (round.multiplayer) {
+    const alive = round.riders.filter(r => r.alive);
+    if (alive.length <= 1)
+      round.outcome = { kind: alive.length ? 'won' : 'draw',
+        winnerId: alive[0]?.id || null, reason: 'last-rider' };
+    else if (round.elapsed >= TIME_LIMIT) {
+      const best = Math.max(...alive.map(r => r.hp));
+      const leaders = alive.filter(r => r.hp === best);
+      round.outcome = { kind: leaders.length === 1 ? 'won' : 'draw',
+        winnerId: leaders.length === 1 ? leaders[0].id : null, reason: 'timeout' };
+    }
+    if (round.outcome)
+      round.events.push({ type: 'round-end', ...round.outcome, score: round.score });
+    return round;
+  }
   const player = round.riders.find(r => r.isPlayer);
   const rival = round.riders.find(r => !r.isPlayer);
   if (!player.alive && !rival.alive) round.outcome = { kind: 'draw', reason: 'mutual' };

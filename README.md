@@ -14,9 +14,11 @@ Open [http://localhost:8000](http://localhost:8000). A local HTTP server is need
 
 ## Play together online
 
-Deploy this repository as one persistent HTTPS game server, then open that server's URL on every player's device. On the landing page choose **Online Room**. The host chooses a map and 2, 3, or 4 seats, creates the room, and shares the displayed six-digit numeric code. Friends open the same site, enter the code, and join. The host starts when every seat is connected. Players do not run a local command or exchange WebRTC codes.
+Deploy this repository as one persistent HTTPS game server, then open that server's URL on every player's device. On the landing page choose **Online Room**. The host chooses Duel, Arena, or Grid Shift, a map, and 2, 3, or 4 seats, creates the room, and shares the displayed six-digit numeric code. The host can change the mode in the waiting room before starting. Friends open the same site, enter the code, and join. The host starts when every seat is connected. Grid Shift uses Classic Grid. Players do not run a local command or exchange WebRTC codes.
 
-The server runs the authoritative fixed-step simulation and streams match state to every browser. It stores active rooms only in memory. Run one server instance; restarting it ends open rooms. A dropped connection pauses a heat for up to 15 seconds while that player reconnects. The first rider to win three heats takes the match. There are no accounts or permanent online scores.
+The server runs the authoritative fixed-step simulation and streams match state to every browser. It stores active rooms only in memory. Run one server instance; restarting it ends open rooms. A dropped connection pauses a heat for up to 15 seconds while that player reconnects. Duel and Grid Shift go to three heat wins. Arena ends after exactly three heats; the rider with the most heat wins takes the match, and equal top scores draw. Grid Shift heats last at most 90 seconds; the surviving rider with the most integrity wins on timeout, with ties drawing. There are no accounts or permanent online scores.
+
+In online Duel and Arena, use Left/Right Arrow or A/D to steer and hold E or Space to fire wall-cutting bullets. In online Grid Shift, steer the cycle with Left/Right Arrow or A/D, hold E to fire, press F to dismount or remount, move on foot with WASD or the arrow keys, and press Space to throw a disc toward the nearest rider. On touch screens, Grid Shift adds direction, FORM, FIRE, and DISC buttons. Only the host can pause an online heat.
 
 The older optional local host is still available through `npm run lan` and uses six-character room codes on a private network. The browser-only manual peer room remains at `peer.html` for static hosting.
 
@@ -26,7 +28,7 @@ The older optional local host is still available through `npm run lan` and uses 
 | --- | --- |
 | Duel | Face one selected rival in a first-to-three match. Choose Vanta (Hunter), Aegis (Survivor), or Knot (Trapper), and Rookie, Standard, or Expert difficulty. |
 | Arena | Play three scored heats against a rotating mix of Hunter, Survivor, and Trapper AI. Survive at least two heats to clear the match. |
-| Online Room | Play live first-to-three matches with 2-4 human riders. The host shares one six-digit numeric room code. |
+| Online Room | Play Duel, three-heat Arena, or Grid Shift with 2-4 human riders. The host chooses the mode before starting and shares one six-digit numeric room code. |
 | Operations | Play Portal Run, System Sweep, or Arena Collapse alone, or link them into a short journey with an optional Sentinel rival. Timed gates, marked scanner beams, and shrinking rings have visible warnings and exact failure messages. |
 | Grid Shift | Fight Echo in one open arena. Both fighters can ride to draw light walls and hold fire to shoot a 24-bullet mounted gun, dismount to move freely and throw a returning disc, and remount in clear space. Two disc hits derez a rider; the 90-second lockout uses remaining integrity. |
 | Daily Signal | Play an offline, first-to-three Duel with a fixed seed, map, rival, and Standard difficulty for the UTC date. The rules version and seed are shown before play. Replays that day use the same setup; the daily best and recent results are saved locally. |
@@ -50,7 +52,7 @@ Solo play remains usable as a static site. Online rooms require the persistent g
 
 Run this repository as **one persistent Node.js 20+ or Docker web service** with HTTPS at the public edge. The included `Dockerfile` starts the full site and room server. On Render, the server uses `RENDER_EXTERNAL_URL` automatically. On another host, set `TRON_PUBLIC_ORIGIN` to the exact public HTTPS origin, such as `https://grid.example.com`, without a trailing path. The host platform supplies `PORT`; the Docker image defaults to port 10000, and direct Node startup defaults to port 8000. Use `npm start` when deploying without Docker. Configure one instance and a service that does not sleep during a match. The health endpoint is `/healthz`.
 
-Give players that public URL. The entire game, room API, and live match stream are served from it. This online mode cannot run on a static-only Vercel deployment because it needs a continuously running match process. A separate Vercel static deployment can still run solo play and the manual browser peer room; its landing menu detects that no online room server is available.
+Give players that public URL. The entire game, room API, and live match stream are served from it. This online mode cannot run on a static-only Vercel deployment because it needs a continuously running match process. The Vercel static landing page links Online Room to the Render game server; solo play stays available on Vercel, and the manual browser peer room remains at peer.html.
 
 To exercise the online server locally as the site owner:
 

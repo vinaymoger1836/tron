@@ -6,6 +6,8 @@ import { randomBytes, randomInt } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createLanRound, drainEvents, queueTurn, setCycleFire, stepRound, STEP } from './dist/simulation.js';
 import { MAPS } from './dist/maps.js';
+import { createShiftRound, queueShiftTurn, requestShiftForm, setShiftFire,
+  setShiftMove, stepShiftRound, throwShiftDisc } from './dist/grid-shift.js';
 
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dist');
 const STATIC = new Set(['index.html', 'lan.html', 'lan.js', 'peer.html', 'peer.js', 'game.js', 'simulation.js',
@@ -17,6 +19,7 @@ const SNAPSHOT_MS = 50;
 const ROOM_LIMIT = 24;
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const DIGITS = '0123456789';
+const MODES = new Set(['duel', 'arena', 'shift']);
 const rooms = new Map();
 const roomAttempts = new Map();
 let lastAttemptPrune = 0;
@@ -104,7 +107,8 @@ function snapshot(room, selfId) {
   const round = room.round;
   return {
     code: room.code, phase: room.phase, selfId, hostId: room.hostId,
-    maxPlayers: room.maxPlayers, map: room.map, roundNumber: room.roundNumber,
+    maxPlayers: room.maxPlayers, map: room.mode === 'shift' ? 'classic' : room.map,
+    mode: room.mode, roundNumber: room.roundNumber,
     countdownMs: room.phase === 'countdown' ? Math.max(0, room.deadline - Date.now()) : 0,
     waitMs: room.phase === 'connection-wait' ? Math.max(0, room.deadline - Date.now()) : 0,
     result: room.result, players: room.players.map(p => ({
@@ -113,10 +117,16 @@ function snapshot(room, selfId) {
     round: round ? {
       tick: round.tick, elapsed: round.elapsed, limit: round.limit, map: round.map,
       riders: round.riders.map(r => ({ id: r.id, x: r.x, z: r.z, dir: r.dir,
-        color: r.color, style: r.style, alive: r.alive, ammo: r.ammo })),
+        color: r.color, style: r.style, alive: r.alive, ammo: r.ammo,
+        form: r.form || 'cycle', hp: r.hp ?? null,
+        formReadyAt: r.formReadyAt ?? null, discReadyAt: r.discReadyAt ?? null })),
       segments: round.segments.map(s => ({ id: s.id, ownerId: s.ownerId,
         x1: s.x1, z1: s.z1, x2: s.x2, z2: s.z2, active: s.active })),
-      bullets: round.bullets.map(b => ({ ownerId: b.ownerId, x: b.x, z: b.z })),
+      bullets: (round.shift?.bullets || round.bullets)
+        .map(b => ({ ownerId: b.ownerId, x: b.x, z: b.z })),
+      shift: round.shift ? { timeLimit: round.shift.timeLimit,
+        discs: round.shift.discs.map(d => ({ ownerId: d.ownerId, x: d.x, z: d.z,
+          returning: d.returning })) } : null,
       crashes: room.crashes,
     } : null,
   };
@@ -132,9 +142,10 @@ function broadcast(room) {
 }
 function nextRound(room) {
   room.roundNumber++;
-  room.round = createLanRound({ seed: randomInt(0x100000000),
-    playerIds: room.players.map(p => p.id), map: room.map,
-    roundNumber: room.roundNumber });
+  const options = { seed: randomInt(0x100000000),
+    playerIds: room.players.map(p => p.id), roundNumber: room.roundNumber };
+  room.round = room.mode === 'shift' ? createShiftRound(options)
+    : createLanRound({ ...options, map: room.map });
   room.crashes = [];
   room.result = null;
   room.phase = 'countdown';
@@ -147,11 +158,17 @@ function finishRound(room) {
   const winnerId = room.round.outcome?.winnerId || null;
   const winner = room.players.find(p => p.id === winnerId);
   if (winner) winner.wins++;
+  const matchComplete = room.mode === 'arena' ? room.roundNumber >= 3 : winner?.wins >= 3;
+  const best = Math.max(...room.players.map(p => p.wins));
+  const leaders = room.players.filter(p => p.wins === best);
+  const champion = matchComplete && (room.mode !== 'arena' || leaders.length === 1)
+    ? (room.mode === 'arena' ? leaders[0] : winner) : null;
   room.result = {
     winnerId, winnerName: winner?.name || null, crashes: room.crashes,
-    matchWinnerId: winner?.wins >= 3 ? winnerId : null,
+    matchWinnerId: champion?.id || null, matchWinnerName: champion?.name || null,
+    matchDraw: Boolean(matchComplete && !champion),
   };
-  room.phase = room.result.matchWinnerId ? 'match-result' : 'round-result';
+  room.phase = matchComplete ? 'match-result' : 'round-result';
   room.round.riders.forEach(r => { r.fireHeld = false; });
   broadcast(room);
 }
@@ -180,7 +197,8 @@ function tickRoom(room, now) {
         const rider = room.round.riders.find(r => r.id === p.id);
         if (rider?.alive) {
           rider.alive = false;
-          rider.segment.active = false;
+          if (rider.segment) rider.segment.active = false;
+          rider.fireHeld = false;
           room.crashes.push({ riderId: p.id, reason: 'disconnect' });
         }
       }
@@ -208,7 +226,8 @@ function tickRoom(room, now) {
   room.lastTickAt = now;
   let steps = 0;
   while (room.accumulator >= STEP && steps < 16 && !room.round.outcome) {
-    stepRound(room.round);
+    if (room.mode === 'shift') stepShiftRound(room.round);
+    else stepRound(room.round);
     for (const event of drainEvents(room.round))
       if (event.type === 'crash') room.crashes.push({
         riderId: event.riderId, reason: event.reason, by: event.by || null });
@@ -258,8 +277,10 @@ async function handleApi(req, res, pathname) {
     if (!Number.isInteger(maxPlayers) || maxPlayers < 2 || maxPlayers > 4)
       return fail(res, 400, 'Choose 2, 3, or 4 players.');
     if (!Object.hasOwn(MAPS, body.map)) return fail(res, 400, 'Unknown map.');
+    const mode = body.mode ?? 'duel';
+    if (!MODES.has(mode)) return fail(res, 400, 'Unknown game mode.');
     const host = createPlayer('P1', body.name);
-    const room = { code: code(), map: body.map, maxPlayers, hostId: host.id,
+    const room = { code: code(), map: body.map, mode, maxPlayers, hostId: host.id,
       players: [host], phase: 'lobby', round: null, roundNumber: 0,
       result: null, crashes: [], touched: Date.now(), lastBroadcast: 0,
       lastTickAt: performance.now(), accumulator: 0 };
@@ -299,6 +320,14 @@ async function handleApi(req, res, pathname) {
   }
   if (route[2] === 'action' && req.method === 'POST') {
     const body = await readJson(req);
+    if (body.type === 'mode') {
+      if (player.id !== room.hostId) return fail(res, 403, 'Only the host selects the mode.');
+      if (room.phase !== 'lobby') return fail(res, 409, 'Choose a mode before starting.');
+      if (!MODES.has(body.mode)) return fail(res, 400, 'Unknown game mode.');
+      room.mode = body.mode;
+      broadcast(room);
+      return json(res, 200, { ok: true });
+    }
     if (body.type === 'pause') {
       if (player.id !== room.hostId) return fail(res, 403, 'Only the host can pause.');
       if (room.phase === 'paused') {
@@ -335,9 +364,23 @@ async function handleApi(req, res, pathname) {
     if (player.lastInputAt !== second) { player.lastInputAt = second; player.inputCount = 0; }
     if (++player.inputCount > 40) return fail(res, 429, 'Too many inputs.');
     if (body.type === 'turn' && (body.sign === -1 || body.sign === 1)) {
-      queueTurn(room.round, player.id, body.sign);
+      if (room.mode === 'shift') queueShiftTurn(room.round, player.id, body.sign);
+      else queueTurn(room.round, player.id, body.sign);
     } else if (body.type === 'fire' && typeof body.held === 'boolean') {
-      setCycleFire(room.round, player.id, body.held);
+      if (room.mode === 'shift') setShiftFire(room.round, player.id, body.held);
+      else setCycleFire(room.round, player.id, body.held);
+    } else if (room.mode === 'shift' && body.type === 'move' &&
+        Number.isFinite(body.x) && Number.isFinite(body.z) &&
+        Math.abs(body.x) <= 1 && Math.abs(body.z) <= 1) {
+      setShiftMove(room.round, player.id, body.x, body.z);
+    } else if (room.mode === 'shift' && body.type === 'form') {
+      if (!requestShiftForm(room.round, player.id))
+        return fail(res, 409, room.round.events.at(-1)?.reason || 'Form unavailable.');
+      broadcast(room);
+    } else if (room.mode === 'shift' && body.type === 'disc') {
+      if (!throwShiftDisc(room.round, player.id))
+        return fail(res, 409, 'Dismount or wait for your disc to return.');
+      broadcast(room);
     } else return fail(res, 400, 'Unknown input.');
     return json(res, 200, { ok: true });
   }

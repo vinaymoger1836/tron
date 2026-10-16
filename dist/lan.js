@@ -11,7 +11,8 @@ const state = {
   code: null, selfId: null, view: null, online: false,
   baseUrl: location.origin + '/lan.html',
   streamAbort: null, reconnectTimer: null, reconnecting: false,
-  heldFire: false, lastPhase: null, lastRound: 0, leaving: false,
+  heldFire: false, moveKeys: new Set(), lastMove: '0,0',
+  lastPhase: null, lastRound: 0, leaving: false, toastTimer: null,
 };
 function notice(message, error = false, target = '#room-notice') {
   const element = $(target);
@@ -47,6 +48,11 @@ function resetToSetup(message = '') {
   state.selfId = null;
   state.view = null;
   state.heldFire = false;
+  state.moveKeys.clear();
+  state.lastMove = '0,0';
+  state.lastMovePhase = null;
+  clearTimeout(state.toastTimer);
+  $('#action-toast').hidden = true;
   state.lastPhase = null;
   state.reconnecting = false;
   panel.hidden = false;
@@ -62,7 +68,9 @@ async function createRoom() {
   $('#create').disabled = true;
   try {
     const result = await post('/api/rooms', {
-      name: $('#name').value, maxPlayers: Number($('#players').value), map: $('#map').value,
+      name: $('#name').value, maxPlayers: Number($('#players').value),
+      map: $('#create-mode').value === 'shift' ? 'classic' : $('#map').value,
+      mode: $('#create-mode').value,
     });
     enterRoom(result);
   } catch (error) { notice(error.message, true, '#setup-notice'); }
@@ -139,28 +147,62 @@ function receive(view) {
     state.lastPhase = key;
     if (view.phase !== 'running') state.heldFire = false;
     if (view.phase === 'running') {
-      announce('Heat ' + view.roundNumber + ' started. Turn into open lanes.');
+      announce('Heat ' + view.roundNumber + ' started in ' + modeName(view.mode) + '.');
       canvas.focus({ preventScroll: true });
     } else if (view.phase === 'round-result' || view.phase === 'match-result') {
-      const who = view.result?.winnerId === view.selfId ? 'You won' :
-        view.result?.winnerName ? view.result.winnerName + ' won' : 'The heat was a draw';
-      announce(who + (view.phase === 'match-result' ? ' the match.' : ' the heat.'));
+      const match = view.phase === 'match-result';
+      const winningId = match ? view.result?.matchWinnerId : view.result?.winnerId;
+      const winningName = match ? view.result?.matchWinnerName : view.result?.winnerName;
+      const who = winningId === view.selfId ? 'You won' :
+        winningName ? winningName + ' won' : 'The heat was a draw';
+      announce(match && view.result?.matchDraw ? 'The match ended in a draw.' :
+        who + (match ? ' the match.' : ' the heat.'));
     } else if (view.phase === 'connection-wait') {
       announce('Connection interrupted. The match is waiting.');
     }
   }
   renderUi(view);
+  if (view.phase === 'running' && key !== state.lastMovePhase) {
+    state.lastMovePhase = key;
+    state.lastMove = '';
+    syncMove();
+  }
+}
+const MODE_DETAILS = {
+  duel: { name: 'Duel', summary: 'First rider to win three heats takes the match.',
+    rules: 'Duel: first to three heat wins. Arrow keys or A/D turn; hold E to fire up to 24 wall-cutting bullets.' },
+  arena: { name: 'Arena', summary: 'Three heats. The most heat wins takes the match; a tie is a draw.',
+    rules: 'Arena: exactly three heats. The rider with the most heat wins takes the match. Arrow keys or A/D turn; hold E to fire.' },
+  shift: { name: 'Grid Shift', summary: 'First to three heat wins. Each heat lasts at most 90 seconds on Classic Grid.',
+    rules: 'Grid Shift: A/D or Left/Right steer the cycle, hold E to fire, F changes form. On foot use WASD or arrows to move and Space to throw a disc at the nearest rider. Two disc hits derez a rider. At 90 seconds, the surviving rider with the most integrity wins; ties are draws.' },
+};
+function modeName(mode) { return MODE_DETAILS[mode]?.name || MODE_DETAILS.duel.name; }
+function toast(message) {
+  const element = $('#action-toast');
+  element.textContent = message;
+  element.hidden = !message;
+  announce(message);
+  clearTimeout(state.toastTimer);
+  if (message) state.toastTimer = setTimeout(() => { element.hidden = true; }, 2200);
 }
 function renderUi(view) {
   document.body.dataset.phase = view.phase;
+  document.body.dataset.mode = view.mode || 'duel';
   document.body.dataset.round = String(view.roundNumber);
   const active = view.phase === 'running';
+  const mode = view.mode || 'duel';
+  const shift = mode === 'shift';
+  const selfRider = view.round?.riders.find(r => r.id === view.selfId);
   const waiting = view.phase === 'connection-wait';
   const showPanel = !active && view.phase !== 'countdown';
   panel.hidden = !showPanel;
   setup.hidden = true;
   roomSection.hidden = !showPanel;
   $('#touch').hidden = !active;
+  $('#touch').classList.toggle('shift', shift);
+  for (const id of ['up', 'down', 'form', 'disc']) $('#' + id).hidden = !shift;
+  $('#fire').disabled = shift && selfRider?.form === 'foot';
+  $('#disc').disabled = !shift || selfRider?.form !== 'foot';
   $('#countdown').hidden = view.phase !== 'countdown';
   if (view.phase === 'countdown')
     $('#countdown').textContent = String(Math.max(1, Math.ceil(view.countdownMs / 1000)));
@@ -175,7 +217,14 @@ function renderUi(view) {
     'round-result': 'HEAT COMPLETE', 'match-result': 'MATCH COMPLETE',
     paused: 'HOST PAUSED', 'connection-wait': 'CONNECTION HELD',
   };
-  $('#room-phase').textContent = labels[view.phase] || 'GAME ROOM';
+  $('#room-phase').textContent = active ? 'LIVE ' + modeName(mode).toUpperCase()
+    : labels[view.phase] || 'GAME ROOM';
+  $('#host-mode-field').hidden = !host || view.phase !== 'lobby';
+  $('#room-mode').value = mode;
+  $('#mode-summary').textContent = modeName(mode) + ' / ' + MODE_DETAILS[mode].summary +
+    (shift ? ' Map: Classic Grid.' : ' Map: ' + getMap(view.map).name + '.');
+  $('#room-rules').textContent = MODE_DETAILS[mode].rules +
+    ' Touch controls appear below during play.';
   $('#room-title').innerHTML = view.phase === 'match-result'
     ? 'GRID <span>SECURED</span>' : view.phase === 'round-result'
       ? 'HEAT <span>ENDED</span>' : 'GRID <span>OPEN</span>';
@@ -192,14 +241,20 @@ function renderUi(view) {
       const rider = view.players.find(p => p.id === crash.riderId);
       return (rider?.name || crash.riderId) + ': ' + crash.reason;
     }).join(' / ');
+    const finish = view.phase === 'match-result'
+      ? lastResult?.matchDraw ? ' The match is a draw.'
+        : ' ' + lastResult?.matchWinnerName + ' won the ' + modeName(mode) + ' match.'
+      : ' Prepare for the next heat.';
     message = (lastResult?.winnerId ? who + ' won heat ' + view.roundNumber :
-      'Heat ' + view.roundNumber + ' was a draw') + '. ' +
-      (cause ? cause + '.' : 'All riders derezzed together.') +
-      (view.phase === 'match-result' ? ' First to three complete.' : ' Prepare for the next heat.');
+      'Heat ' + view.roundNumber + ' was a draw') + '.' +
+      (cause ? ' ' + cause + '.' : '') + finish;
   } else if (view.phase === 'paused') message = 'The host paused the Grid. All riders are held.';
   else if (waiting) message = 'Waiting up to ' + Math.ceil(view.waitMs / 1000) +
     ' seconds for a rider to reconnect. The simulation is stopped.';
-  else message = 'Heat ' + view.roundNumber + ' / ' + getMap(view.map).name + '.';
+  else message = modeName(mode) + ' / Heat ' + view.roundNumber + ' / ' +
+    getMap(view.map).name + (shift && view.round ?
+      ' / ' + Math.max(0, Math.ceil(view.round.shift.timeLimit - view.round.elapsed)) +
+      ' seconds left.' : '.');
   $('#room-message').textContent = message;
   $('#share-link').value = state.baseUrl + '?room=' + view.code;
   const list = $('#roster');
@@ -210,29 +265,43 @@ function renderUi(view) {
     const label = document.createElement('span');
     label.textContent = player.name + (player.id === view.selfId ? ' / YOU' : '');
     const record = document.createElement('small');
-    record.textContent = player.wins + ' WINS / ' +
+    record.textContent = player.wins + (mode === 'arena' ? ' HEAT WINS / ' : ' WINS / ') +
       (player.connected ? 'CONNECTED' : 'OFFLINE');
     item.append(label, record);
     list.append(item);
   }
   const scores = $('#scorebar');
   scores.replaceChildren();
+  if (shift && view.round) {
+    const timer = document.createElement('div');
+    timer.className = 'score timer';
+    timer.textContent = Math.max(0, Math.ceil(view.round.shift.timeLimit -
+      view.round.elapsed)) + 's LEFT';
+    scores.append(timer);
+  }
   for (const player of view.players) {
     const item = document.createElement('div');
     item.className = 'score' + (player.id === view.selfId ? ' self' : '') +
       (view.round?.riders.find(r => r.id === player.id)?.alive === false ? ' out' : '');
     const rider = view.round?.riders.find(r => r.id === player.id);
-    item.textContent = player.name + ' ' + player.wins + '/3';
+    item.textContent = player.name + ' ' + player.wins +
+      (mode === 'arena' ? ' PT' : '/3');
     if (rider) {
-      const ammo = document.createElement('span');
-      ammo.textContent = '  •  ' + (rider.alive ? rider.ammo + ' SHOTS' : 'DEREZZED');
-      item.append(ammo);
+      const status = document.createElement('span');
+      const discOut = shift && view.round.shift.discs.some(d => d.ownerId === rider.id);
+      const disc = discOut ? 'DISC OUT' :
+        view.round.elapsed >= rider.discReadyAt ? 'DISC READY' : 'DISC RECHARGING';
+      status.textContent = '  /  ' + (!rider.alive ? 'DEREZZED' : shift
+        ? rider.form.toUpperCase() + ' / ' + rider.hp + ' HP / ' +
+          (rider.form === 'cycle' ? rider.ammo + ' SHOTS' : disc)
+        : rider.ammo + ' SHOTS');
+      item.append(status);
     }
     scores.append(item);
   }
   $('#start').hidden = !host || !['lobby', 'round-result', 'match-result'].includes(view.phase);
   $('#start').disabled = !full;
-  $('#start').textContent = view.phase === 'lobby' ? 'START MATCH' :
+  $('#start').textContent = view.phase === 'lobby' ? 'START ' + modeName(mode).toUpperCase() :
     view.phase === 'match-result' ? 'REMATCH' : 'NEXT HEAT';
   if (!full && host && !waiting) notice('Waiting for all ' + view.maxPlayers + ' riders.');
   else if (!state.reconnecting) notice('');
@@ -241,18 +310,38 @@ async function action(value) {
   if (!state.code) return;
   try { await post(roomPath('action'), value); }
   catch (error) {
-    if (value.type === 'turn' || value.type === 'fire') return;
+    if (['turn', 'fire', 'move'].includes(value.type)) return;
     notice(error.message, true);
+    toast(error.message);
   }
 }
+function ownRider() {
+  return state.view?.round?.riders.find(r => r.id === state.selfId);
+}
 function turn(sign) {
-  if (state.view?.phase === 'running' && !state.reconnecting) action({ type: 'turn', sign });
+  if (state.view?.phase !== 'running' || state.reconnecting) return;
+  if (state.view.mode === 'shift' && ownRider()?.form !== 'cycle') return;
+  action({ type: 'turn', sign });
 }
 function fire(held) {
+  if (held && state.view?.mode === 'shift' && ownRider()?.form !== 'cycle') return;
   if (state.heldFire === held) return;
   state.heldFire = held;
   if (state.view?.phase === 'running' && !state.reconnecting)
     action({ type: 'fire', held });
+}
+function syncMove() {
+  if (state.view?.mode !== 'shift' || state.view.phase !== 'running' ||
+      state.reconnecting) return;
+  const keys = state.moveKeys;
+  const x = Number(keys.has('right')) - Number(keys.has('left'));
+  const z = Number(keys.has('down')) - Number(keys.has('up'));
+  const length = Math.hypot(x, z);
+  const vector = length > 1 ? { x: x / length, z: z / length } : { x, z };
+  const value = vector.x + ',' + vector.z;
+  if (state.lastMove === value) return;
+  state.lastMove = value;
+  action({ type: 'move', ...vector });
 }
 function interactiveFocus() {
   return document.activeElement?.matches('input,select,button,a,textarea');
@@ -321,6 +410,11 @@ function frame() {
       ctx.fillStyle = '#ffe6a5';
       ctx.beginPath(); ctx.arc(x(bullet.x), y(bullet.z), 3, 0, Math.PI * 2); ctx.fill();
     }
+    for (const disc of round.shift?.discs || []) {
+      ctx.strokeStyle = disc.returning ? '#fff1c9' : '#ffcf8d';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(x(disc.x), y(disc.z), 6, 0, Math.PI * 2); ctx.stroke();
+    }
     for (const rider of round.riders) {
       if (!rider.alive) continue;
       const px = x(rider.x), py = y(rider.z);
@@ -332,19 +426,39 @@ function frame() {
       ctx.strokeStyle = rider.id === view.selfId ? '#fff' : '#aacbd0';
       ctx.lineWidth = rider.id === view.selfId ? 3 : 1.5;
       ctx.beginPath();
-      ctx.moveTo(0, -10); ctx.lineTo(7, 8); ctx.lineTo(0, 4); ctx.lineTo(-7, 8);
-      ctx.closePath(); ctx.fill(); ctx.stroke();
+      if (rider.form === 'foot') {
+        ctx.arc(0, 0, 7, 0, Math.PI * 2);
+      } else {
+        ctx.moveTo(0, -10); ctx.lineTo(7, 8); ctx.lineTo(0, 4); ctx.lineTo(-7, 8);
+        ctx.closePath();
+      }
+      ctx.fill(); ctx.stroke();
+      if (rider.form === 'foot') {
+        ctx.fillStyle = '#041321';
+        ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI * 2); ctx.fill();
+      }
       ctx.restore();
       const label = view.players.find(p => p.id === rider.id);
       ctx.font = '700 12px Rajdhani, Arial, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = '#edfcff';
-      ctx.fillText(rider.id === view.selfId ? 'YOU' : label?.name || rider.id, px, py - 15);
+      ctx.fillText((rider.id === view.selfId ? 'YOU' : label?.name || rider.id) +
+        (rider.form === 'foot' ? ' / FOOT' : ''), px, py - 15);
     }
   }
   requestAnimationFrame(frame);
 }
 $('#create').addEventListener('click', createRoom);
+$('#create-mode').addEventListener('change', () => {
+  const shift = $('#create-mode').value === 'shift';
+  $('#map').disabled = shift;
+  if (shift) $('#map').value = 'classic';
+  $('#create-mode-tip').textContent = shift
+    ? 'Grid Shift uses Classic Grid. The host can still change mode in the waiting room.'
+    : 'The host can change the mode in the waiting room.';
+});
+$('#room-mode').addEventListener('change', event =>
+  action({ type: 'mode', mode: event.currentTarget.value }));
 $('#join').addEventListener('click', joinRoom);
 $('#join-code').addEventListener('keydown', event => { if (event.key === 'Enter') joinRoom(); });
 $('#start').addEventListener('click', () => action({ type: 'start' }));
@@ -368,24 +482,57 @@ $('#copy-link').addEventListener('click', async () => {
 $('#leave').addEventListener('click', async () => {
   state.leaving = true;
   fire(false);
+  state.moveKeys.clear();
+  syncMove();
   try { await post(roomPath('leave'), {}); } catch {}
   history.replaceState(null, '', './lan.html');
   resetToSetup('You left the room.');
 });
-$('#left').addEventListener('pointerdown', event => { event.preventDefault(); turn(-1); });
-$('#right').addEventListener('pointerdown', event => { event.preventDefault(); turn(1); });
+for (const [id, direction] of [['up', 'up'], ['left', 'left'],
+  ['down', 'down'], ['right', 'right']]) {
+  const button = $('#' + id);
+  button.addEventListener('pointerdown', event => {
+    event.preventDefault();
+    button.setPointerCapture(event.pointerId);
+    state.moveKeys.add(direction);
+    syncMove();
+    if (direction === 'left' || direction === 'right')
+      turn(direction === 'left' ? -1 : 1);
+  });
+  const release = () => { state.moveKeys.delete(direction); syncMove(); };
+  for (const event of ['pointerup', 'pointercancel', 'lostpointercapture'])
+    button.addEventListener(event, release);
+}
+$('#form').addEventListener('click', () => action({ type: 'form' }));
+$('#disc').addEventListener('click', () => action({ type: 'disc' }));
 $('#fire').addEventListener('pointerdown', event => {
   event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); fire(true);
 });
 for (const event of ['pointerup', 'pointercancel', 'lostpointercapture'])
   $('#fire').addEventListener(event, () => fire(false));
+const directionKeys = {
+  ArrowUp: 'up', w: 'up', W: 'up', ArrowLeft: 'left', a: 'left', A: 'left',
+  ArrowDown: 'down', s: 'down', S: 'down', ArrowRight: 'right', d: 'right', D: 'right',
+};
 document.addEventListener('keydown', event => {
   if (interactiveFocus()) return;
-  if (!event.repeat && ['ArrowLeft', 'a', 'A'].includes(event.key)) {
+  const shift = state.view?.mode === 'shift' && state.view.phase === 'running';
+  const direction = directionKeys[event.key];
+  if (shift && direction) {
+    event.preventDefault();
+    state.moveKeys.add(direction);
+    syncMove();
+    if (!event.repeat && (direction === 'left' || direction === 'right'))
+      turn(direction === 'left' ? -1 : 1);
+  } else if (shift && !event.repeat && ['f', 'F'].includes(event.key)) {
+    event.preventDefault(); action({ type: 'form' });
+  } else if (shift && !event.repeat && event.key === ' ') {
+    event.preventDefault(); action({ type: 'disc' });
+  } else if (!event.repeat && direction === 'left') {
     event.preventDefault(); turn(-1);
-  } else if (!event.repeat && ['ArrowRight', 'd', 'D'].includes(event.key)) {
+  } else if (!event.repeat && direction === 'right') {
     event.preventDefault(); turn(1);
-  } else if (['e', 'E', ' '].includes(event.key)) {
+  } else if (['e', 'E'].includes(event.key) || (!shift && event.key === ' ')) {
     event.preventDefault(); fire(true);
   } else if (!event.repeat && ['p', 'P'].includes(event.key) &&
       state.view?.selfId === state.view?.hostId) {
@@ -393,10 +540,20 @@ document.addEventListener('keydown', event => {
   }
 });
 document.addEventListener('keyup', event => {
-  if (['e', 'E', ' '].includes(event.key)) fire(false);
+  const direction = directionKeys[event.key];
+  if (direction) { state.moveKeys.delete(direction); syncMove(); }
+  if (['e', 'E'].includes(event.key) ||
+      (state.view?.mode !== 'shift' && event.key === ' ')) fire(false);
 });
-window.addEventListener('blur', () => fire(false));
-document.addEventListener('visibilitychange', () => { if (document.hidden) fire(false); });
+function releaseControls() {
+  fire(false);
+  state.moveKeys.clear();
+  syncMove();
+}
+window.addEventListener('blur', releaseControls);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) releaseControls();
+});
 const roomFromUrl = new URLSearchParams(location.search).get('room')?.toUpperCase();
 if (roomFromUrl && /^[A-Z0-9]{6}$/.test(roomFromUrl)) $('#join-code').value = roomFromUrl;
 (async () => {
