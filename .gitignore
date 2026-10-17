@@ -100,3 +100,6 @@ Thumbs.db
 /dist/downloads/
 *.keystore
 *.jks
+
+.vercel
+.env*
