@@ -1,0 +1,4 @@
+# Upload only the static site and its staged APK with Vercel CLI.
+/*
+!dist
+!vercel.json

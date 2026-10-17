@@ -12,6 +12,22 @@ py -m http.server 8000 --directory dist
 
 Open [http://localhost:8000](http://localhost:8000). A local HTTP server is needed because the game uses JavaScript modules.
 
+## Android APK download on Vercel
+
+The landing page shows an **Android Preview** download when the deployed site contains a matching APK and release manifest. The current Phase 0 APK is a development build of the movement/rendering probe; it has not yet passed physical Galaxy M35 validation and is not the Arena MVP or a Play Store release.
+
+From the repository root, stage each new phase build and deploy the complete static site to the **existing** Vercel project:
+
+```powershell
+node scripts/stage-android-apk.mjs 0 0.0.1 android-game/Builds/Android/grid-run-phase0.apk
+npx --yes vercel deploy --dry
+npx --yes vercel deploy --prod
+```
+
+For later phases, replace `0`, `0.0.1`, and the APK path with that phase's number, version, and verified build. Run `npx --yes vercel login` and `npx --yes vercel link` once if this checkout is not yet linked; select the **existing website project**. Use the repository root as the Vercel project root. The repository `vercel.json` serves `dist/` with no build, and `.vercelignore` uploads only `dist/` and its configuration. Review `npx --yes vercel deploy --dry` before production deployment: it must list `dist/downloads/grid-run-android.apk` and must not list Unity project files, evidence, or secrets. After deployment, open the production page and confirm the phase/version and APK download. The APK and manifest are intentionally Git-ignored. A Git-triggered deployment cannot include them, so repeat the staging and CLI deployment after each website release that should keep the APK available.
+
+The current staged payload is about 76.8 MB, within Vercel Hobby's documented 100 MB CLI source upload limit. Check that limit and the dry-run size as later APKs grow. Vercel bandwidth usage may also increase with downloads. Downloaded development APKs require Android's manual installation flow; Play Store distribution later uses a separate signed release process.
+
 ## Play together online
 
 Deploy this repository as one persistent HTTPS game server, then open that server's URL on every player's device. On the landing page choose **Online Room**. The host chooses Duel, Arena, or Grid Shift, a map, and 2, 3, or 4 seats, creates the room, and shares the displayed six-digit numeric code. The host can change the mode and map in the waiting room before starting; Arena also offers persistent or ten-second fading walls. Friends open the same site, enter the code, and join. The host starts when every seat is connected. All three maps are available in Grid Shift. Players do not run a local command or exchange WebRTC codes.

@@ -10,11 +10,18 @@
 *.pem
 *.p12
 *.pfx
+*.p8
+*.mobileprovision
+*.hprof
+*.dmp
 *.key
 id_rsa*
 id_ed25519*
-credentials.json
-service-account*.json
+*credentials*.json
+*service-account*.json
+google-services.json
+GoogleService-Info.plist
+local.properties
 *.local
 
 # Local data
@@ -54,11 +61,42 @@ chrome-profile/
 .sites-checkout-*/
 *.tar.gz
 *.zip
+*.apk
+*.aab
 
 # Logs, editors, and operating systems
 *.log
 npm-debug.log*
+*.tmp
+*.bak
+*.orig
+*.rej
+*.swp
+*.swo
+*~
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Unity Android project (keep Assets, Packages, ProjectSettings and .meta files)
+/android-game/[Ll]ibrary/
+/android-game/.utmp/
+/android-game/.gradle/
+/android-game/[Tt]emp/
+/android-game/[Oo]bj/
+/android-game/[Ll]ogs/
+/android-game/[Bb]uild/
+/android-game/[Bb]uilds/
+/android-game/[Uu]ser[Ss]ettings/
+/android-game/[Mm]emoryCaptures/
+/android-game/[Rr]ecordings/
+/android-game/.vs/
+/android-game/*.csproj
+/android-game/*.sln
+/android-game/*.slnx
+/android-game/*.pidb
+/android-game/*.user
+/dist/downloads/
+*.keystore
+*.jks
