@@ -6,7 +6,7 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/GridRun/Scenes/PhaseZero.unity
-    guid: af5a92bfd554c3343903167f48fef449
+    path: Assets/GridRun/Scenes/PhaseOneArena.unity
+    guid: 6c30255b84daf754183f1e12e30d0b01
   m_configObjects: {}
   m_UseUCBPForAssetBundles: 0
