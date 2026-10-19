@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -60,7 +60,8 @@ namespace GridRun
         private void Pointer(string name, bool down)
         {
             var data = new PointerEventData(EventSystem.current) { pointerId = 77 };
-            ExecuteEvents.Execute(Control(name), data, down ? ExecuteEvents.pointerDownHandler : ExecuteEvents.pointerUpHandler);
+            if (down) ExecuteEvents.Execute(Control(name), data, ExecuteEvents.pointerDownHandler);
+            else ExecuteEvents.Execute(Control(name), data, ExecuteEvents.pointerUpHandler);
         }
         private IEnumerator CaptureLayout(string file, int width, int height)
         {
