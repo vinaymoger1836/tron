@@ -115,6 +115,7 @@ namespace GridRun
             Submit("Auto Drive");
             yield return new WaitForSecondsRealtime(8);
             Check("A crash produces a result", GameObject.Find("Result") != null);
+            yield return CaptureLayout("result-phone.png", 1170, 540);
             Submit("Next Heat");
             yield return null;
             Check("Next heat restarts playable Arena", GameObject.Find("Result") == null && player.position.z < -20);

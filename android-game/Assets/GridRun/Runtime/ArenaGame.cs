@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.Rendering;
@@ -12,6 +12,7 @@ namespace GridRun
         [SerializeField] private Material floorMaterial, gridMaterial, wallMaterial, cycleMaterial, glowMaterial, amberMaterial;
         private readonly ArenaMatch match = new ArenaMatch();
         private readonly List<Transform> trailVisuals = new List<Transform>();
+        private readonly Transform[] boundaryVisuals = new Transform[8];
         private Transform playerVisual, rivalVisual;
         private Camera view;
         private Font font;
@@ -84,12 +85,13 @@ namespace GridRun
                 Box("Grid X", new Vector3(i, -.035f, 0), new Vector3(.035f, .02f, 96), gridMaterial, transform);
                 Box("Grid Z", new Vector3(0, -.035f, i), new Vector3(96, .02f, .035f), gridMaterial, transform);
             }
-            foreach (int sign in new[] { -1, 1 })
+            for (int edge = 0; edge < 2; edge++)
             {
-                Box("Wall X", new Vector3(sign * 49, 1, 0), new Vector3(.4f, 2, 100), wallMaterial, transform);
-                Box("Wall Z", new Vector3(0, 1, sign * 49), new Vector3(100, 2, .4f), wallMaterial, transform);
-                Box("Edge X", new Vector3(sign * 49, 2.1f, 0), new Vector3(.45f, .12f, 100), glowMaterial, transform);
-                Box("Edge Z", new Vector3(0, 2.1f, sign * 49), new Vector3(100, .12f, .45f), glowMaterial, transform);
+                int sign = edge == 0 ? -1 : 1;
+                boundaryVisuals[edge * 4] = Box("Wall X", new Vector3(sign * 49, 1, 0), new Vector3(.4f, 2, 100), wallMaterial, transform).transform;
+                boundaryVisuals[edge * 4 + 1] = Box("Wall Z", new Vector3(0, 1, sign * 49), new Vector3(100, 2, .4f), wallMaterial, transform).transform;
+                boundaryVisuals[edge * 4 + 2] = Box("Edge X", new Vector3(sign * 49, 2.1f, 0), new Vector3(.45f, .12f, 100), glowMaterial, transform).transform;
+                boundaryVisuals[edge * 4 + 3] = Box("Edge Z", new Vector3(0, 2.1f, sign * 49), new Vector3(100, .12f, .45f), glowMaterial, transform).transform;
             }
             playerVisual = Bike("Player cycle", cycleMaterial, glowMaterial);
             rivalVisual = Bike("Rival cycle", amberMaterial, amberMaterial);
@@ -201,6 +203,8 @@ namespace GridRun
         private void ShowLanding()
         {
             playing = false; paused = false;
+            match.NewMatch();
+            ClearTrails();
             if (forward != null) forward.Clear();
             playHud.SetActive(false); resultPanel.SetActive(false); pausePanel.SetActive(false); landing.SetActive(true);
             SnapCamera();
@@ -257,7 +261,7 @@ namespace GridRun
             if (!playing) return;
             score.text = $"YOU {match.PlayerScore}  :  {match.OpponentScore} RIVAL   /   HEAT {match.Heat}";
             status.text = match.Elapsed >= ArenaMatch.ShrinkStartsAt ? "BOUNDARY CLOSING" :
-                match.Elapsed >= ArenaMatch.ShrinkStartsAt - 10 ? "WARNING: BOUNDARY CLOSES IN 10 SECONDS" :
+                match.Elapsed >= ArenaMatch.ShrinkStartsAt - 10 ? "WARNING: BOUNDARY CLOSES IN " + Mathf.CeilToInt(ArenaMatch.ShrinkStartsAt - match.Elapsed) + " SECONDS" :
                 autoDrive ? "AUTO DRIVE  /  AVOID LIGHT TRAILS" : "MANUAL DRIVE  /  HOLD FORWARD TO MOVE";
         }
 
@@ -280,7 +284,10 @@ namespace GridRun
             PositionBike(playerVisual, match.Player);
             PositionBike(rivalVisual, match.Opponent);
             SyncTrails();
-            var target = playerVisual.position + new Vector3(0, 24, -25);
+            SyncBoundary();
+            // Move away from the wall on a crash so near-field boundary geometry
+            // cannot cover the result card while the player is at the edge.
+            var target = match.HeatEnded ? new Vector3(0, 55, -55) : playerVisual.position + new Vector3(0, 24, -25);
             view.transform.position = Vector3.Lerp(view.transform.position, target, 1 - Mathf.Exp(-7 * Time.deltaTime));
             view.transform.rotation = Quaternion.Euler(45, 0, 0);
         }
@@ -303,6 +310,24 @@ namespace GridRun
                 visual.GetComponent<Renderer>().sharedMaterial = trail.Owner == 0 ? glowMaterial : amberMaterial;
                 visual.position = new Vector3((trail.X0 + trail.X1) * .5f, .55f, (trail.Z0 + trail.Z1) * .5f);
                 visual.localScale = new Vector3(Mathf.Max(.28f, Mathf.Abs(trail.X1 - trail.X0)), 1.05f, Mathf.Max(.28f, Mathf.Abs(trail.Z1 - trail.Z0)));
+            }
+        }
+
+        private void SyncBoundary()
+        {
+            float extent = match.Limit + .4f;
+            float span = match.Limit * 2 + 1;
+            for (int edge = 0; edge < 2; edge++)
+            {
+                int sign = edge == 0 ? -1 : 1;
+                boundaryVisuals[edge * 4].localPosition = new Vector3(sign * extent, 1, 0);
+                boundaryVisuals[edge * 4].localScale = new Vector3(.4f, 2, span);
+                boundaryVisuals[edge * 4 + 1].localPosition = new Vector3(0, 1, sign * extent);
+                boundaryVisuals[edge * 4 + 1].localScale = new Vector3(span, 2, .4f);
+                boundaryVisuals[edge * 4 + 2].localPosition = new Vector3(sign * extent, 2.1f, 0);
+                boundaryVisuals[edge * 4 + 2].localScale = new Vector3(.45f, .12f, span);
+                boundaryVisuals[edge * 4 + 3].localPosition = new Vector3(0, 2.1f, sign * extent);
+                boundaryVisuals[edge * 4 + 3].localScale = new Vector3(span, .12f, .45f);
             }
         }
 
