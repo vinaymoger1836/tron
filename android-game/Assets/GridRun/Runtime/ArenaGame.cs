@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.SceneManagement;
 using UnityEngine.Rendering;
 using UnityEngine.UI;
 
@@ -191,7 +192,12 @@ namespace GridRun
             autoText = Button("Auto Drive", "AUTO: ON", hud, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-36, 210), new Vector2(280, 85), ToggleAuto).GetComponentInChildren<Text>();
             Label("Control hint", "A/D or arrows: steer  |  W: forward  |  Esc: pause", hud, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 205), new Vector2(900, 60), 23, TextAnchor.MiddleCenter);
             landing = Overlay("Landing", safe.transform, "GRID RUN  /  ARENA", "Offline Arena vs AI\nFirst to three heats wins. Avoid walls and both light trails.\nSteer with LEFT / RIGHT; Auto Drive starts on.");
-            Button("Start Arena", "START ARENA", landing.transform, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 45), new Vector2(440, 95), StartMatch);
+            bool onlineAvailable = Application.CanStreamedLevelBeLoaded("PhaseTwoOnline");
+            Button("Start Arena", "START ARENA", landing.transform, new Vector2(.5f, 0), new Vector2(.5f, 0),
+                new Vector2(onlineAvailable ? -225 : 0, 45), new Vector2(420, 95), StartMatch);
+            if (onlineAvailable)
+                Button("Online Room", "ONLINE ROOM", landing.transform, new Vector2(.5f, 0), new Vector2(.5f, 0),
+                    new Vector2(225, 45), new Vector2(420, 95), () => SceneManager.LoadScene("PhaseTwoOnline"));
             resultPanel = Overlay("Result", safe.transform, "HEAT COMPLETE", "");
             resultText = resultPanel.transform.Find("Result details").GetComponent<Text>();
             Button("Next Heat", "NEXT HEAT", resultPanel.transform, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 45), new Vector2(440, 95), NextHeat);
