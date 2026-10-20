@@ -198,6 +198,9 @@ namespace GridRun
             if (onlineAvailable)
                 Button("Online Room", "ONLINE ROOM", landing.transform, new Vector2(.5f, 0), new Vector2(.5f, 0),
                     new Vector2(225, 45), new Vector2(420, 95), () => SceneManager.LoadScene("PhaseTwoOnline"));
+            if (Application.CanStreamedLevelBeLoaded("PhaseThreeTransit"))
+                Button("Solar Transit", "SOLAR TRANSIT", landing.transform, new Vector2(.5f, 0), new Vector2(.5f, 0),
+                    new Vector2(0, 165), new Vector2(420, 85), () => SceneManager.LoadScene("PhaseThreeTransit"));
             resultPanel = Overlay("Result", safe.transform, "HEAT COMPLETE", "");
             resultText = resultPanel.transform.Find("Result details").GetComponent<Text>();
             Button("Next Heat", "NEXT HEAT", resultPanel.transform, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 45), new Vector2(440, 95), NextHeat);
