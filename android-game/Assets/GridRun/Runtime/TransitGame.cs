@@ -83,6 +83,7 @@ namespace GridRun
                 Box("Course side rail", new Vector3(x, .6f, 0), new Vector3(.35f, 1.2f, 104), wallMaterial, transform);
             cycle = new GameObject("Transit cycle").transform;
             cycle.SetParent(transform, false);
+            cycle.localScale = Vector3.one * 1.4f;
             Box("Chassis", new Vector3(0, .62f, 0), new Vector3(.9f, .6f, 2.2f), cycleMaterial, cycle);
             Box("Rider", new Vector3(0, 1.2f, -.2f), new Vector3(.55f, .7f, .8f), cycleMaterial, cycle);
             Box("Headlight", new Vector3(0, .7f, 1.2f), new Vector3(.7f, .24f, .2f), glowMaterial, cycle);
@@ -93,7 +94,7 @@ namespace GridRun
             view.tag = "MainCamera";
             view.clearFlags = CameraClearFlags.SolidColor;
             view.backgroundColor = new Color(.008f, .014f, .035f);
-            view.nearClipPlane = .1f; view.farClipPlane = 220; view.fieldOfView = 62;
+            view.nearClipPlane = .1f; view.farClipPlane = 220; view.fieldOfView = 55;
             view.transform.rotation = Quaternion.Euler(45, 0, 0);
         }
 
@@ -199,7 +200,7 @@ namespace GridRun
             forward.Clear(); autoText.text = "AUTO: ON";
             landing.SetActive(false); pausePanel.SetActive(false); resultPanel.SetActive(false); playHud.SetActive(true);
             cycle.gameObject.SetActive(true);
-            view.transform.position = new Vector3(0, 25, TransitRun.StartZ - 27);
+            view.transform.position = new Vector3(0, 18, TransitRun.StartZ - 19);
         }
 
         private void ToggleAuto()
@@ -268,7 +269,7 @@ namespace GridRun
             cycle.position = new Vector3(0, lift, run.Z);
             jetVisual.SetActive(run.ActiveFlight == TransitRun.Flight.Jet);
             sailVisual.SetActive(run.ActiveFlight == TransitRun.Flight.Sail);
-            var target = new Vector3(0, 25, run.Z - 27);
+            var target = new Vector3(0, 18, run.Z - 19);
             view.transform.position = Vector3.Lerp(view.transform.position, target, 1 - Mathf.Exp(-7 * Time.deltaTime));
             view.transform.rotation = Quaternion.Euler(45, 0, 0);
         }
