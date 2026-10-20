@@ -121,6 +121,8 @@ namespace GridRun
 
             Submit("Retry Transit");
             Submit("Auto Drive");
+            yield return CaptureLayout("transit-course-desktop.png", 1280, 720);
+            yield return CaptureLayout("transit-course-phone.png", 1170, 540);
             float waitingZ = game.Run.Z;
             yield return new WaitForSecondsRealtime(.3f);
             Check("Manual mode stays in place", Mathf.Abs(game.Run.Z - waitingZ) < .01f);
