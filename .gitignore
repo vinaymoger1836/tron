@@ -103,3 +103,6 @@ Thumbs.db
 
 .vercel
 .env*
+
+# Unity performance package scratch data
+/android-game/Assets/Resources/PerformanceTestRun*.json*

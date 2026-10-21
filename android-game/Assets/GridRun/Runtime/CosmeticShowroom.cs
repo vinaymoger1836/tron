@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.Rendering;
@@ -78,7 +78,7 @@ namespace GridRun
             view.backgroundColor = new Color(.008f, .015f, .04f);
             view.nearClipPlane = .1f; view.farClipPlane = 100; view.fieldOfView = 54;
             view.transform.position = new Vector3(7, 5.5f, 12);
-            view.transform.LookAt(new Vector3(0, .4f, 0));
+            view.transform.LookAt(new Vector3(0, -.1f, 0));
         }
 
         private void AddTrail(GameObject item) => trailParts.Add(item.GetComponent<Renderer>());
@@ -107,6 +107,7 @@ namespace GridRun
         {
             var rect = Rect(name, parent, anchor, pivot, offset, size);
             var image = rect.gameObject.AddComponent<Image>();
+            UiSkin.Round(image);
             image.color = new Color(.025f, .16f, .23f, .98f);
             var button = rect.gameObject.AddComponent<Button>();
             button.targetGraphic = image;
@@ -149,8 +150,10 @@ namespace GridRun
                 new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(330, -155), new Vector2(295, 75),
                 () => Select(CosmeticCatalog.Category.Bundle));
             var panel = Rect("Preview details", safe.transform, new Vector2(.5f, 0), new Vector2(.5f, 0),
-                new Vector2(0, 25), new Vector2(1420, 360));
-            panel.gameObject.AddComponent<Image>().color = new Color(.006f, .025f, .045f, .96f);
+                new Vector2(0, 25), new Vector2(1420, 330));
+            var panelImage = panel.gameObject.AddComponent<Image>();
+            UiSkin.Round(panelImage);
+            panelImage.color = new Color(.006f, .025f, .045f, .96f);
             heading = Label("Item name", "", panel, new Vector2(.5f, 1), new Vector2(.5f, 1),
                 new Vector2(0, -12), new Vector2(1290, 70), 44, TextAnchor.MiddleCenter);
             description = Label("Item description", "", panel, new Vector2(.5f, 1), new Vector2(.5f, 1),

@@ -119,6 +119,7 @@ namespace GridRun
         {
             var rect = Rect(name, parent, anchor, pivot, offset, size);
             var image = rect.gameObject.AddComponent<Image>();
+            UiSkin.Round(image);
             image.color = new Color(.025f, .16f, .23f, .98f);
             var button = rect.gameObject.AddComponent<Button>();
             button.targetGraphic = image;
@@ -134,6 +135,7 @@ namespace GridRun
         {
             var rect = Rect(name, parent, new Vector2(.5f, 1), new Vector2(.5f, 1), position, size);
             var image = rect.gameObject.AddComponent<Image>();
+            UiSkin.Round(image);
             image.color = new Color(.02f, .08f, .13f, 1);
             var input = rect.gameObject.AddComponent<InputField>();
             input.targetGraphic = image; input.characterLimit = limit;
@@ -179,7 +181,9 @@ namespace GridRun
             fire = Button("Fire", "FIRE", hud, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-310, 28), new Vector2(230, 140), null).gameObject.AddComponent<HoldControl>();
             autoLabel = Button("Auto Drive", "AUTO: ON", hud, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-32, 190), new Vector2(260, 78), ToggleAuto).GetComponentInChildren<Text>();
             var setup = Rect("Online setup", safe.transform, new Vector2(.5f, .5f), new Vector2(.5f, .5f), Vector2.zero, new Vector2(1280, 820));
-            setup.gameObject.AddComponent<Image>().color = new Color(.006f, .025f, .045f, .98f); setupPanel = setup.gameObject;
+            var setupImage = setup.gameObject.AddComponent<Image>();
+            UiSkin.Round(setupImage);
+            setupImage.color = new Color(.006f, .025f, .045f, .98f); setupPanel = setup.gameObject;
             Label("Setup heading", "GRID RUN  /  ONLINE ARENA", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -25), new Vector2(1120, 75), 48, TextAnchor.MiddleCenter);
             Label("Server caption", "GAME SERVER HTTPS URL", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -125), new Vector2(900, 40), 22);
             serverField = Field("Server origin", defaultServerOrigin, setup, new Vector2(0, -170), new Vector2(920, 70), 160);
@@ -194,7 +198,9 @@ namespace GridRun
             Label("Setup rules", "Arena / Classic Grid / 2 riders. Host shares the code; both riders connect before START.", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 105), new Vector2(1100, 60), 22, TextAnchor.MiddleCenter);
             Button("Offline Arena", "OFFLINE ARENA", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 12), new Vector2(350, 78), () => SceneManager.LoadScene("PhaseOneArena"));
             var lobby = Rect("Online room", safe.transform, new Vector2(.5f, .5f), new Vector2(.5f, .5f), Vector2.zero, new Vector2(1280, 760));
-            lobby.gameObject.AddComponent<Image>().color = new Color(.006f, .025f, .045f, .98f); roomPanel = lobby.gameObject;
+            var lobbyImage = lobby.gameObject.AddComponent<Image>();
+            UiSkin.Round(lobbyImage);
+            lobbyImage.color = new Color(.006f, .025f, .045f, .98f); roomPanel = lobby.gameObject;
             roomHeading = Label("Room heading", "ROOM", lobby, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -25), new Vector2(1120, 75), 47, TextAnchor.MiddleCenter);
             roster = Label("Room roster", "", lobby, new Vector2(.5f, .5f), new Vector2(.5f, .5f), new Vector2(0, 50), new Vector2(1040, 400), 29, TextAnchor.MiddleCenter);
             startButton = Button("Start Heat", "START ARENA", lobby, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(-240, 55), new Vector2(425, 95), StartHeat);
@@ -347,7 +353,7 @@ namespace GridRun
             if (view == null) return;
             Vector3 target = new Vector3(0, 65, -65);
             if (room?.View?.phase == "running" && riders.TryGetValue(room.SelfId ?? "", out var self) && self.gameObject.activeSelf)
-                target = self.position + new Vector3(0, 27, -27);
+                target = self.position + new Vector3(0, 20, -21);
             view.transform.position = Vector3.Lerp(view.transform.position, target, 1 - Mathf.Exp(-8 * Time.deltaTime));
             view.transform.rotation = Quaternion.Euler(45, 0, 0);
         }

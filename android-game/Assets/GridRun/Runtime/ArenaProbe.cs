@@ -126,6 +126,7 @@ namespace GridRun
         {
             var rect = Panel(value, parent, anchor, pivot, position, size);
             var background = rect.gameObject.AddComponent<Image>();
+            UiSkin.Round(background);
             background.color = new Color(.035f, .15f, .2f, .96f);
             var button = rect.gameObject.AddComponent<Button>();
             button.targetGraphic = background;

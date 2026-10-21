@@ -113,6 +113,7 @@ namespace GridRun
         {
             var rect = Rect(name, parent, anchor, pivot, offset, size);
             var image = rect.gameObject.AddComponent<Image>();
+            UiSkin.Round(image);
             image.color = new Color(.025f, .16f, .23f, .97f);
             var button = rect.gameObject.AddComponent<Button>();
             button.targetGraphic = image;
@@ -141,6 +142,7 @@ namespace GridRun
         {
             var rect = Rect(name, safe, new Vector2(.5f, .5f), new Vector2(.5f, .5f), Vector2.zero, new Vector2(900, 570));
             var image = rect.gameObject.AddComponent<Image>();
+            UiSkin.Round(image);
             image.color = new Color(.006f, .025f, .045f, .97f);
             Label(name + " heading", heading, rect, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -35), new Vector2(780, 75), 50, TextAnchor.MiddleCenter);
             Label(name + " details", detail, rect, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -135), new Vector2(770, 160), 27, TextAnchor.MiddleCenter);
@@ -283,7 +285,7 @@ namespace GridRun
             SyncBoundary();
             // Move away from the wall on a crash so near-field boundary geometry
             // cannot cover the result card while the player is at the edge.
-            var target = match.HeatEnded ? new Vector3(0, 55, -55) : playerVisual.position + new Vector3(0, 24, -25);
+            var target = match.HeatEnded ? new Vector3(0, 55, -55) : playerVisual.position + new Vector3(0, 18, -20);
             view.transform.position = Vector3.Lerp(view.transform.position, target, 1 - Mathf.Exp(-7 * Time.deltaTime));
             view.transform.rotation = Quaternion.Euler(45, 0, 0);
         }
@@ -336,7 +338,7 @@ namespace GridRun
         private void SnapCamera()
         {
             if (view == null) return;
-            view.transform.position = new Vector3(match.Player.X, 24, match.Player.Z - 25);
+            view.transform.position = new Vector3(match.Player.X, 18, match.Player.Z - 20);
             view.transform.rotation = Quaternion.Euler(45, 0, 0);
         }
 

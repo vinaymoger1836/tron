@@ -192,7 +192,12 @@ namespace GridRun
                 wheel.localPosition = new Vector3(0, .40f, z);
                 wheels.Add(wheel);
                 darkParts.Add(MeshPart("Dark tire", tireMesh, wheel, dark));
-                lightParts.Add(MeshPart("Fine luminous rim", rimMesh, wheel, light));
+                foreach (float face in new[] { -.15f, .15f })
+                {
+                    var rim = MeshPart("Fine luminous rim", rimMesh, wheel, light);
+                    rim.transform.localPosition = new Vector3(face, 0, 0);
+                    lightParts.Add(rim);
+                }
                 for (int spoke = 0; spoke < 3; spoke++)
                 {
                     float angle = spoke * Mathf.PI * 2 / 3;

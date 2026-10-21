@@ -9,11 +9,15 @@
 - The offline Arena landing links to Style Preview when PhaseFourShowroom is packaged. The existing offline Arena, Online Room, and Solar Transit scenes remain in the combined Phase 4 preview.
 - PhaseFourBuild prepares the scene and builds development desktop and Android players. No SDK, account, database, or service was added.
 
+## Visual refinement
+
+A shared procedural CycleVisual now replaces the cube-based cycles and riders in the prototype, offline Arena, online rooms, Solar Transit, and the showroom. It has a tapered fairing, helmet and visor, two lit wheel rims, animated wheel spin and turn lean, a pulsing light-jet plume, and a deploying solar sail. The showroom camera, display trail, and body contrast were adjusted so the cycle is readable at phone and desktop sizes. A generated rounded UI shape gives menus and controls a consistent edge. This is a clearer playable art baseline; authored models, materials, character animation, effects, and sound are still needed for the intended production look.
+
 ## Verification
 
-Pinned Unity 6000.3.26f1 built the desktop player. android-game/scripts/Verify-Showroom.ps1 passed **27/27 checks** in the real player: included default selection, absence of a buy action, preview-only status, cycle/trail/set changes, previous/next navigation, Arena start after returning, and fresh showroom state after re-entry. Phone-landscape 1170x540, desktop 1280x720, and tablet 1024x768 screenshots were saved under ignored artifacts/android-phase-4/ and visually reviewed; controls fit all three viewports. This does not validate physical Android input or store behavior.
+Pinned Unity 6000.3.26f1 built desktop players. The final showroom run passed **27/27 checks** and saved phone-landscape 1170x540, desktop 1280x720, and tablet 1024x768 screenshots under ignored artifacts/android-phase-4/. The final Solar Transit run passed **33/33 checks**, including jet, sail, timeout, retry, and phone/desktop layout checks. The two-client online run passed **34/34 host and 16/16 guest checks**, and the movement prototype passed **17/17 checks**. The showroom phone and desktop screenshots were visually reviewed. These desktop runs do not validate physical Android touch, sustained device performance, or store behavior.
 
-GridRun.Editor.PhaseFourBuild.BuildAndroid built android-game/Builds/Android/grid-run-phase4-preview.apk (79,531,978 bytes; SHA-256 ECBBD61273BEDCDA7F6807FA4827EF53C68D2D6F55EC052E826B3E537DCEE4E0). Android build-tools verified APK Signature Scheme v2, package com.gridrun.prototype, version 0.4.0 / code 5, minimum API 29, target API 36, ARM64, and Internet permission. ZIP CRC integrity passed. The APK is debug signed and Git-ignored. It has not been published.
+GridRun.Editor.PhaseFourBuild.BuildAndroid built android-game/Builds/Android/grid-run-phase4-preview.apk (132,475,251 bytes; SHA-256 775AA463A5EAFD3C0E1C817B1AE8385040CA56728354B5B4514A3FCF4D10318B). Android build-tools verified APK Signature Scheme v2, package com.gridrun.prototype, version 0.4.0 / code 5, minimum API 29, target API 36, and ARM64. ZIP CRC integrity passed. The APK is debug signed and Git-ignored. It has not been published.
 
 ## Guest-only purchase direction
 

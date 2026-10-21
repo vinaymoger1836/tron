@@ -92,7 +92,7 @@ namespace GridRun
             view.clearFlags = CameraClearFlags.SolidColor;
             view.backgroundColor = new Color(.008f, .014f, .035f);
             view.nearClipPlane = .1f; view.farClipPlane = 220; view.fieldOfView = 55;
-            view.transform.rotation = Quaternion.Euler(45, 0, 0);
+            view.transform.rotation = Quaternion.Euler(26, 0, 0);
         }
 
         private RectTransform Rect(string name, Transform parent, Vector2 anchor, Vector2 pivot, Vector2 offset, Vector2 size)
@@ -119,6 +119,7 @@ namespace GridRun
         {
             var rect = Rect(name, parent, anchor, pivot, offset, size);
             var image = rect.gameObject.AddComponent<Image>();
+            UiSkin.Round(image);
             image.color = new Color(.025f, .16f, .23f, .98f);
             var button = rect.gameObject.AddComponent<Button>();
             button.targetGraphic = image;
@@ -135,7 +136,9 @@ namespace GridRun
         private GameObject Overlay(string name, Transform parent, string title, string detail)
         {
             var rect = Rect(name, parent, new Vector2(.5f, .5f), new Vector2(.5f, .5f), Vector2.zero, new Vector2(1080, 650));
-            rect.gameObject.AddComponent<Image>().color = new Color(.006f, .025f, .045f, .98f);
+            var panelImage = rect.gameObject.AddComponent<Image>();
+            UiSkin.Round(panelImage);
+            panelImage.color = new Color(.006f, .025f, .045f, .98f);
             Label(name + " title", title, rect, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -25), new Vector2(980, 85), 53, TextAnchor.MiddleCenter);
             Label(name + " detail", detail, rect, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -145), new Vector2(970, 205), 29, TextAnchor.MiddleCenter);
             return rect.gameObject;
@@ -197,7 +200,7 @@ namespace GridRun
             forward.Clear(); autoText.text = "AUTO: ON";
             landing.SetActive(false); pausePanel.SetActive(false); resultPanel.SetActive(false); playHud.SetActive(true);
             cycle.gameObject.SetActive(true);
-            view.transform.position = new Vector3(0, 18, TransitRun.StartZ - 19);
+            view.transform.position = new Vector3(0, 9, TransitRun.StartZ - 12);
         }
 
         private void ToggleAuto()
@@ -266,9 +269,9 @@ namespace GridRun
             cycle.position = new Vector3(0, lift, run.Z);
             cycleArt.SetFlight(run.ActiveFlight == TransitRun.Flight.Jet,
                 run.ActiveFlight == TransitRun.Flight.Sail);
-            var target = new Vector3(0, 18, run.Z - 19);
+            var target = new Vector3(0, 9, run.Z - 12);
             view.transform.position = Vector3.Lerp(view.transform.position, target, 1 - Mathf.Exp(-7 * Time.deltaTime));
-            view.transform.rotation = Quaternion.Euler(45, 0, 0);
+            view.transform.rotation = Quaternion.Euler(26, 0, 0);
         }
 
         private void Suspend()
