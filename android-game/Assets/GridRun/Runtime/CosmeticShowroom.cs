@@ -64,7 +64,7 @@ namespace GridRun
                 Box("Showroom rail", new Vector3(x, .6f, 0), new Vector3(.35f, 1.2f, 36), wallMaterial, transform);
             var display = new GameObject("Cosmetic display").transform;
             display.SetParent(transform, false);
-            display.localRotation = Quaternion.Euler(0, -25, 0);
+            display.localRotation = Quaternion.Euler(0, 65, 0);
             var cycle = new GameObject("Preview cycle").transform;
             cycle.SetParent(display, false);
             cycle.localPosition = new Vector3(0, 0, 5);
