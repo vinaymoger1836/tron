@@ -201,6 +201,9 @@ namespace GridRun
             if (Application.CanStreamedLevelBeLoaded("PhaseThreeTransit"))
                 Button("Solar Transit", "SOLAR TRANSIT", landing.transform, new Vector2(.5f, 0), new Vector2(.5f, 0),
                     new Vector2(0, 165), new Vector2(420, 85), () => SceneManager.LoadScene("PhaseThreeTransit"));
+            if (Application.CanStreamedLevelBeLoaded("PhaseFourShowroom"))
+                Button("Style Preview", "STYLE PREVIEW", landing.transform, new Vector2(.5f, 0), new Vector2(.5f, 0),
+                    new Vector2(0, 275), new Vector2(420, 85), () => SceneManager.LoadScene("PhaseFourShowroom"));
             resultPanel = Overlay("Result", safe.transform, "HEAT COMPLETE", "");
             resultText = resultPanel.transform.Find("Result details").GetComponent<Text>();
             Button("Next Heat", "NEXT HEAT", resultPanel.transform, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 45), new Vector2(440, 95), NextHeat);
