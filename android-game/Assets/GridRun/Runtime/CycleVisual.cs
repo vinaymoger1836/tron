@@ -172,17 +172,19 @@ namespace GridRun
                 lightParts.Add(Link("Side light", sculpture, new Vector3(side * .38f, .71f, -.68f),
                     new Vector3(side * .28f, .72f, .88f), .045f, light, PrimitiveType.Cylinder));
             }
-            bodyParts.Add(Shape("Rider torso", PrimitiveType.Capsule, sculpture,
-                new Vector3(0, 1.24f, -.43f), new Vector3(.42f, .45f, .52f), body));
+            var torso = Shape("Rider torso", PrimitiveType.Capsule, sculpture,
+                new Vector3(0, 1.17f, -.33f), new Vector3(.39f, .29f, .43f), body);
+            torso.transform.localRotation = Quaternion.Euler(55, 0, 0);
+            bodyParts.Add(torso);
             bodyParts.Add(Shape("Helmet", PrimitiveType.Sphere, sculpture,
-                new Vector3(0, 1.57f, -.24f), new Vector3(.40f, .33f, .46f), body));
+                new Vector3(0, 1.43f, -.02f), new Vector3(.38f, .31f, .43f), body));
             lightParts.Add(Shape("Visor", PrimitiveType.Sphere, sculpture,
-                new Vector3(0, 1.58f, .015f), new Vector3(.33f, .14f, .075f), light));
+                new Vector3(0, 1.44f, .22f), new Vector3(.30f, .13f, .075f), light));
             lightParts.Add(Shape("Nose light", PrimitiveType.Sphere, sculpture,
                 new Vector3(0, .61f, 1.27f), new Vector3(.27f, .09f, .09f), light));
 
             var tireMesh = RingMesh(.39f, .13f);
-            var rimMesh = RingMesh(.40f, .045f);
+            var rimMesh = RingMesh(.51f, .035f);
             foreach (float z in new[] { -.88f, .88f })
             {
                 var wheel = new GameObject("Spinning light wheel").transform;

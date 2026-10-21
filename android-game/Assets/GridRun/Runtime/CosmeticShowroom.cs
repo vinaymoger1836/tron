@@ -68,7 +68,7 @@ namespace GridRun
             previewCycle = CycleVisual.Create(display, "Preview cycle",
                 cycleMaterial, glowMaterial, wallMaterial);
             previewCycle.transform.localPosition = new Vector3(0, 0, 2);
-            previewCycle.transform.localScale = Vector3.one * 2.8f;
+            previewCycle.transform.localScale = Vector3.one * 2.35f;
             AddTrail(Box("Light wall", new Vector3(0, .54f, -2.9f), new Vector3(.16f, 1.06f, 7), glowMaterial, display));
             AddTrail(Box("Trail cap", new Vector3(0, 1.1f, -2.9f), new Vector3(.18f, .06f, 7), glowMaterial, display));
             var cameraObject = new GameObject("Showroom camera", typeof(Camera), typeof(AudioListener));
@@ -78,7 +78,7 @@ namespace GridRun
             view.backgroundColor = new Color(.008f, .015f, .04f);
             view.nearClipPlane = .1f; view.farClipPlane = 100; view.fieldOfView = 54;
             view.transform.position = new Vector3(7, 5.5f, 12);
-            view.transform.LookAt(new Vector3(0, -.7f, 0));
+            view.transform.LookAt(new Vector3(0, .4f, 0));
         }
 
         private void AddTrail(GameObject item) => trailParts.Add(item.GetComponent<Renderer>());
