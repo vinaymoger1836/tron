@@ -90,12 +90,9 @@ namespace GridRun
 
         private Transform Bike(string id, bool self)
         {
-            var root = new GameObject("Online rider " + id).transform;
-            root.SetParent(transform, false);
-            Box("Cycle", new Vector3(0, .6f, 0), new Vector3(.9f, .65f, 2.2f), self ? cycleMaterial : amberMaterial, root);
-            Box("Front", new Vector3(0, .67f, 1.2f), new Vector3(.7f, .2f, .15f), self ? glowMaterial : amberMaterial, root);
-            Box("Rider", new Vector3(0, 1.2f, -.2f), new Vector3(.55f, .7f, .8f), self ? cycleMaterial : amberMaterial, root);
-            return root;
+            Material color = self ? cycleMaterial : amberMaterial;
+            return CycleVisual.Create(transform, "Online rider " + id, color,
+                self ? glowMaterial : amberMaterial, wallMaterial).transform;
         }
 
         private RectTransform Rect(string name, Transform parent, Vector2 anchor, Vector2 pivot, Vector2 offset, Vector2 size)

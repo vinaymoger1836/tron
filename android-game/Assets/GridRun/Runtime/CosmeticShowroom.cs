@@ -11,10 +11,10 @@ namespace GridRun
     public sealed class CosmeticShowroom : MonoBehaviour
     {
         [SerializeField] private Material floorMaterial, gridMaterial, wallMaterial, cycleMaterial, glowMaterial, amberMaterial;
-        private readonly List<Renderer> bodyParts = new List<Renderer>();
         private readonly List<Renderer> trailParts = new List<Renderer>();
         private readonly Dictionary<CosmeticCatalog.Category, Button> categoryButtons =
             new Dictionary<CosmeticCatalog.Category, Button>();
+        private CycleVisual previewCycle;
         private Camera view;
         private Font font;
         private Text heading, description, availability, position;
@@ -65,24 +65,10 @@ namespace GridRun
             var display = new GameObject("Cosmetic display").transform;
             display.SetParent(transform, false);
             display.localRotation = Quaternion.Euler(0, 65, 0);
-            var cycle = new GameObject("Preview cycle").transform;
-            cycle.SetParent(display, false);
-            cycle.localPosition = new Vector3(0, 0, 5);
-            cycle.localScale = Vector3.one * 2.2f;
-            AddBody(Box("Cycle chassis", new Vector3(0, .65f, 0), new Vector3(.9f, .6f, 2.25f), cycleMaterial, cycle));
-            AddBody(Box("Cycle rider", new Vector3(0, 1.22f, -.2f), new Vector3(.55f, .72f, .8f), cycleMaterial, cycle));
-            AddBody(Box("Cycle fin", new Vector3(0, .78f, 1.25f), new Vector3(.65f, .2f, .5f), cycleMaterial, cycle));
-            foreach (float z in new[] { -.82f, .82f })
-            {
-                var wheel = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-                wheel.name = "Preview wheel";
-                wheel.transform.SetParent(cycle, false);
-                wheel.transform.localPosition = new Vector3(0, .38f, z);
-                wheel.transform.localRotation = Quaternion.Euler(0, 0, 90);
-                wheel.transform.localScale = new Vector3(.82f, .44f, .82f);
-                AddBody(wheel);
-                Destroy(wheel.GetComponent<Collider>());
-            }
+            previewCycle = CycleVisual.Create(display, "Preview cycle",
+                cycleMaterial, glowMaterial, wallMaterial);
+            previewCycle.transform.localPosition = new Vector3(0, 0, 5);
+            previewCycle.transform.localScale = Vector3.one * 2.2f;
             AddTrail(Box("Light wall", new Vector3(0, .82f, -3.7f), new Vector3(.27f, 1.65f, 15), glowMaterial, display));
             AddTrail(Box("Trail cap", new Vector3(0, 1.67f, -3.7f), new Vector3(.32f, .12f, 15), glowMaterial, display));
             var cameraObject = new GameObject("Showroom camera", typeof(Camera), typeof(AudioListener));
@@ -95,7 +81,6 @@ namespace GridRun
             view.transform.LookAt(new Vector3(0, -1.5f, 0));
         }
 
-        private void AddBody(GameObject item) => bodyParts.Add(item.GetComponent<Renderer>());
         private void AddTrail(GameObject item) => trailParts.Add(item.GetComponent<Renderer>());
 
         private RectTransform Rect(string name, Transform parent, Vector2 anchor, Vector2 pivot, Vector2 offset, Vector2 size)
@@ -206,7 +191,7 @@ namespace GridRun
             DisplayedTrailTheme = CurrentEntry.TrailTheme;
             Material body = DisplayedBodyTheme == "solar" ? amberMaterial : cycleMaterial;
             Material trail = DisplayedTrailTheme == "solar" ? amberMaterial : glowMaterial;
-            foreach (var part in bodyParts) part.sharedMaterial = body;
+            previewCycle.SetPalette(body, trail);
             foreach (var part in trailParts) part.sharedMaterial = trail;
             heading.text = CurrentEntry.Name.ToUpperInvariant();
             description.text = CurrentEntry.Description;
@@ -220,6 +205,7 @@ namespace GridRun
 
         private void Update()
         {
+            if (previewCycle != null) previewCycle.transform.Rotate(0, Time.deltaTime * 8f, 0, Space.Self);
             if (Input.GetKeyDown(KeyCode.Escape)) ReturnToArena();
             if (Input.GetKeyDown(KeyCode.LeftArrow)) Previous();
             if (Input.GetKeyDown(KeyCode.RightArrow)) Next();

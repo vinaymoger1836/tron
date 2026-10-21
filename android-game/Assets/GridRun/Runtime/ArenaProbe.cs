@@ -86,22 +86,8 @@ namespace GridRun
                     Box("Outer column", new Vector3(i, 5, edge * 55), new Vector3(3, 10, 3), wallMaterial, transform);
                     Box("Column light", new Vector3(i, 7, edge * 53.4f), new Vector3(.25f, 5, .2f), amberMaterial, transform);
                 }
-            rider = new GameObject("Player cycle").transform;
-            rider.SetParent(transform, false);
-            Box("Cycle chassis", new Vector3(0, .6f, 0), new Vector3(.8f, .65f, 2.3f), cycleMaterial, rider);
-            Box("Front light", new Vector3(0, .65f, 1.2f), new Vector3(.7f, .22f, .15f), glowMaterial, rider);
-            Box("Rider", new Vector3(0, 1.2f, -.1f), new Vector3(.5f, .65f, .8f), cycleMaterial, rider);
-            foreach (float z in new[] { -.8f, .8f })
-            {
-                var wheel = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-                wheel.name = "Light wheel";
-                wheel.transform.SetParent(rider, false);
-                wheel.transform.localPosition = new Vector3(0, .4f, z);
-                wheel.transform.localRotation = Quaternion.Euler(0, 0, 90);
-                wheel.transform.localScale = new Vector3(.85f, .5f, .85f);
-                wheel.GetComponent<Renderer>().sharedMaterial = glowMaterial;
-                Destroy(wheel.GetComponent<Collider>());
-            }
+            rider = CycleVisual.Create(transform, "Player cycle",
+                cycleMaterial, glowMaterial, wallMaterial).transform;
             var cameraObject = new GameObject("Arena camera", typeof(Camera));
             view = cameraObject.GetComponent<Camera>();
             view.tag = "MainCamera";

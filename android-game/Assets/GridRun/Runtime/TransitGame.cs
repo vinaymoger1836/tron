@@ -16,7 +16,8 @@ namespace GridRun
         private Camera view;
         private Font font;
         private Transform cycle;
-        private GameObject jetVisual, sailVisual, landing, pausePanel, resultPanel, playHud;
+        private CycleVisual cycleArt;
+        private GameObject landing, pausePanel, resultPanel, playHud;
         private HoldControl forward;
         private Text hud, status, autoText, resultText, bestText;
         private bool playing, paused, autoDrive = true, ignoreFocusForCapture;
@@ -81,14 +82,10 @@ namespace GridRun
             Box("Finish gate", new Vector3(0, .04f, TransitRun.FinishZ), new Vector3(104, .18f, .5f), glowMaterial, transform);
             foreach (float x in new[] { -52f, 52f })
                 Box("Course side rail", new Vector3(x, .6f, 0), new Vector3(.35f, 1.2f, 104), wallMaterial, transform);
-            cycle = new GameObject("Transit cycle").transform;
-            cycle.SetParent(transform, false);
+            cycleArt = CycleVisual.Create(transform, "Transit cycle",
+                cycleMaterial, glowMaterial, wallMaterial);
+            cycle = cycleArt.transform;
             cycle.localScale = Vector3.one * 1.4f;
-            Box("Chassis", new Vector3(0, .62f, 0), new Vector3(.9f, .6f, 2.2f), cycleMaterial, cycle);
-            Box("Rider", new Vector3(0, 1.2f, -.2f), new Vector3(.55f, .7f, .8f), cycleMaterial, cycle);
-            Box("Headlight", new Vector3(0, .7f, 1.2f), new Vector3(.7f, .24f, .2f), glowMaterial, cycle);
-            jetVisual = Box("Jet plume", new Vector3(0, -.1f, -1.25f), new Vector3(.65f, .55f, 1.35f), amberMaterial, cycle);
-            sailVisual = Box("Solar sail", new Vector3(0, 1.5f, -.35f), new Vector3(4.2f, .08f, 1.7f), glowMaterial, cycle);
             var cameraObject = new GameObject("Transit camera", typeof(Camera), typeof(AudioListener));
             view = cameraObject.GetComponent<Camera>();
             view.tag = "MainCamera";
@@ -267,8 +264,8 @@ namespace GridRun
             float lift = run.ActiveFlight == TransitRun.Flight.None ? 0 :
                 Mathf.Sin(run.FlightFraction * Mathf.PI) * (run.ActiveFlight == TransitRun.Flight.Jet ? 3.4f : 2.4f);
             cycle.position = new Vector3(0, lift, run.Z);
-            jetVisual.SetActive(run.ActiveFlight == TransitRun.Flight.Jet);
-            sailVisual.SetActive(run.ActiveFlight == TransitRun.Flight.Sail);
+            cycleArt.SetFlight(run.ActiveFlight == TransitRun.Flight.Jet,
+                run.ActiveFlight == TransitRun.Flight.Sail);
             var target = new Vector3(0, 18, run.Z - 19);
             view.transform.position = Vector3.Lerp(view.transform.position, target, 1 - Mathf.Exp(-7 * Time.deltaTime));
             view.transform.rotation = Quaternion.Euler(45, 0, 0);

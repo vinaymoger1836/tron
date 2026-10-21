@@ -59,23 +59,7 @@ namespace GridRun
 
         private Transform Bike(string name, Material body, Material light)
         {
-            var root = new GameObject(name).transform;
-            root.SetParent(transform, false);
-            Box("Chassis", new Vector3(0, .62f, 0), new Vector3(.85f, .55f, 2.25f), body, root);
-            Box("Rider", new Vector3(0, 1.2f, -.2f), new Vector3(.55f, .65f, .8f), body, root);
-            Box("Front light", new Vector3(0, .66f, 1.2f), new Vector3(.7f, .2f, .15f), light, root);
-            foreach (float z in new[] { -.8f, .8f })
-            {
-                var wheel = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-                wheel.name = "Light wheel";
-                wheel.transform.SetParent(root, false);
-                wheel.transform.localPosition = new Vector3(0, .4f, z);
-                wheel.transform.localRotation = Quaternion.Euler(0, 0, 90);
-                wheel.transform.localScale = new Vector3(.85f, .5f, .85f);
-                wheel.GetComponent<Renderer>().sharedMaterial = light;
-                Destroy(wheel.GetComponent<Collider>());
-            }
-            return root;
+            return CycleVisual.Create(transform, name, body, light, wallMaterial).transform;
         }
 
         private void BuildWorld()
