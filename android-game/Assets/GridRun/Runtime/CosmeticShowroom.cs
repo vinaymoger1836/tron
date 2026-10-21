@@ -67,18 +67,18 @@ namespace GridRun
             display.localRotation = Quaternion.Euler(0, 65, 0);
             previewCycle = CycleVisual.Create(display, "Preview cycle",
                 cycleMaterial, glowMaterial, wallMaterial);
-            previewCycle.transform.localPosition = new Vector3(0, 0, 5);
-            previewCycle.transform.localScale = Vector3.one * 2.2f;
-            AddTrail(Box("Light wall", new Vector3(0, .82f, -3.7f), new Vector3(.27f, 1.65f, 15), glowMaterial, display));
-            AddTrail(Box("Trail cap", new Vector3(0, 1.67f, -3.7f), new Vector3(.32f, .12f, 15), glowMaterial, display));
+            previewCycle.transform.localPosition = new Vector3(0, 0, 2);
+            previewCycle.transform.localScale = Vector3.one * 2.8f;
+            AddTrail(Box("Light wall", new Vector3(0, .54f, -2.9f), new Vector3(.16f, 1.06f, 7), glowMaterial, display));
+            AddTrail(Box("Trail cap", new Vector3(0, 1.1f, -2.9f), new Vector3(.18f, .06f, 7), glowMaterial, display));
             var cameraObject = new GameObject("Showroom camera", typeof(Camera), typeof(AudioListener));
             view = cameraObject.GetComponent<Camera>();
             view.tag = "MainCamera";
             view.clearFlags = CameraClearFlags.SolidColor;
             view.backgroundColor = new Color(.008f, .015f, .04f);
             view.nearClipPlane = .1f; view.farClipPlane = 100; view.fieldOfView = 54;
-            view.transform.position = new Vector3(12, 11, -20);
-            view.transform.LookAt(new Vector3(0, -1.5f, 0));
+            view.transform.position = new Vector3(7, 5.5f, 12);
+            view.transform.LookAt(new Vector3(0, -.7f, 0));
         }
 
         private void AddTrail(GameObject item) => trailParts.Add(item.GetComponent<Renderer>());
