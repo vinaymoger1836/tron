@@ -15,22 +15,24 @@ Pinned Unity 6000.3.26f1 built the desktop player. android-game/scripts/Verify-S
 
 GridRun.Editor.PhaseFourBuild.BuildAndroid built android-game/Builds/Android/grid-run-phase4-preview.apk (79,531,978 bytes; SHA-256 ECBBD61273BEDCDA7F6807FA4827EF53C68D2D6F55EC052E826B3E537DCEE4E0). Android build-tools verified APK Signature Scheme v2, package com.gridrun.prototype, version 0.4.0 / code 5, minimum API 29, target API 36, ARM64, and Internet permission. ZIP CRC integrity passed. The APK is debug signed and Git-ignored. It has not been published.
 
-## Approval-ready purchase direction
+## Guest-only purchase direction
 
-A proposed next step is to keep the existing Node game server and add an account/entitlement API to it, backed by a managed Render Postgres database. Firebase Authentication is a candidate for anonymous guest identity linked to Google sign-in; its Unity documentation describes this flow, but account-linking behavior must be validated in this Unity project. Unity IAP with Google Play would supply store product listings and checkout. The server would verify purchase tokens with Google's API, commit idempotent non-consumable entitlements in Postgres, then acknowledge fulfilled purchases. The app would obtain inventory only from that server; local preferences would never prove ownership. This is a proposal, not an approved implementation.
+The user chose no login or signup for now. A proposed Android-only purchase flow uses Unity IAP and Google Play for direct, non-consumable cosmetics. The app would fetch the Play account's owned purchases on startup and after checkout. The existing Node game server could verify each purchase token with Google and store an idempotent, durable grant in managed Postgres. A temporary guest session could carry requests, but it would not prove ownership. The verified, active Play purchase would be the basis for restoring an item after reinstall or a device change. This is a proposal, not an approved implementation; the showroom remains preview-only.
 
-Google's integration guidance places verification before entitlement and requires acknowledgement of fulfilled purchases: https://developer.android.com/google/play/billing/integrate
-Google describes backend purchase lifecycle, notifications, and voided purchases: https://developer.android.com/google/play/billing/backend
-Firebase documents Unity anonymous-to-account linking: https://firebase.google.com/docs/auth/unity/anonymous-auth
-Unity documents IAP pending purchase callbacks and repeated delivery: https://docs.unity.com/en-us/iap/purchases
+Restoration requires the same Google Play account and a successful store fetch and server verification. An offline or failed product/purchase fetch must show a retryable verification state, not silently remove an owned item. This flow does not restore local progress, browser purchases, or purchases made through a different Play account. It does not provide cross-platform ownership or account transfer. Limit the first shop to non-consumables; currency wallets, consumables, and subscriptions need separate recovery designs.
+
+Unity documents Play restoration through FetchPurchases and warns that unavailable product metadata can omit owned purchases: https://docs.unity.com/en-us/iap/restore-purchases
+Unity documents pending callbacks, repeated delivery, and confirmation after fulfillment: https://docs.unity.com/en-us/iap/purchases
+Google recommends backend purchase-token verification before granting ownership: https://developer.android.com/google/play/billing/security
+Google describes purchase lifecycle, notifications, and voided purchases: https://developer.android.com/google/play/billing/backend
 Render documents managed Postgres and pricing: https://render.com/docs/postgresql and https://render.com/pricing
 
-This direction requires approval for Firebase Authentication, managed Postgres and its costs, an account/privacy model, the Unity IAP package, and Google Play Console setup. None has been created or configured. Product prices and availability will come from the store after approval; they are not hardcoded in the preview. Do not enable payment until the backend can verify, deduplicate, restore, refund/revoke, and recover purchases in sandbox tests.
+This direction still requires approval for managed Postgres and its costs, the Unity IAP package, and Google Play Console setup. None has been created or configured. Product prices and availability will come from the store after approval; they are not hardcoded in the preview. Do not enable payment until the backend can verify, deduplicate, restore, refund/revoke, and recover purchases in sandbox tests.
 
 ## Remaining Phase 4 work
 
-- Select and approve identity, database, cost, and data-ownership choices; implement sign-in, guest linking, recovery, sign-out, and account deletion.
-- Define versioned account, entitlement, catalog, and purchase APIs with old-client errors; keep user and Play credentials only on the server.
+- Select and approve the database, costs, and guest purchase-data policy; define retention and deletion support without an in-app account.
+- Define versioned guest-session, entitlement, catalog, and purchase APIs with old-client errors; keep Play credentials only on the server.
 - Implement durable inventory, purchase-token uniqueness, acknowledgement after a stored grant, pending/cancelled/duplicate flows, restore/reinstall, refund revocation, backup and restore drills, and a purchase-disable switch.
 - Validate Google Play license-tester flows and real-device behavior before exposing a buy button. Earlier Android and online device gates remain open.
 
