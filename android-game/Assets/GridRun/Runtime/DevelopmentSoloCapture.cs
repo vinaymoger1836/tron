@@ -113,7 +113,9 @@ namespace GridRun
         {
             float until = Time.realtimeSinceStartup + seconds;
             while (!condition() && Time.realtimeSinceStartup < until) yield return null;
-            Check(name, condition());
+            var p = solo?.Round?.Player;
+            Check(name, condition(), "phase " + solo?.Phase + " tick " + solo?.Round?.Tick +
+                (p != null ? " player " + p.X.ToString("0.0") + "," + p.Z.ToString("0.0") + " dir " + p.Dir + " alive " + p.Alive + " auto " + p.AutoDrive : ""));
         }
 
         // Leaves the current round for mode select from any in-round state (running, replay, result).

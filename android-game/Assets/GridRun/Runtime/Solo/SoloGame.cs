@@ -679,6 +679,9 @@ namespace GridRun.Solo
         public void Turn(int sign)
         {
             if (Phase != "running") return;
+#if DEVELOPMENT_BUILD
+            Debug.Log("SOLO_TURN sign " + sign + " tick " + Round.Tick + " mode " + SessionMode);
+#endif
             if (SessionMode == "shift") SimShift.QueueTurn(Round, "YOU", sign);
             else GridRules.QueueTurn(Round, "YOU", sign);
             HandleEvents();
