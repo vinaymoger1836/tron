@@ -75,7 +75,7 @@ namespace GridRun
         private IEnumerator Run()
         {
             yield return new WaitForSecondsRealtime(2.5f);
-            yield return Shot("debug-warmup.png", 1170, 540);
+            yield return Shot("look-warmup.png", 1170, 540); // the hidden window's first frame can be blank
             yield return Shot("look-showroom-desktop.png");
             yield return Shot("look-showroom-phone.png", 1170, 540);
             Submit("Sets");
@@ -93,54 +93,10 @@ namespace GridRun
             Press("Right");
             yield return new WaitForSecondsRealtime(1.2f);
             yield return Shot("look-arena-play.png");
-            if (Shader.GetGlobalTexture("_GridReflectionTex") is RenderTexture reflection)
-            {
-                var previous = RenderTexture.active;
-                RenderTexture.active = reflection;
-                var copy = new Texture2D(reflection.width, reflection.height, TextureFormat.RGBA32, false);
-                copy.ReadPixels(new Rect(0, 0, reflection.width, reflection.height), 0, 0);
-                copy.Apply();
-                RenderTexture.active = previous;
-                File.WriteAllBytes(Path.Combine(output, "debug-reflection.png"), copy.EncodeToPNG());
-                Destroy(copy);
-            }
             arena.TogglePause();
-            var main = Camera.main;
-            foreach (var canvas in FindObjectsByType<Canvas>(FindObjectsSortMode.None)) canvas.enabled = false;
-            main.GetComponent<PlanarReflection>().enabled = false;
-            yield return Shot("debug-no-reflection.png");
-            main.GetComponent<PlanarReflection>().enabled = true;
-            var cameraData = UnityEngine.Rendering.Universal.CameraExtensions.GetUniversalAdditionalCameraData(main);
-            cameraData.renderPostProcessing = false;
-            yield return Shot("debug-no-post.png");
-            cameraData.renderPostProcessing = true;
-            var trailRenderers = new System.Collections.Generic.List<Renderer>();
-            foreach (var renderer in FindObjectsByType<Renderer>(FindObjectsSortMode.None))
-                if (renderer.name.Contains("trail")) { renderer.enabled = false; trailRenderers.Add(renderer); }
-            yield return Shot("debug-no-trails.png");
-            foreach (var renderer in trailRenderers) renderer.enabled = true;
-            var floor = GameObject.Find("Grid floor");
-            floor.SetActive(false);
-            yield return Shot("debug-no-floor.png");
-            floor.SetActive(true);
-            foreach (var canvas in FindObjectsByType<Canvas>(FindObjectsSortMode.None)) canvas.enabled = true;
             var player = GameObject.Find("Player cycle").transform;
-            Debug.Log("LOOK_PLAYER " + player.position.ToString("F2") + " camera " + Camera.main.transform.position.ToString("F2"));
-            foreach (var renderer in FindObjectsByType<Renderer>(FindObjectsSortMode.None))
-                if (renderer.name.Contains("trail"))
-                    Debug.Log("LOOK_TRAIL " + renderer.name + " mat=" + renderer.sharedMaterial?.name +
-                        " center=" + renderer.bounds.center.ToString("F2") + " size=" + renderer.bounds.size.ToString("F2"));
             yield return Hero(arena, player, new Vector3(3.2f, 1.6f, 3.6f), "look-arena-hero-front.png", this);
             yield return Hero(arena, player, new Vector3(-4.5f, 2.4f, -5.5f), "look-arena-hero-rear.png", this);
-            foreach (var renderer in FindObjectsByType<Renderer>(FindObjectsSortMode.None))
-                if (renderer.name == "Light trail" && renderer.sharedMaterial == GridLook.Trail(true))
-                {
-                    var marker = new GameObject("Trail probe").transform;
-                    marker.position = renderer.bounds.center - Vector3.up * .55f;
-                    yield return Hero(arena, marker, new Vector3(2.5f, 3.5f, -4f), "debug-trail-close.png", this);
-                    Destroy(marker.gameObject);
-                    break;
-                }
             var rival = GameObject.Find("Rival cycle").transform;
             yield return Hero(arena, rival, new Vector3(4f, 1.2f, -.5f), "look-arena-hero-rival.png", this);
             arena.TogglePause();

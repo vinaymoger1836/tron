@@ -35,7 +35,9 @@ Shader "GridRun/LightWall"
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
-                float2 height : TEXCOORD0; // x: height above base, y: total height (world units)
+                // x: height above base, y: total height (world units). Centroid sampling keeps MSAA
+                // edge samples on thin, grazing faces from extrapolating far outside the wall.
+                centroid float2 height : TEXCOORD0;
                 half fogFactor : TEXCOORD1;
             };
 
@@ -52,7 +54,8 @@ Shader "GridRun/LightWall"
 
             half4 Frag(Varyings input) : SV_Target
             {
-                float y = input.height.x;
+                // Clamp so an extrapolated sample can never overflow exp() into Inf/NaN (which bloom spreads).
+                float y = clamp(input.height.x, 0.0, input.height.y);
                 float top = input.height.y - y;
                 half edge = max(exp(-top / _EdgeWidth), exp(-y / (_EdgeWidth * 0.8)) * 0.8);
                 half scan = 0.88 + 0.12 * sin(y * 46.0);
