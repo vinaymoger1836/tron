@@ -86,5 +86,26 @@ namespace GridRun.Editor
                 throw new BuildFailedException("Showroom Android build failed: " + report.summary.result);
             Debug.Log("PHASE4_APK_READY " + output + " (" + report.summary.totalSize + " bytes)");
         }
+
+        // Same content and debug signature, packaged without development-build debugging data so
+        // the download fits static hosting limits. Development capture flows are compiled out.
+        [MenuItem("Grid Run/Phase 4/Build Release-Packaged APK")]
+        public static void BuildAndroidRelease()
+        {
+            Prepare();
+            if (!BuildPipeline.IsBuildTargetSupported(BuildTargetGroup.Android, BuildTarget.Android))
+                throw new BuildFailedException("Install Android Build Support for Unity " + PhaseZeroBuild.EditorVersion);
+            PlayerSettings.Android.useCustomKeystore = false;
+            string output = Path.GetFullPath("Builds/Android/grid-run-phase4-release.apk");
+            Directory.CreateDirectory(Path.GetDirectoryName(output));
+            var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+            {
+                scenes = new[] { PhaseOneBuild.ScenePath, PhaseTwoBuild.ScenePath, PhaseThreeBuild.ScenePath, ScenePath },
+                locationPathName = output, target = BuildTarget.Android, options = BuildOptions.None
+            });
+            if (report.summary.result != BuildResult.Succeeded)
+                throw new BuildFailedException("Release-packaged Android build failed: " + report.summary.result);
+            Debug.Log("PHASE4_RELEASE_APK_READY " + output + " (" + new FileInfo(output).Length + " bytes)");
+        }
     }
 }
