@@ -24,6 +24,8 @@ The user asked for realistic TRON-style characters, vehicles, and arenas instead
 
 These visuals are original procedural designs in a digital-arena style; they copy no film assets. They are still not authored production art, and no device frame time has been measured with them.
 
+Verification on 2026-10-22 after the change: showroom 27/27, Solar Transit 33/33, two-client online 50/50 (host 34, guest 16), offline Arena (Phase 1 flow) 17/17, and Phase 0 probe desktop checks passed. GridRun.Editor.PhaseFourBuild.BuildAndroid built the debug-signed grid-run-phase4-preview.apk (132,677,119 bytes; SHA-256 137B9726BC5BDB383897EF33703ACDDB581908FDD0DBE208E1F461276DD2A399) with no shader or script errors. That APK has not been installed or profiled on a phone.
+
 ## Verification
 
 Pinned Unity 6000.3.26f1 built desktop players. The final showroom run passed **27/27 checks** and saved phone-landscape 1170x540, desktop 1280x720, and tablet 1024x768 screenshots under ignored artifacts/android-phase-4/. The final Solar Transit run passed **33/33 checks**, including jet, sail, timeout, retry, and phone/desktop layout checks. The two-client online run passed **34/34 host and 16/16 guest checks**, and the movement prototype passed **17/17 checks**. The showroom phone and desktop screenshots were visually reviewed. These desktop runs do not validate physical Android touch, sustained device performance, or store behavior.
