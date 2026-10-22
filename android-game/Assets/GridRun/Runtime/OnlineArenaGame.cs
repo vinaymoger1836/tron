@@ -124,13 +124,8 @@ namespace GridRun
         {
             var rect = Rect(name, parent, anchor, pivot, offset, size);
             var image = rect.gameObject.AddComponent<Image>();
-            UiSkin.Round(image);
-            image.color = new Color(.025f, .16f, .23f, .98f);
             var button = rect.gameObject.AddComponent<Button>();
-            button.targetGraphic = image;
-            var colors = button.colors; colors.highlightedColor = new Color(.3f, .63f, .72f);
-            colors.pressedColor = new Color(.15f, .45f, .58f); colors.selectedColor = colors.highlightedColor;
-            button.colors = colors;
+            UiSkin.Button(button, image);
             if (action != null) button.onClick.AddListener(action);
             Label(name + " label", value, rect, Vector2.zero, Vector2.zero, Vector2.zero, size, 25, TextAnchor.MiddleCenter);
             return button;
@@ -140,8 +135,7 @@ namespace GridRun
         {
             var rect = Rect(name, parent, new Vector2(.5f, 1), new Vector2(.5f, 1), position, size);
             var image = rect.gameObject.AddComponent<Image>();
-            UiSkin.Round(image);
-            image.color = new Color(.02f, .08f, .13f, 1);
+            UiSkin.Field(image);
             var input = rect.gameObject.AddComponent<InputField>();
             input.targetGraphic = image; input.characterLimit = limit;
             var label = Label(name + " text", value, rect, Vector2.zero, Vector2.zero, new Vector2(18, 0), size - new Vector2(36, 0), 28);
@@ -187,8 +181,7 @@ namespace GridRun
             autoLabel = Button("Auto Drive", "AUTO: ON", hud, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-32, 190), new Vector2(260, 78), ToggleAuto).GetComponentInChildren<Text>();
             var setup = Rect("Online setup", safe.transform, new Vector2(.5f, .5f), new Vector2(.5f, .5f), Vector2.zero, new Vector2(1280, 820));
             var setupImage = setup.gameObject.AddComponent<Image>();
-            UiSkin.Round(setupImage);
-            setupImage.color = new Color(.006f, .025f, .045f, .98f); setupPanel = setup.gameObject;
+            UiSkin.Panel(setupImage); setupPanel = setup.gameObject;
             Label("Setup heading", "GRID RUN  /  ONLINE ARENA", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -25), new Vector2(1120, 75), 48, TextAnchor.MiddleCenter);
             Label("Server caption", "GAME SERVER HTTPS URL", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -125), new Vector2(900, 40), 22);
             serverField = Field("Server origin", defaultServerOrigin, setup, new Vector2(0, -170), new Vector2(920, 70), 160);
@@ -201,11 +194,10 @@ namespace GridRun
             joinButton = Button("Join Room", "JOIN ROOM", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(255, -410), new Vector2(440, 85), Join);
             notice = Label("Online notice", "", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 205), new Vector2(1080, 75), 25, TextAnchor.MiddleCenter);
             Label("Setup rules", "Arena / Classic Grid / 2 riders. Host shares the code; both riders connect before START.", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 105), new Vector2(1100, 60), 22, TextAnchor.MiddleCenter);
-            Button("Offline Arena", "OFFLINE ARENA", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 12), new Vector2(350, 78), () => SceneManager.LoadScene("PhaseOneArena"));
+            Button("Offline Arena", "MAIN MENU", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 12), new Vector2(350, 78), () => SceneManager.LoadScene("PhaseOneArena"));
             var lobby = Rect("Online room", safe.transform, new Vector2(.5f, .5f), new Vector2(.5f, .5f), Vector2.zero, new Vector2(1280, 760));
             var lobbyImage = lobby.gameObject.AddComponent<Image>();
-            UiSkin.Round(lobbyImage);
-            lobbyImage.color = new Color(.006f, .025f, .045f, .98f); roomPanel = lobby.gameObject;
+            UiSkin.Panel(lobbyImage); roomPanel = lobby.gameObject;
             roomHeading = Label("Room heading", "ROOM", lobby, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -25), new Vector2(1120, 75), 47, TextAnchor.MiddleCenter);
             roster = Label("Room roster", "", lobby, new Vector2(.5f, .5f), new Vector2(.5f, .5f), new Vector2(0, 50), new Vector2(1040, 400), 29, TextAnchor.MiddleCenter);
             startButton = Button("Start Heat", "START ARENA", lobby, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(-240, 55), new Vector2(425, 95), StartHeat);

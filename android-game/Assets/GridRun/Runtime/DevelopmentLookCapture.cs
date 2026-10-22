@@ -85,6 +85,12 @@ namespace GridRun
             SceneManager.LoadScene("PhaseOneArena");
             yield return new WaitForSecondsRealtime(.8f);
             yield return Shot("look-arena-landing.png");
+            yield return Shot("look-menu-phone.png", 1170, 540);
+            yield return Shot("look-menu-tablet.png", 1024, 768);
+            Submit("Settings");
+            yield return Shot("look-menu-settings-phone.png", 1170, 540);
+            yield return Shot("look-menu-settings.png");
+            Submit("Close Settings");
             var arena = FindFirstObjectByType<ArenaGame>();
             arena.StartMatch();
             yield return new WaitForSecondsRealtime(1.3f);

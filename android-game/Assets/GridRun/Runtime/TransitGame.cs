@@ -120,15 +120,8 @@ namespace GridRun
         {
             var rect = Rect(name, parent, anchor, pivot, offset, size);
             var image = rect.gameObject.AddComponent<Image>();
-            UiSkin.Round(image);
-            image.color = new Color(.025f, .16f, .23f, .98f);
             var button = rect.gameObject.AddComponent<Button>();
-            button.targetGraphic = image;
-            var colors = button.colors;
-            colors.highlightedColor = new Color(.3f, .63f, .72f);
-            colors.pressedColor = new Color(.15f, .45f, .58f);
-            colors.selectedColor = colors.highlightedColor;
-            button.colors = colors;
+            UiSkin.Button(button, image);
             if (action != null) button.onClick.AddListener(action);
             Label(name + " label", value, rect, Vector2.zero, Vector2.zero, Vector2.zero, size, 28, TextAnchor.MiddleCenter);
             return button;
@@ -138,8 +131,7 @@ namespace GridRun
         {
             var rect = Rect(name, parent, new Vector2(.5f, .5f), new Vector2(.5f, .5f), Vector2.zero, new Vector2(1080, 650));
             var panelImage = rect.gameObject.AddComponent<Image>();
-            UiSkin.Round(panelImage);
-            panelImage.color = new Color(.006f, .025f, .045f, .98f);
+            UiSkin.Panel(panelImage);
             Label(name + " title", title, rect, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -25), new Vector2(980, 85), 53, TextAnchor.MiddleCenter);
             Label(name + " detail", detail, rect, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -145), new Vector2(970, 205), 29, TextAnchor.MiddleCenter);
             return rect.gameObject;
@@ -173,7 +165,7 @@ namespace GridRun
             landing = Overlay("Transit landing", safe.transform, "SOLAR TRANSIT", "Cross the amber gap with JET, then the cyan gap with SAIL.\nReach the finish before 12 seconds. Auto Drive starts ON.");
             bestText = Label("Best time", "", landing.transform, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 195), new Vector2(900, 60), 28, TextAnchor.MiddleCenter);
             Button("Start Transit", "START TRANSIT", landing.transform, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(-230, 45), new Vector2(420, 95), StartCourse);
-            Button("Offline Arena", "OFFLINE ARENA", landing.transform, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(230, 45), new Vector2(420, 95), () => SceneManager.LoadScene("PhaseOneArena"));
+            Button("Offline Arena", "MAIN MENU", landing.transform, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(230, 45), new Vector2(420, 95), () => SceneManager.LoadScene("PhaseOneArena"));
             pausePanel = Overlay("Transit pause", safe.transform, "PAUSED", "The timer and cycle are paused. Resume when ready.");
             Button("Resume", "RESUME", pausePanel.transform, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(-230, 45), new Vector2(420, 95), TogglePause);
             Button("Transit Menu", "TRANSIT MENU", pausePanel.transform, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(230, 45), new Vector2(420, 95), ShowLanding);

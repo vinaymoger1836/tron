@@ -116,15 +116,8 @@ namespace GridRun
         {
             var rect = Panel(value, parent, anchor, pivot, position, size);
             var background = rect.gameObject.AddComponent<Image>();
-            UiSkin.Round(background);
-            background.color = new Color(.035f, .15f, .2f, .96f);
             var button = rect.gameObject.AddComponent<Button>();
-            button.targetGraphic = background;
-            var colors = button.colors;
-            colors.highlightedColor = new Color(.6f, 1, 1);
-            colors.pressedColor = new Color(.25f, .6f, .8f);
-            colors.selectedColor = new Color(.6f, 1, 1);
-            button.colors = colors;
+            UiSkin.Button(button, background);
             if (action != null) button.onClick.AddListener(action);
             var text = Label(value, rect, Vector2.zero, Vector2.zero, Vector2.zero, size, 25);
             text.alignment = TextAnchor.MiddleCenter;

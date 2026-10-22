@@ -102,15 +102,8 @@ namespace GridRun
         {
             var rect = Rect(name, parent, anchor, pivot, offset, size);
             var image = rect.gameObject.AddComponent<Image>();
-            UiSkin.Round(image);
-            image.color = new Color(.025f, .16f, .23f, .98f);
             var button = rect.gameObject.AddComponent<Button>();
-            button.targetGraphic = image;
-            var colors = button.colors;
-            colors.highlightedColor = new Color(.3f, .63f, .72f);
-            colors.pressedColor = new Color(.15f, .45f, .58f);
-            colors.selectedColor = colors.highlightedColor;
-            button.colors = colors;
+            UiSkin.Button(button, image);
             if (action != null) button.onClick.AddListener(action);
             Label(name + " label", value, rect, Vector2.zero, Vector2.zero, Vector2.zero, size, 26, TextAnchor.MiddleCenter);
             return button;
@@ -133,7 +126,7 @@ namespace GridRun
                 new Vector2(0, 1), new Vector2(0, 1), new Vector2(35, -16), new Vector2(1200, 65), 40);
             Label("Preview notice", "CATALOG V1  /  PREVIEW ONLY  /  PURCHASES UNAVAILABLE", safe.transform,
                 new Vector2(0, 1), new Vector2(0, 1), new Vector2(37, -75), new Vector2(1350, 50), 24);
-            Button("Back to Arena", "BACK TO ARENA", safe.transform, Vector2.one, Vector2.one,
+            Button("Back to Arena", "MAIN MENU", safe.transform, Vector2.one, Vector2.one,
                 new Vector2(-30, -28), new Vector2(280, 85), ReturnToArena);
             categoryButtons[CosmeticCatalog.Category.Cycle] = Button("Cycle Skins", "CYCLE SKINS", safe.transform,
                 new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(-330, -155), new Vector2(295, 75),
@@ -147,8 +140,7 @@ namespace GridRun
             var panel = Rect("Preview details", safe.transform, new Vector2(.5f, 0), new Vector2(.5f, 0),
                 new Vector2(0, 25), new Vector2(1420, 330));
             var panelImage = panel.gameObject.AddComponent<Image>();
-            UiSkin.Round(panelImage);
-            panelImage.color = new Color(.006f, .025f, .045f, .96f);
+            UiSkin.Panel(panelImage);
             heading = Label("Item name", "", panel, new Vector2(.5f, 1), new Vector2(.5f, 1),
                 new Vector2(0, -12), new Vector2(1290, 70), 44, TextAnchor.MiddleCenter);
             description = Label("Item description", "", panel, new Vector2(.5f, 1), new Vector2(.5f, 1),
@@ -198,8 +190,7 @@ namespace GridRun
                 "CONCEPT PREVIEW  /  UNAVAILABLE TO EQUIP OR BUY";
             position.text = (selected + 1) + " / " + CosmeticCatalog.Count(category);
             foreach (var pair in categoryButtons)
-                pair.Value.GetComponent<Image>().color = pair.Key == category ?
-                    new Color(.07f, .31f, .43f, .98f) : new Color(.025f, .16f, .23f, .98f);
+                UiSkin.Button(pair.Value, pair.Value.GetComponent<Image>(), pair.Key == category);
         }
 
         private void Update()
