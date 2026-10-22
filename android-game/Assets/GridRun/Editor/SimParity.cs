@@ -90,6 +90,8 @@ namespace GridRun.Editor
                 case "arena": round = GridRules.CreateArenaRound(seed, difficulty, map, rule); break;
                 case "operation": round = GridRules.CreateOperationRound(op, seed, difficulty); break;
                 case "shift": round = SimShift.CreateShiftRound(seed, difficulty, map); break;
+                case "ai4":
+                case "autoplayer": round = AiRound(kind, seed, difficulty, map, rule); break;
                 default: round = GridRules.CreateLessonRound(seed); break;
             }
             bool shift = kind == "shift";
@@ -114,6 +116,24 @@ namespace GridRun.Editor
             if (i + 1 < lines.Length && lines[i + 1].StartsWith("E ", StringComparison.Ordinal)) i++;
             report.AppendLine((failures == 0 ? "PASS " : "FAIL ") + name + " (" + tick + " ticks, outcome " + Describe(round.Outcome) + ")");
             return failures > 0 ? 1 : 0;
+        }
+
+        static Round AiRound(string kind, uint seed, string difficulty, string map, string rule)
+        {
+            var spawns = SimMaps.Get(map).Arena;
+            var riders = new List<RiderSpec>();
+            if (kind == "ai4")
+            {
+                string[] styles = { "hunter", "survivor", "trapper", "survivor" };
+                for (int i = 0; i < spawns.Length; i++) riders.Add(new RiderSpec("AI" + i, spawns[i], false, "ai", styles[i]));
+            }
+            else
+            {
+                riders.Add(new RiderSpec("YOU", spawns[0], true, "ai"));
+                string[] names = { "AXIOM", "HELIX", "PULSE" }, styles = { "hunter", "survivor", "trapper" };
+                for (int i = 0; i < 3; i++) riders.Add(new RiderSpec(names[i], spawns[i + 1], false, "ai", styles[i]));
+            }
+            return GridRules.CreateRound(seed, riders, difficulty, map, rule, kind == "ai4");
         }
 
         static bool Apply(Round round, bool shift, Action action)

@@ -11,6 +11,7 @@ import {
   createShiftRound, stepShiftRound, queueShiftTurn, setShiftFire, requestShiftForm, throwShiftDisc, setShiftMove,
 } from '../dist/grid-shift.js';
 import { roundSeed } from '../dist/match.js';
+import { getMap } from '../dist/maps.js';
 
 const output = resolve(process.argv[2] || 'artifacts/sim-parity/traces.txt');
 const view = new DataView(new ArrayBuffer(8));
@@ -66,7 +67,22 @@ const scenarios = [
       ...turns(700, 120, 30, [-1, 1, 1, -1])] },
   { name: 'shift-rookie-vault', kind: 'shift', seed: 2024, difficulty: 'rookie', map: 'vault', ticks: 8000,
     actions: [...turns(50, 100, 40, [1, -1, -1, 1]), [500, 'fire', 1], [700, 'fire', 0], [900, 'form'], [905, 'move', 0, -1], [1000, 'disc']] },
+  { name: 'shift-foot-idle', kind: 'shift', seed: 77, difficulty: 'expert', map: 'classic', ticks: 36010, actions: [[10, 'form']] },
+  { name: 'shift-cycle-parked', kind: 'shift', seed: 78, difficulty: 'standard', map: 'vault', ticks: 36010, actions: [[0, 'auto', 0]] },
+  { name: 'shift-foot-dodge', kind: 'shift', seed: 79, difficulty: 'rookie', map: 'solar', ticks: 36010,
+    actions: [[5, 'form'], [60, 'move', 1, 0], [180, 'move', 0, 1], [300, 'move', -1, 0], [420, 'move', 0, -1], [540, 'move', 1, 0],
+      [200, 'disc'], [400, 'disc'], [600, 'disc'], [800, 'disc'], [660, 'move', 0, 0]] },
   { name: 'lesson', kind: 'lesson', seed: 21, ticks: 1600, actions: [[100, 'turn', 1], [300, 'turn', -1], [500, 'turn', -1]] },
+  // Long AI-driven rounds: every rider decides with the same AI, so tactics, shooting, flight,
+  // pickups, decay, and late shrink all get exercised over thousands of ticks.
+  { name: 'ai4-standard-classic', kind: 'ai4', seed: 101, difficulty: 'standard', map: 'classic', ticks: 36010, actions: [] },
+  { name: 'ai4-expert-solar-decay', kind: 'ai4', seed: 202, difficulty: 'expert', map: 'solar', rule: 'decay', ticks: 36010, actions: [] },
+  { name: 'ai4-rookie-vault', kind: 'ai4', seed: 303, difficulty: 'rookie', map: 'vault', ticks: 36010, actions: [] },
+  { name: 'ai4-expert-classic-decay', kind: 'ai4', seed: 404, difficulty: 'expert', map: 'classic', rule: 'decay', ticks: 36010, actions: [] },
+  { name: 'autoplayer-standard-classic', kind: 'autoplayer', seed: 505, difficulty: 'standard', map: 'classic', ticks: 36010, actions: [] },
+  { name: 'autoplayer-expert-solar', kind: 'autoplayer', seed: 606, difficulty: 'expert', map: 'solar', ticks: 36010, actions: [] },
+  { name: 'autoplayer-rookie-vault-decay', kind: 'autoplayer', seed: 707, difficulty: 'rookie', map: 'vault', rule: 'decay', ticks: 36010, actions: [] },
+  { name: 'autoplayer-expert-vault', kind: 'autoplayer', seed: 808, difficulty: 'expert', map: 'vault', ticks: 36010, actions: [] },
   { name: 'shrink-idle', kind: 'lesson', seed: 3, ticks: 36010, actions: [[0, 'auto', 0]] },
 ];
 
@@ -75,6 +91,14 @@ function build(s) {
   if (s.kind === 'arena') return createArenaRound({ seed: s.seed, difficulty: s.difficulty, map: s.map, rule: s.rule || 'classic' });
   if (s.kind === 'operation') return createOperationRound({ id: s.op, seed: s.seed, difficulty: s.difficulty });
   if (s.kind === 'shift') return createShiftRound({ seed: s.seed, difficulty: s.difficulty, map: s.map });
+  if (s.kind === 'ai4' || s.kind === 'autoplayer') {
+    const spawns = getMap(s.map).spawns.arena;
+    const riders = s.kind === 'ai4'
+      ? spawns.map((spawn, i) => ({ id: 'AI' + i, ...spawn, controller: 'ai', style: ['hunter', 'survivor', 'trapper', 'survivor'][i] }))
+      : [{ id: 'YOU', ...spawns[0], isPlayer: true, controller: 'ai' },
+        ...['hunter', 'survivor', 'trapper'].map((style, i) => ({ id: ['AXIOM', 'HELIX', 'PULSE'][i], ...spawns[i + 1], controller: 'ai', style }))];
+    return createRound({ seed: s.seed, difficulty: s.difficulty, map: s.map, rule: s.rule || 'classic', multiplayer: s.kind === 'ai4', riders });
+  }
   return createRound({ seed: s.seed, riders: [{ id: 'YOU', x: 0, z: 16, dir: 0, isPlayer: true, controller: 'none' }] });
 }
 
