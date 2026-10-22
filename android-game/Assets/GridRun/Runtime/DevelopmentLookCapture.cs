@@ -31,11 +31,8 @@ namespace GridRun
 
         private IEnumerator Shot(string file, int width = 1280, int height = 720)
         {
-            if (Screen.width != width || Screen.height != height)
-            {
-                Screen.SetResolution(width, height, FullScreenMode.Windowed);
-                yield return new WaitForSecondsRealtime(.5f);
-            }
+            Screen.SetResolution(width, height, FullScreenMode.Windowed);
+            yield return new WaitForSecondsRealtime(.5f);
             ScreenCapture.CaptureScreenshot(Path.Combine(output, file));
             yield return new WaitForSecondsRealtime(.4f);
             Debug.Log("LOOK_CAPTURE " + file);

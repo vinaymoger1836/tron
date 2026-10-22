@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace GridRun
@@ -283,10 +284,12 @@ namespace GridRun
         {
             var batch = new GridMesh.Batch();
             Vector3 apex = new Vector3(0, 1.67f, -.48f);
-            var membrane = new Mesh { name = "Solar sail membrane" };
-            membrane.vertices = new[] { apex, new Vector3(-2.15f, 1.28f, -.72f), new Vector3(-1.68f, 1.30f, .54f),
+            // Each face gets its own vertices; shared two-sided vertices would average to a zero normal.
+            var corners = new[] { apex, new Vector3(-2.15f, 1.28f, -.72f), new Vector3(-1.68f, 1.30f, .54f),
                 new Vector3(2.15f, 1.28f, -.72f), new Vector3(1.68f, 1.30f, .54f) };
-            membrane.triangles = new[] { 0, 1, 2, 0, 2, 1, 0, 4, 3, 0, 3, 4 };
+            var membrane = new Mesh { name = "Solar sail membrane" };
+            membrane.vertices = new List<Vector3>(corners).Concat(corners).ToArray();
+            membrane.triangles = new[] { 0, 2, 1, 0, 3, 4, 5, 6, 7, 5, 9, 8 };
             membrane.RecalculateNormals();
             batch.Add(Suit, membrane);
             foreach (float side in new[] { -1f, 1f })

@@ -309,12 +309,14 @@ namespace GridRun
             Color color = y >= 0
                 ? Color.Lerp(horizon, new Color(.006f, .012f, .02f), Mathf.Pow(y, .5f))
                 : Color.Lerp(horizon, new Color(.004f, .008f, .012f), Mathf.Clamp01(-y * 5));
-            color += new Color(.10f, .55f, .75f) * Mathf.Exp(-Mathf.Abs(y) * 18f) * 1.1f;
+            color += new Color(.10f, .55f, .75f) * Mathf.Exp(-Mathf.Abs(y) * 14f) * 1.6f;
             float azimuth = Mathf.Atan2(d.x, d.z);
-            float panel = Mathf.SmoothStep(0, 1, Mathf.InverseLerp(.93f, .985f, Mathf.Cos(azimuth * 8)));
-            float band = Mathf.SmoothStep(0, 1, Mathf.InverseLerp(.04f, .1f, y)) * Mathf.SmoothStep(0, 1, Mathf.InverseLerp(.5f, .38f, y));
-            color += new Color(.35f, 1.2f, 1.6f) * panel * band;
-            color += new Color(.25f, .32f, .38f) * Mathf.Pow(Mathf.Max(0, y), 6) * 1.6f;
+            float panel = Mathf.SmoothStep(0, 1, Mathf.InverseLerp(.9f, .975f, Mathf.Cos(azimuth * 10)));
+            float band = Mathf.SmoothStep(0, 1, Mathf.InverseLerp(.04f, .1f, y)) * Mathf.SmoothStep(0, 1, Mathf.InverseLerp(.55f, .4f, y));
+            color += new Color(.45f, 1.5f, 2.0f) * panel * band;
+            // Overhead soft box and a cool fill strip give the black shell readable highlights.
+            color += new Color(.5f, .62f, .72f) * Mathf.Pow(Mathf.Max(0, y), 5) * 2.2f;
+            color += new Color(.2f, .45f, .6f) * Mathf.Exp(-Mathf.Abs(y - .7f) * 22f) * .8f;
             color.a = 1;
             return color;
         }

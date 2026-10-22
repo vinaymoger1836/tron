@@ -15,7 +15,8 @@ Shader "GridRun/LightWall"
         {
             Name "LightWall"
             Tags { "LightMode" = "UniversalForward" }
-            Blend SrcAlpha One
+            // Alpha blending (not additive) so overlapping segments and box faces never stack into white.
+            Blend SrcAlpha OneMinusSrcAlpha
             ZWrite Off
             Cull Off
             HLSLPROGRAM
@@ -57,7 +58,7 @@ Shader "GridRun/LightWall"
                 half scan = 0.88 + 0.12 * sin(y * 46.0);
                 half alpha = saturate(_FillAlpha * scan + edge);
                 half3 color = _Color.rgb * (0.32 + edge * 1.15);
-                color = MixFogColor(color, half3(0, 0, 0), input.fogFactor);
+                color = MixFog(color, input.fogFactor);
                 return half4(color, alpha);
             }
             ENDHLSL
