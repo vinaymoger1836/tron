@@ -56,7 +56,7 @@ Shader "GridRun/LightWall"
                 half edge = max(exp(-top / _EdgeWidth), exp(-y / (_EdgeWidth * 0.8)) * 0.8);
                 half scan = 0.88 + 0.12 * sin(y * 46.0);
                 half alpha = saturate(_FillAlpha * scan + edge);
-                half3 color = _Color.rgb * (0.45 + edge * 2.4);
+                half3 color = _Color.rgb * (0.32 + edge * 1.15);
                 color = MixFogColor(color, half3(0, 0, 0), input.fogFactor);
                 return half4(color, alpha);
             }

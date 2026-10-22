@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.Rendering;
@@ -73,9 +73,9 @@ namespace GridRun
             Box("Jet void", new Vector3(0, -2.3f, -12.5f), new Vector3(104, .3f, 5), wallMaterial, transform);
             Box("Sail void", new Vector3(0, -2.3f, 7), new Vector3(104, .3f, 10), wallMaterial, transform);
             foreach (float z in new[] { TransitRun.JetGapStart, TransitRun.JetGapEnd })
-                Box("Amber jet gap edge", new Vector3(0, .03f, z), new Vector3(104, .14f, .25f), amberMaterial, transform);
+                Box("Amber jet gap edge", new Vector3(0, .02f, z), new Vector3(104, .06f, .18f), amberMaterial, transform);
             foreach (float z in new[] { TransitRun.SailGapStart, TransitRun.SailGapEnd })
-                Box("Cyan sail gap edge", new Vector3(0, .03f, z), new Vector3(104, .14f, .25f), glowMaterial, transform);
+                Box("Cyan sail gap edge", new Vector3(0, .02f, z), new Vector3(104, .06f, .18f), glowMaterial, transform);
             Box("Finish gate", new Vector3(0, .04f, TransitRun.FinishZ), new Vector3(104, .18f, .5f), glowMaterial, transform);
             foreach (float x in new[] { -52f, 52f })
             {

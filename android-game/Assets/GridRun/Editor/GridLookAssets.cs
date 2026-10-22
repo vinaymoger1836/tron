@@ -16,8 +16,8 @@ namespace GridRun.Editor
         private const string PostProcessDataPath =
             "Packages/com.unity.render-pipelines.universal/Runtime/Data/PostProcessData.asset";
 
-        public static readonly Color Cyan = new Color(.22f, 2.4f, 3.4f);
-        public static readonly Color Amber = new Color(3.6f, 1.15f, .14f);
+        public static readonly Color Cyan = new Color(.16f, 1.55f, 2.2f);
+        public static readonly Color Amber = new Color(2.4f, .72f, .08f);
 
         [MenuItem("Grid Run/Look/Apply Grid Look")]
         public static void Apply()
@@ -34,7 +34,7 @@ namespace GridRun.Editor
             Glow(MaterialsPath + "/Amber.mat", unlit, Amber);
             var grid = Ensure(MaterialsPath + "/Floor.mat", floor);
             grid.SetColor("_BaseColor", new Color(.006f, .011f, .018f));
-            grid.SetColor("_LineColor", new Color(.10f, .95f, 1.35f));
+            grid.SetColor("_LineColor", new Color(.05f, .48f, .7f));
             grid.SetFloat("_LineWidth", .025f);
             grid.SetFloat("_MajorEvery", 4);
             grid.SetFloat("_Reflectivity", .62f);
@@ -46,11 +46,11 @@ namespace GridRun.Editor
             Lit(KitPath + "/Tire.mat", lit, new Color(.014f, .015f, .017f), .1f, .52f);
             Lit(KitPath + "/Structure.mat", lit, new Color(.018f, .024f, .032f), .72f, .66f);
             Glow(KitPath + "/Glow.mat", unlit, Cyan);
-            Glow(KitPath + "/GlowSoft.mat", unlit, new Color(.05f, .55f, .8f));
+            Glow(KitPath + "/GlowSoft.mat", unlit, new Color(.03f, .3f, .45f));
             Glow(KitPath + "/GlowAmber.mat", unlit, Amber);
-            Wall(KitPath + "/TrailCyan.mat", wall, Cyan, .42f, .07f);
-            Wall(KitPath + "/TrailAmber.mat", wall, Amber, .42f, .07f);
-            Wall(KitPath + "/Boundary.mat", wall, new Color(.5f, 1.4f, 2.2f), .16f, .09f);
+            Wall(KitPath + "/TrailCyan.mat", wall, Cyan, .34f, .06f);
+            Wall(KitPath + "/TrailAmber.mat", wall, Amber, .34f, .06f);
+            Wall(KitPath + "/Boundary.mat", wall, new Color(.3f, .9f, 1.4f), .10f, .08f);
             Ensure(KitPath + "/Sky.mat", sky);
 
             ConfigurePipeline();
@@ -140,9 +140,10 @@ namespace GridRun.Editor
             var profile = ScriptableObject.CreateInstance<VolumeProfile>();
             AssetDatabase.CreateAsset(profile, path);
             var bloom = profile.Add<Bloom>(true);
-            bloom.threshold.Override(.95f);
-            bloom.intensity.Override(1.15f);
-            bloom.scatter.Override(.68f);
+            bloom.threshold.Override(1.0f);
+            bloom.intensity.Override(.6f);
+            bloom.scatter.Override(.58f);
+            bloom.clamp.Override(8);
             bloom.highQualityFiltering.Override(false);
             bloom.downscale.Override(BloomDownscaleMode.Quarter);
             var tonemapping = profile.Add<Tonemapping>(true);

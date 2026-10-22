@@ -85,7 +85,7 @@ Shader "GridRun/GridFloor"
                     pools += _GridGlowColor[i].rgb * (_GridGlowPos[i].w * exp(-dot(offset, offset) * 0.28));
                 }
                 color += pools * 0.20;
-                color += _LineColor.rgb * (minor * 0.55 + major + halo) * (1.0 + pools * 0.8);
+                color += _LineColor.rgb * (minor * 0.45 + major + halo) * (1.0 + pools * 0.8);
 
                 half3 view = GetWorldSpaceNormalizeViewDir(input.positionWS);
                 half fresnel = 0.30 + 0.70 * pow(1.0 - saturate(view.y), 4.0);

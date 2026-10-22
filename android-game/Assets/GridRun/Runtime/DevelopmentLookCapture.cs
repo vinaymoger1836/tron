@@ -57,19 +57,22 @@ namespace GridRun
         private static IEnumerator Hero(Behaviour game, Transform subject, Vector3 offset, string file, DevelopmentLookCapture self)
         {
             game.enabled = false;
+            var canvases = FindObjectsByType<Canvas>(FindObjectsSortMode.None);
+            foreach (var canvas in canvases) canvas.enabled = false;
             var camera = Camera.main.transform;
             Vector3 position = camera.position;
             Quaternion rotation = camera.rotation;
-            camera.position = subject.position + subject.rotation * offset;
+            camera.position = subject.position + subject.rotation * offset * subject.lossyScale.y;
             camera.LookAt(subject.position + Vector3.up * .7f * subject.lossyScale.y);
             yield return self.Shot(file);
             camera.SetPositionAndRotation(position, rotation);
+            foreach (var canvas in canvases) canvas.enabled = true;
             game.enabled = true;
         }
 
         private IEnumerator Run()
         {
-            yield return new WaitForSecondsRealtime(1f);
+            yield return new WaitForSecondsRealtime(2.5f);
             yield return Shot("look-showroom-desktop.png");
             yield return Shot("look-showroom-phone.png", 1170, 540);
             Submit("Sets");
@@ -115,10 +118,13 @@ namespace GridRun
             transit.TogglePause();
             yield return Hero(transit, cycle, new Vector3(5f, 1.5f, -2f), "look-transit-jet-hero.png", this);
             transit.TogglePause();
-            yield return new WaitForSecondsRealtime(1.3f);
+            transit.StartCourse();
+            yield return new WaitForSecondsRealtime(.4f);
             Submit("Solar Sail");
-            yield return new WaitForSecondsRealtime(.5f);
+            yield return new WaitForSecondsRealtime(.55f);
             yield return Shot("look-transit-sail.png");
+            transit.TogglePause();
+            yield return Hero(transit, cycle, new Vector3(4.5f, 2.5f, -4f), "look-transit-sail-hero.png", this);
             Application.Quit(0);
         }
     }
