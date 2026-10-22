@@ -27,7 +27,8 @@ namespace GridRun
         private void Awake()
         {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            ignoreFocusForCapture = Array.IndexOf(Environment.GetCommandLineArgs(), "--phase3-capture-dir") >= 0;
+            ignoreFocusForCapture = Array.IndexOf(Environment.GetCommandLineArgs(), "--phase3-capture-dir") >= 0 ||
+                Array.IndexOf(Environment.GetCommandLineArgs(), "--look-capture-dir") >= 0;
 #endif
             Application.targetFrameRate = 60;
             QualitySettings.vSyncCount = 0;

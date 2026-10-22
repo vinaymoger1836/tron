@@ -26,7 +26,9 @@ namespace GridRun
         private void Awake()
         {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            ignoreHostFocusForVerification = System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "--phase1-capture-dir") >= 0;
+            var args = System.Environment.GetCommandLineArgs();
+            ignoreHostFocusForVerification = System.Array.IndexOf(args, "--phase1-capture-dir") >= 0 ||
+                System.Array.IndexOf(args, "--look-capture-dir") >= 0;
 #endif
             Application.targetFrameRate = 60;
             QualitySettings.vSyncCount = 0;

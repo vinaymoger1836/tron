@@ -113,6 +113,15 @@ namespace GridRun
                         " center=" + renderer.bounds.center.ToString("F2") + " size=" + renderer.bounds.size.ToString("F2"));
             yield return Hero(arena, player, new Vector3(3.2f, 1.6f, 3.6f), "look-arena-hero-front.png", this);
             yield return Hero(arena, player, new Vector3(-4.5f, 2.4f, -5.5f), "look-arena-hero-rear.png", this);
+            foreach (var renderer in FindObjectsByType<Renderer>(FindObjectsSortMode.None))
+                if (renderer.name == "Light trail" && renderer.sharedMaterial == GridLook.Trail(true))
+                {
+                    var marker = new GameObject("Trail probe").transform;
+                    marker.position = renderer.bounds.center - Vector3.up * .55f;
+                    yield return Hero(arena, marker, new Vector3(2.5f, 3.5f, -4f), "debug-trail-close.png", this);
+                    Destroy(marker.gameObject);
+                    break;
+                }
             var rival = GameObject.Find("Rival cycle").transform;
             yield return Hero(arena, rival, new Vector3(4f, 1.2f, -.5f), "look-arena-hero-rival.png", this);
             arena.TogglePause();
