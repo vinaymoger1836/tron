@@ -46,8 +46,38 @@ namespace GridRun
         private static GameObject Control(string name)
         {
             foreach (var button in FindObjectsByType<Button>(FindObjectsSortMode.None))
-                if (button.name == name) return button.gameObject;
+                if (button.name == name && button.gameObject.activeInHierarchy) return button.gameObject;
             throw new InvalidOperationException("Missing control: " + name);
+        }
+
+        private static string Caption(string name) => Control(name).GetComponentInChildren<Text>().text;
+
+        // Opens a solo mode from the main menu with the given map and waits for the heat to run.
+        private static IEnumerator Begin(Solo.SoloGame solo, string card, string map = null, string operation = null)
+        {
+            Submit("Start Arena");
+            yield return null;
+            Submit(card);
+            yield return null;
+            if (map != null) while (!Caption("Option Map").Contains(map)) Submit("Option Map");
+            if (operation != null) while (!Caption("Option Operation").Contains(operation)) Submit("Option Operation");
+            Submit("Enter Mode");
+            yield return null;
+            if (solo.Phase == "brief") Submit("Launch");
+            float until = Time.realtimeSinceStartup + 5;
+            while (solo.Phase != "running" && Time.realtimeSinceStartup < until) yield return null;
+        }
+
+        private static IEnumerator Leave(Solo.SoloGame solo)
+        {
+            if (solo.Phase == "running" || solo.Phase == "countdown") solo.TogglePause();
+            yield return null;
+            if (solo.Phase == "paused") { Submit("Pause Main Menu"); yield return null; yield break; }
+            if (solo.Phase == "replay") Submit("Skip Replay");
+            float until = Time.realtimeSinceStartup + 3;
+            while (solo.Phase != "result" && Time.realtimeSinceStartup < until) yield return null;
+            Submit("Main Menu");
+            yield return null;
         }
 
         private static void Submit(string name) =>
@@ -92,20 +122,27 @@ namespace GridRun
             yield return Shot("look-menu-settings.png");
             Submit("Close Settings");
             var arena = FindFirstObjectByType<ArenaGame>();
-            arena.StartMatch();
+            var solo = arena.Solo;
+            Submit("Start Arena");
+            yield return Shot("look-modes.png");
+            Submit("Back To Menu");
+
+            // Duel on Classic Grid: gameplay, close views, low quality.
+            yield return Begin(solo, "Mode Duel", "CLASSIC");
             yield return new WaitForSecondsRealtime(1.3f);
-            Press("Left");
+            solo.Turn(-1);
             yield return new WaitForSecondsRealtime(1.1f);
-            Press("Right");
+            solo.Turn(1);
             yield return new WaitForSecondsRealtime(1.2f);
             yield return Shot("look-arena-play.png");
-            arena.TogglePause();
+            solo.TogglePause();
             var player = GameObject.Find("Player cycle").transform;
             yield return Hero(arena, player, new Vector3(3.2f, 1.6f, 3.6f), "look-arena-hero-front.png", this);
             yield return Hero(arena, player, new Vector3(-4.5f, 2.4f, -5.5f), "look-arena-hero-rear.png", this);
-            var rival = GameObject.Find("Rival cycle").transform;
-            yield return Hero(arena, rival, new Vector3(4f, 1.2f, -.5f), "look-arena-hero-rival.png", this);
-            arena.TogglePause();
+            foreach (var rider in solo.Round.Riders)
+                if (!rider.IsPlayer && GameObject.Find("Rider " + rider.Id) is GameObject rival && rival.activeInHierarchy)
+                    yield return Hero(arena, rival.transform, new Vector3(4f, 1.2f, -.5f), "look-arena-hero-rival.png", this);
+            solo.TogglePause();
             yield return new WaitForSecondsRealtime(.3f);
             yield return Shot("look-arena-play-phone.png", 1170, 540);
             GridLook.HighQuality = false;
@@ -113,6 +150,41 @@ namespace GridRun
             yield return Shot("look-arena-low.png");
             GridLook.HighQuality = true;
             GridLook.ApplyQuality(Camera.main);
+            yield return Leave(solo);
+
+            // Arena on Solar Circuit: three rivals, reactor pylons, amber palette.
+            yield return Begin(solo, "Mode Arena", "SOLAR");
+            yield return new WaitForSecondsRealtime(2.2f);
+            yield return Shot("look-arena-solar.png");
+            solo.TogglePause();
+            yield return Hero(arena, GameObject.Find("Player cycle").transform, new Vector3(-3.5f, 2.2f, -6f), "look-arena-solar-hero.png", this);
+            yield return Leave(solo);
+
+            // Duel on Data Vault.
+            yield return Begin(solo, "Mode Duel", "DATA VAULT");
+            yield return new WaitForSecondsRealtime(1.6f);
+            yield return Shot("look-duel-vault.png");
+            yield return Leave(solo);
+
+            // Grid Shift: the on-foot rider and a thrown disc.
+            yield return Begin(solo, "Mode Shift", "CLASSIC");
+            yield return new WaitForSecondsRealtime(.4f);
+            Submit("Form");
+            yield return new WaitForSecondsRealtime(.8f);
+            yield return Shot("look-shift-foot.png");
+            solo.TogglePause();
+            yield return Hero(arena, GameObject.Find("Player cycle").transform, new Vector3(1.9f, 1.4f, 2.6f), "look-shift-foot-hero.png", this);
+            solo.TogglePause();
+            Submit("Disc");
+            yield return new WaitForSecondsRealtime(.25f);
+            yield return Shot("look-shift-disc.png");
+            yield return Leave(solo);
+
+            // Portal Run gates.
+            yield return Begin(solo, "Mode Operations", null, "PORTAL");
+            yield return new WaitForSecondsRealtime(1f);
+            yield return Shot("look-portal.png");
+            yield return Leave(solo);
 
             SceneManager.LoadScene("PhaseThreeTransit");
             yield return new WaitForSecondsRealtime(.8f);

@@ -7,6 +7,8 @@ Shader "GridRun/LightWall"
         [HDR] _Color("Color", Color) = (0.2, 2.2, 3.0, 1)
         _FillAlpha("Fill alpha", Range(0, 1)) = 0.42
         _EdgeWidth("Edge width", Float) = 0.07
+        _StripeA("Stripe A height fraction (0 = none)", Range(0, 1)) = 0
+        _StripeB("Stripe B height fraction (0 = none)", Range(0, 1)) = 0
     }
     SubShader
     {
@@ -29,6 +31,8 @@ Shader "GridRun/LightWall"
                 half4 _Color;
                 half _FillAlpha;
                 float _EdgeWidth;
+                half _StripeA;
+                half _StripeB;
             CBUFFER_END
 
             struct Attributes { float4 positionOS : POSITION; };
@@ -58,6 +62,10 @@ Shader "GridRun/LightWall"
                 float y = clamp(input.height.x, 0.0, input.height.y);
                 float top = input.height.y - y;
                 half edge = max(exp(-top / _EdgeWidth), exp(-y / (_EdgeWidth * 0.8)) * 0.8);
+                // Rider-style bands (Hunter, Survivor, Trapper) so trails differ by more than colour.
+                half stripe = (_StripeA > 0 ? exp(-abs(y - _StripeA * input.height.y) / 0.022) : 0) +
+                              (_StripeB > 0 ? exp(-abs(y - _StripeB * input.height.y) / 0.022) : 0);
+                edge = max(edge, stripe * 0.85);
                 half scan = 0.88 + 0.12 * sin(y * 46.0);
                 half alpha = saturate(_FillAlpha * scan + edge);
                 half3 color = _Color.rgb * (0.32 + edge * 1.15);

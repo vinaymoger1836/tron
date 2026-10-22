@@ -169,9 +169,9 @@ namespace GridRun
             return obj;
         }
 
-        private static void Place(Transform parent, string name, Dictionary<int, Mesh> meshes)
+        private static void Place(Transform parent, string name, Dictionary<int, Mesh> meshes, Material glow, Material soft)
         {
-            Material[] materials = { Assets.Structure, Assets.Glow, Assets.GlowSoft, Assets.GlowAmber };
+            Material[] materials = { Assets.Structure, glow ?? Assets.Glow, soft ?? Assets.GlowSoft, Assets.GlowAmber };
             foreach (var pair in meshes) MeshObject(name + " " + pair.Key, parent, pair.Value, materials[pair.Key]);
         }
 
@@ -184,7 +184,7 @@ namespace GridRun
         }
 
         // Stepped spectator tiers, a tall back wall, and light columns surrounding a square arena.
-        public static void Stadium(Transform parent, float inner)
+        public static void Stadium(Transform parent, float inner, Material glow = null, Material soft = null)
         {
             Place(parent, "Stadium", Cached("stadium " + inner, batch =>
             {
@@ -216,11 +216,11 @@ namespace GridRun
                         Box(2, new Vector3(x, 14, wallZ - 1.23f), new Vector3(.18f, 24, .06f));
                     }
                 }
-            }));
+            }), glow, soft);
         }
 
         // Distant towers that give the horizon depth; fog keeps them atmospheric.
-        public static void Skyline(Transform parent, float minRadius, float maxRadius, int count, int seed)
+        public static void Skyline(Transform parent, float minRadius, float maxRadius, int count, int seed, Material glow = null, Material soft = null)
         {
             Place(parent, "Skyline", Cached("skyline " + minRadius + " " + maxRadius + " " + count + " " + seed, batch =>
             {
@@ -247,7 +247,7 @@ namespace GridRun
                     if (random.NextDouble() < .5)
                         Box(2, new Vector3(0, height * R(.35f, .8f), depth * .5f + .05f), new Vector3(width, .14f, .08f));
                 }
-            }));
+            }), glow, soft);
         }
 
         private static Mesh QuadMesh()

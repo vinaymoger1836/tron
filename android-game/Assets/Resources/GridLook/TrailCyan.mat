@@ -27,6 +27,8 @@ Material:
     m_Floats:
     - _EdgeWidth: 0.06
     - _FillAlpha: 0.34
+    - _StripeA: 0
+    - _StripeB: 0
     m_Colors:
     - _Color: {r: 0.16, g: 1.55, b: 2.2, a: 1}
   m_BuildTextureStacks: []

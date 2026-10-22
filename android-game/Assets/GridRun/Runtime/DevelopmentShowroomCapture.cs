@@ -129,14 +129,19 @@ namespace GridRun
             yield return null;
             Check("Back returns to offline Arena", SceneManager.GetActiveScene().name == "PhaseOneArena" &&
                 FindFirstObjectByType<ArenaGame>() != null);
-            Check("Previous modes remain linked", Control("Online Room") != null &&
-                Control("Solar Transit") != null);
+            Check("Previous modes remain linked", Control("Online Room") != null && Control("Start Arena") != null);
             Submit("Start Arena");
+            yield return null;
+            Check("Solar Transit remains linked from mode select", Control("Solar Transit") != null);
+            Submit("Mode Duel");
+            yield return null;
+            Submit("Enter Mode");
             yield return new WaitForSecondsRealtime(.25f);
             Check("Arena still begins a match", GameObject.Find("Player cycle") != null &&
                 GameObject.Find("Play HUD") != null);
             Submit("Pause");
-            Submit("Main Menu");
+            Submit("Pause Main Menu");
+            yield return null;
             Submit("Style Preview");
             yield return null;
             game = FindFirstObjectByType<CosmeticShowroom>();

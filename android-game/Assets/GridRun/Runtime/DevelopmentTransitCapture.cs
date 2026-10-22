@@ -163,6 +163,8 @@ namespace GridRun
             yield return null;
             Check("Offline Arena remains accessible", SceneManager.GetActiveScene().name == "PhaseOneArena" &&
                 FindFirstObjectByType<ArenaGame>() != null);
+            Submit("Start Arena");
+            yield return null;
             Submit("Solar Transit");
             yield return null;
             game = FindFirstObjectByType<TransitGame>();

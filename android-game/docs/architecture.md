@@ -18,6 +18,8 @@ The package manifest pins URP 17.3.0 and uGUI 2.0.0, both confirmed in the insta
 - Scene creation is idempotent and uses persisted material references to avoid stripping required runtime shaders.
 - Versioned persistent progress, purchases, and network protocol handling belong to later phases.
 
+**Revision 2026-10-22 (offline modes).** Gameplay rules for every solo mode now come from `Runtime/Sim/` (namespace `GridRun.Sim`), a plain C# port of the browser rule modules with no Unity references. The browser stays the source of truth: `scripts/sim-traces.mjs` records reference traces and `Editor/SimParity.cs` requires the port to reproduce them exactly (`scripts/Verify-SimParity.ps1`). Any rule change must be made in both and re-checked. Presentation lives in `Runtime/Solo/` (SoloGame flow, SoloWorld rendering, SoloHud, SoloProfile storage, SoloAudio) and maps simulation `(x, z)` to Unity `(x, -z)` so relative turns read correctly on screen. The earlier `ArenaMatch` two-rider rules were retired; Solar Transit keeps its separate `TransitRun` scene.
+
 ## Rendering baseline
 
 Use an unlit stylized arena with 2x MSAA, HDR disabled, no depth/opaque copy, no real-time shadows, and 0.85 render scale. This establishes a simple mobile baseline; it is not the final commercial art direction or a claim of performance. The first scene has a procedural cycle, luminous grid and boundaries, and a steady following camera.
