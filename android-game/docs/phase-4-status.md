@@ -13,6 +13,17 @@
 
 A shared procedural CycleVisual now replaces the cube-based cycles and riders in the prototype, offline Arena, online rooms, Solar Transit, and the showroom. It has a tapered fairing, helmet and visor, two lit wheel rims, animated wheel spin and turn lean, a pulsing light-jet plume, and a deploying solar sail. The showroom camera, display trail, and body contrast were adjusted so the cycle is readable at phone and desktop sizes. A generated rounded UI shape gives menus and controls a consistent edge. This is a clearer playable art baseline; authored models, materials, character animation, effects, and sound are still needed for the intended production look.
 
+## Grid look - 2026-10-22
+
+The user asked for realistic TRON-style characters, vehicles, and arenas instead of block shapes and flat colour. They chose code-built models first, with Blender-scripted models as the fallback if this is not satisfactory.
+
+- CycleVisual was rebuilt from lofted, lathed, and swept meshes: a sculpted glossy-black shell, hubless ring wheels with luminous side rings and tread lines, fenders with light edges, a prone rider (helmet, visor line, suit circuit lines, back identity disc), deployable light-jet wings with twin thrusters, and a solar sail with lit ribs. Meshes are built once and shared; the rider and shell use Lit materials while team colour lives only in the light lines, so the rival is a black cycle with amber lines.
+- Every scene now uses GridLook: reflective procedural grid floor, glowing floor pools under cycles, spectator tiers and a back wall around arenas, a fogged distant skyline, translucent light-wall trails and boundaries, HDR bloom, tonemapping, and environment reflections. Gameplay rules, hitboxes, cameras, and controls are unchanged.
+- GFX: HIGH/LOW on the Arena landing (persisted in PlayerPrefs, `--gridrun-graphics low|high` on the command line) turns HDR, post-processing, and planar reflections on or off.
+- `scripts/Capture-Look.ps1` builds the combined desktop player and saves art-review screenshots (showroom, arena gameplay and close views, low quality, transit jet and sail) to ignored `artifacts/android-look/`. It does not assert gameplay.
+
+These visuals are original procedural designs in a digital-arena style; they copy no film assets. They are still not authored production art, and no device frame time has been measured with them.
+
 ## Verification
 
 Pinned Unity 6000.3.26f1 built desktop players. The final showroom run passed **27/27 checks** and saved phone-landscape 1170x540, desktop 1280x720, and tablet 1024x768 screenshots under ignored artifacts/android-phase-4/. The final Solar Transit run passed **33/33 checks**, including jet, sail, timeout, retry, and phone/desktop layout checks. The two-client online run passed **34/34 host and 16/16 guest checks**, and the movement prototype passed **17/17 checks**. The showroom phone and desktop screenshots were visually reviewed. These desktop runs do not validate physical Android touch, sustained device performance, or store behavior.
