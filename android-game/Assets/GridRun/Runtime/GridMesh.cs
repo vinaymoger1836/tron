@@ -257,7 +257,7 @@ namespace GridRun
             Vector3 h = size * .5f;
             void Face(Vector3 normal, Vector3 up)
             {
-                Vector3 right = Vector3.Cross(up, normal);
+                Vector3 right = Vector3.Cross(normal, up);
                 Vector3 c = center + Vector3.Scale(normal, h);
                 Vector3 r = Vector3.Scale(right, h), u = Vector3.Scale(up, h);
                 int i = vertices.Count;
@@ -310,8 +310,8 @@ namespace GridRun
                 int s = vertices.Count;
                 vertices.Add(new Vector3(p.x, h, p.y)); vertices.Add(new Vector3(q.x, h, q.y));
                 vertices.Add(new Vector3(q.x, -h, q.y)); vertices.Add(new Vector3(p.x, -h, p.y));
-                if (counterClockwise) triangles.AddRange(new[] { s, s + 2, s + 1, s, s + 3, s + 2 });
-                else triangles.AddRange(new[] { s, s + 1, s + 2, s, s + 2, s + 3 });
+                if (counterClockwise) triangles.AddRange(new[] { s, s + 1, s + 2, s, s + 2, s + 3 });
+                else triangles.AddRange(new[] { s, s + 2, s + 1, s, s + 3, s + 2 });
             }
             var mesh = new Mesh { name = "Plate" };
             mesh.SetVertices(vertices);
