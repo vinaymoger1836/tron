@@ -16,6 +16,7 @@ namespace GridRun
         private readonly ProbeSimulation simulation = new ProbeSimulation();
         private Transform rider;
         private Camera view;
+        private Vector3 cameraAim;
         private Text status, metrics, autoLabel, pauseLabel, fpsLabel;
         private HoldControl forward;
         private Font font;
@@ -250,16 +251,16 @@ namespace GridRun
         {
             rider.position = new Vector3(simulation.X, 0, simulation.Z);
             rider.rotation = Quaternion.Euler(0, simulation.Heading * 90, 0);
-            Vector3 target = rider.position + new Vector3(0, 19, -18);
-            view.transform.position = Vector3.Lerp(view.transform.position, target, 1 - Mathf.Exp(-8 * Time.deltaTime));
-            view.transform.rotation = Quaternion.Euler(47, 0, 0);
+            ChaseCamera.Target(rider.position, rider.rotation, out var target, out var aim);
+            ChaseCamera.Follow(view.transform, ref cameraAim, target, aim, Time.deltaTime);
         }
 
         private void SnapCamera()
         {
             if (view == null) return;
-            view.transform.position = new Vector3(simulation.X, 19, simulation.Z - 18);
-            view.transform.rotation = Quaternion.Euler(47, 0, 0);
+            ChaseCamera.Target(new Vector3(simulation.X, 0, simulation.Z), Quaternion.Euler(0, simulation.Heading * 90, 0),
+                out var position, out var aim);
+            ChaseCamera.Snap(view.transform, ref cameraAim, position, aim);
         }
 
         private void Suspend()

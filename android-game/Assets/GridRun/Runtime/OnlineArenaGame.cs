@@ -16,6 +16,7 @@ namespace GridRun
         private OnlineRoomClient room;
         private Font font;
         private Camera view;
+        private Vector3 cameraAim;
         private readonly Dictionary<string, Transform> riders = new Dictionary<string, Transform>();
         private readonly Dictionary<int, Transform> trails = new Dictionary<int, Transform>();
         private readonly Transform[] walls = new Transform[4];
@@ -355,11 +356,10 @@ namespace GridRun
         private void LateUpdate()
         {
             if (view == null) return;
-            Vector3 target = new Vector3(0, 65, -65);
+            Vector3 target = new Vector3(0, 65, -65), aim = Vector3.zero;
             if (room?.View?.phase == "running" && riders.TryGetValue(room.SelfId ?? "", out var self) && self.gameObject.activeSelf)
-                target = self.position + new Vector3(0, 20, -21);
-            view.transform.position = Vector3.Lerp(view.transform.position, target, 1 - Mathf.Exp(-8 * Time.deltaTime));
-            view.transform.rotation = Quaternion.Euler(45, 0, 0);
+                ChaseCamera.Target(self.position, self.rotation, out target, out aim);
+            ChaseCamera.Follow(view.transform, ref cameraAim, target, aim, Time.deltaTime);
         }
         private void ClearWorld()
         {
