@@ -102,8 +102,6 @@ namespace GridRun
             newGameButton = MenuButton("Start Arena", "NEW GAME", root, y, OpenModes, true).gameObject;
             if (Application.CanStreamedLevelBeLoaded("PhaseTwoOnline"))
                 MenuButton("Online Room", "ONLINE GAME", root, y -= 88, () => SceneManager.LoadScene("PhaseTwoOnline"));
-            if (Application.CanStreamedLevelBeLoaded("PhaseFourShowroom"))
-                MenuButton("Style Preview", "STYLE PREVIEW", root, y -= 88, () => SceneManager.LoadScene("PhaseFourShowroom"));
             MenuButton("Records", "RECORDS", root, y -= 88, OpenRecords);
             MenuButton("Settings", "SETTINGS", root, y -= 88, OpenSettings);
             SoloUi.Label("Menu footer", "DUEL  ·  ARENA  ·  DAILY SIGNAL  ·  GRID SHIFT  ·  OPERATIONS  ·  SOLAR TRANSIT  ·  v" + Application.version, root,

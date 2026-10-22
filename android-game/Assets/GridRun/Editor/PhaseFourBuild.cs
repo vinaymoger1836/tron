@@ -29,15 +29,16 @@ namespace GridRun.Editor
                 serialized.ApplyModifiedPropertiesWithoutUndo();
                 EditorSceneManager.SaveScene(scene, ScenePath);
             }
+            // Shipped app: main menu with every solo mode, Online, and Solar Transit. The cosmetic
+            // showroom (no purchases exist) is kept for development builds only.
             EditorBuildSettings.scenes = new[] {
                 new EditorBuildSettingsScene(PhaseOneBuild.ScenePath, true),
                 new EditorBuildSettingsScene(PhaseTwoBuild.ScenePath, true),
                 new EditorBuildSettingsScene(PhaseThreeBuild.ScenePath, true),
-                new EditorBuildSettingsScene(ScenePath, true)
             };
-            PlayerSettings.productName = "Grid Run - Style Preview";
-            PlayerSettings.bundleVersion = "0.4.0";
-            PlayerSettings.Android.bundleVersionCode = 5;
+            PlayerSettings.productName = "Grid Run";
+            PlayerSettings.bundleVersion = "0.5.0";
+            PlayerSettings.Android.bundleVersionCode = 6;
             PlayerSettings.Android.forceInternetPermission = true;
             AssetDatabase.SaveAssets();
             Debug.Log("PHASE4_SHOWROOM_PREPARED " + ScenePath);
@@ -74,11 +75,11 @@ namespace GridRun.Editor
             if (!BuildPipeline.IsBuildTargetSupported(BuildTargetGroup.Android, BuildTarget.Android))
                 throw new BuildFailedException("Install Android Build Support for Unity " + PhaseZeroBuild.EditorVersion);
             PlayerSettings.Android.useCustomKeystore = false;
-            string output = Path.GetFullPath("Builds/Android/grid-run-phase4-preview.apk");
+            string output = Path.GetFullPath("Builds/Android/grid-run-development.apk");
             Directory.CreateDirectory(Path.GetDirectoryName(output));
             var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
             {
-                scenes = new[] { PhaseOneBuild.ScenePath, PhaseTwoBuild.ScenePath, PhaseThreeBuild.ScenePath, ScenePath },
+                scenes = new[] { PhaseOneBuild.ScenePath, PhaseTwoBuild.ScenePath, PhaseThreeBuild.ScenePath },
                 locationPathName = output, target = BuildTarget.Android,
                 options = BuildOptions.Development | BuildOptions.AllowDebugging
             });
@@ -87,8 +88,8 @@ namespace GridRun.Editor
             Debug.Log("PHASE4_APK_READY " + output + " (" + report.summary.totalSize + " bytes)");
         }
 
-        // Same content and debug signature, packaged without development-build debugging data so
-        // the download fits static hosting limits. Development capture flows are compiled out.
+        // Player build: no development watermark, debugger, or capture flows; small enough for
+        // static hosting. Still debug signed until a release keystore is provided.
         [MenuItem("Grid Run/Phase 4/Build Release-Packaged APK")]
         public static void BuildAndroidRelease()
         {
@@ -96,11 +97,11 @@ namespace GridRun.Editor
             if (!BuildPipeline.IsBuildTargetSupported(BuildTargetGroup.Android, BuildTarget.Android))
                 throw new BuildFailedException("Install Android Build Support for Unity " + PhaseZeroBuild.EditorVersion);
             PlayerSettings.Android.useCustomKeystore = false;
-            string output = Path.GetFullPath("Builds/Android/grid-run-phase4-release.apk");
+            string output = Path.GetFullPath("Builds/Android/grid-run.apk");
             Directory.CreateDirectory(Path.GetDirectoryName(output));
             var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
             {
-                scenes = new[] { PhaseOneBuild.ScenePath, PhaseTwoBuild.ScenePath, PhaseThreeBuild.ScenePath, ScenePath },
+                scenes = new[] { PhaseOneBuild.ScenePath, PhaseTwoBuild.ScenePath, PhaseThreeBuild.ScenePath },
                 locationPathName = output, target = BuildTarget.Android, options = BuildOptions.None
             });
             if (report.summary.result != BuildResult.Succeeded)

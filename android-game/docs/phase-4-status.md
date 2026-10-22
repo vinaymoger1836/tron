@@ -56,6 +56,12 @@ Render documents managed Postgres and pricing: https://render.com/docs/postgresq
 
 This direction still requires approval for managed Postgres and its costs, the Unity IAP package, and Google Play Console setup. None has been created or configured. Product prices and availability will come from the store after approval; they are not hardcoded in the preview. Do not enable payment until the backend can verify, deduplicate, restore, refund/revoke, and recover purchases in sandbox tests.
 
+## Preview UI removed from the shipped app - 2026-10-22
+
+At the user's request ("remove all preview UI ... production ready with no preview"), the shipped app no longer contains preview surfaces: the STYLE PREVIEW menu entry is gone and the cosmetic showroom scene is excluded from Android builds (it remains in the project and in the desktop verification player for future cosmetic work), the app is named **Grid Run**, the Online Room's unsupported-room message no longer calls the app a preview, and the website download card reads ANDROID APP with "Version / size / Android 10 or later" instead of "Android Preview" and "Phase N development build". Version 0.5.0 / code 6 installs over 0.4.0. The player APK is `Builds/Android/grid-run.apk` from `BuildAndroidRelease` (no development watermark, debugger, or capture flows).
+
+Production gaps that remain outside UI: the APK is debug signed (a release keystore and its safe storage are a user decision), the Android application ID is still the development `com.gridrun.prototype` (changing it creates a separate app identity), and no physical-device install, performance, or accessibility validation has been done.
+
 ## Remaining Phase 4 work
 
 - Select and approve the database, costs, and guest purchase-data policy; define retention and deletion support without an in-app account.

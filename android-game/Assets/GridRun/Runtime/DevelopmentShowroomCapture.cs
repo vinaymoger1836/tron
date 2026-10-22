@@ -142,13 +142,11 @@ namespace GridRun
             Submit("Pause");
             Submit("Pause Main Menu");
             yield return null;
-            Submit("Style Preview");
-            yield return null;
-            game = FindFirstObjectByType<CosmeticShowroom>();
-            Check("Showroom reopens without ownership state",
-                SceneManager.GetActiveScene().name == "PhaseFourShowroom" &&
-                game != null && game.CurrentEntry?.Id == "cycle.grid.v1");
-            yield return CaptureLayout("showroom-return-phone.png", 1170, 540);
+            bool previewEntry = false;
+            foreach (var button in FindObjectsByType<Button>(FindObjectsSortMode.None))
+                if (button.name == "Style Preview") previewEntry = true;
+            Check("Shipped main menu has no preview entry", !previewEntry && Control("Records") != null);
+            yield return CaptureLayout("menu-return-phone.png", 1170, 540);
             CancelInvoke(nameof(Timeout));
             Save();
             Application.Quit(failed ? 2 : 0);

@@ -145,6 +145,7 @@ namespace GridRun
             yield return new WaitForSecondsRealtime(1.5f);
             solo = FindFirstObjectByType<SoloGame>();
             Check("Main menu loaded", solo != null && Has("Start Arena") && Has("Records") && Has("Settings"));
+            Check("Main menu has no preview entry", !Has("Style Preview"));
             yield return Shot("warmup.png", 1170, 540);
             yield return Layouts("menu");
 

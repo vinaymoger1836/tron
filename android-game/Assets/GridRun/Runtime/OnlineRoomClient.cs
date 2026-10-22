@@ -237,7 +237,7 @@ namespace GridRun
                 View = view;
                 Connected = true;
                 Supported = view.mode == "arena" && view.map == "classic" && view.maxPlayers == 2 && view.rule == "classic";
-                Status = !Supported ? "This preview supports only two-rider Arena on Classic Grid with persistent walls." :
+                Status = !Supported ? "This room uses a mode the app does not support online yet. Online play supports two-rider Arena on Classic Grid with persistent walls." :
                     view.phase == "connection-wait" ? "Waiting for a rider to reconnect..." : "Connected to room " + Code + ".";
             }
             catch (Exception error) { Status = "Room data error: " + error.Message; }
