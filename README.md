@@ -14,7 +14,7 @@ Open [http://localhost:8000](http://localhost:8000). A local HTTP server is need
 
 ## Android APK download on Vercel
 
-The landing page shows an **Android Preview** download when the deployed site contains a matching APK and release manifest. The current Phase 0 APK is a development build of the movement/rendering probe; it has not yet passed physical Galaxy M35 validation and is not the Arena MVP or a Play Store release.
+The landing page shows an **Android Preview** download when the deployed site contains a matching APK and release manifest. The current download is the Phase 4 v0.4.0 preview (offline Arena, Online Room, Solar Transit, and Style Preview with the Grid look), packaged with `GridRun.Editor.PhaseFourBuild.BuildAndroidRelease` and debug signed; it has not yet passed physical Galaxy M35 validation and is not a Play Store release.
 
 From the repository root, stage each new phase build and deploy the complete static site to the **existing** Vercel project:
 
@@ -26,7 +26,7 @@ npx --yes vercel deploy --prod
 
 For later phases, replace `0`, `0.0.1`, and the APK path with that phase's number, version, and verified build. Run `npx --yes vercel login` and `npx --yes vercel link` once if this checkout is not yet linked; select the **existing website project**. Use the repository root as the Vercel project root. The repository `vercel.json` serves `dist/` with no build, and `.vercelignore` uploads only `dist/` and its configuration. Review `npx --yes vercel deploy --dry` before production deployment: it must list `dist/downloads/grid-run-android.apk` and must not list Unity project files, evidence, or secrets. After deployment, open the production page and confirm the phase/version and APK download. The APK and manifest are intentionally Git-ignored. A Git-triggered deployment cannot include them, so repeat the staging and CLI deployment after each website release that should keep the APK available.
 
-The current staged payload is about 76.8 MB, within Vercel Hobby's documented 100 MB CLI source upload limit. Check that limit and the dry-run size as later APKs grow. Vercel bandwidth usage may also increase with downloads. Downloaded development APKs require Android's manual installation flow; Play Store distribution later uses a separate signed release process.
+The current staged payload is about 36.5 MB, within Vercel Hobby's 100 MB CLI upload limit. Development-build APKs (over 130 MB for Phase 4) exceed it and are rejected; stage the release-packaged APK instead. Check that limit and the dry-run size as later APKs grow. Vercel bandwidth usage may also increase with downloads. Downloaded development APKs require Android's manual installation flow; Play Store distribution later uses a separate signed release process.
 
 ## Play together online
 
