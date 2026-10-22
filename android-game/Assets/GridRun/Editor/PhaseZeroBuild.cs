@@ -100,6 +100,7 @@ namespace GridRun.Editor
                 EditorSceneManager.SaveScene(scene, ScenePath);
             }
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
+            GridLookAssets.Apply();
             AssetDatabase.SaveAssets();
             Debug.Log("Phase 0 project prepared: URP, landscape, ARM64 IL2CPP, Android API 29 minimum / 36 target.");
         }

@@ -61,11 +61,8 @@ namespace GridRun
         private void Platform(string name, float from, float to)
         {
             float center = (from + to) * .5f, length = to - from;
-            Box(name, new Vector3(0, -.35f, center), new Vector3(104, .55f, length), floorMaterial, transform);
-            for (int x = -48; x <= 48; x += 8)
-                Box("Lane line", new Vector3(x, -.04f, center), new Vector3(.06f, .025f, length), gridMaterial, transform);
-            for (float z = Mathf.Ceil(from / 8f) * 8f; z < to; z += 8)
-                Box("Cross line", new Vector3(0, -.04f, z), new Vector3(104, .025f, .06f), gridMaterial, transform);
+            GridLook.Floor(transform, new Vector3(0, 0, center), new Vector2(104, length), 8, floorMaterial).name = name;
+            Box(name + " structure", new Vector3(0, -.32f, center), new Vector3(104, .6f, length), wallMaterial, transform);
         }
 
         private void BuildWorld()
@@ -81,18 +78,21 @@ namespace GridRun
                 Box("Cyan sail gap edge", new Vector3(0, .03f, z), new Vector3(104, .14f, .25f), glowMaterial, transform);
             Box("Finish gate", new Vector3(0, .04f, TransitRun.FinishZ), new Vector3(104, .18f, .5f), glowMaterial, transform);
             foreach (float x in new[] { -52f, 52f })
+            {
                 Box("Course side rail", new Vector3(x, .6f, 0), new Vector3(.35f, 1.2f, 104), wallMaterial, transform);
-            cycleArt = CycleVisual.Create(transform, "Transit cycle",
-                cycleMaterial, glowMaterial, wallMaterial);
+                Box("Course rail light", new Vector3(x, 1.22f, 0), new Vector3(.38f, .05f, 104), glowMaterial, transform);
+            }
+            GridLook.Stadium(transform, 58);
+            GridLook.Skyline(transform, 125, 185, 80, 23);
+            cycleArt = CycleVisual.Create(transform, "Transit cycle", cycleMaterial, glowMaterial);
             cycle = cycleArt.transform;
             cycle.localScale = Vector3.one * 1.4f;
             var cameraObject = new GameObject("Transit camera", typeof(Camera), typeof(AudioListener));
             view = cameraObject.GetComponent<Camera>();
             view.tag = "MainCamera";
-            view.clearFlags = CameraClearFlags.SolidColor;
-            view.backgroundColor = new Color(.008f, .014f, .035f);
-            view.nearClipPlane = .1f; view.farClipPlane = 220; view.fieldOfView = 55;
+            view.nearClipPlane = .1f; view.farClipPlane = 260; view.fieldOfView = 55;
             view.transform.rotation = Quaternion.Euler(26, 0, 0);
+            GridLook.Stage(view);
         }
 
         private RectTransform Rect(string name, Transform parent, Vector2 anchor, Vector2 pivot, Vector2 offset, Vector2 size)

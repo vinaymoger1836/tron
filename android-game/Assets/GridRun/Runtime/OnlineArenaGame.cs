@@ -19,6 +19,7 @@ namespace GridRun
         private readonly Dictionary<string, Transform> riders = new Dictionary<string, Transform>();
         private readonly Dictionary<int, Transform> trails = new Dictionary<int, Transform>();
         private readonly Transform[] walls = new Transform[4];
+        private readonly Transform[] wallEdges = new Transform[4];
         private GameObject setupPanel, roomPanel, playHud;
         private InputField serverField, nameField, codeField;
         private Button createButton, joinButton, startButton, pauseButton;
@@ -60,39 +61,42 @@ namespace GridRun
 
         private void BuildWorld()
         {
-            Box("Arena floor", new Vector3(0, -.3f, 0), new Vector3(114, .5f, 114), floorMaterial, transform);
-            for (int i = -52; i <= 52; i += 4)
-            {
-                Box("Grid X", new Vector3(i, -.035f, 0), new Vector3(.035f, .02f, 104), gridMaterial, transform);
-                Box("Grid Z", new Vector3(0, -.035f, i), new Vector3(104, .02f, .035f), gridMaterial, transform);
-            }
+            GridLook.Floor(transform, Vector3.zero, new Vector2(120, 120), 4, floorMaterial);
+            GridLook.Stadium(transform, 56);
+            GridLook.Skyline(transform, 125, 180, 70, 11);
             for (int side = 0; side < 4; side++)
-                walls[side] = Box("Moving boundary", Vector3.zero, Vector3.one, wallMaterial, transform).transform;
+            {
+                walls[side] = Box("Moving boundary", Vector3.zero, Vector3.one, GridLook.Assets.Boundary, transform).transform;
+                wallEdges[side] = Box("Boundary edge", Vector3.zero, Vector3.one, glowMaterial, transform).transform;
+            }
             var cameraObject = new GameObject("Online camera", typeof(Camera), typeof(AudioListener));
             view = cameraObject.GetComponent<Camera>();
             view.tag = "MainCamera";
-            view.clearFlags = CameraClearFlags.SolidColor;
-            view.backgroundColor = new Color(.012f, .02f, .045f);
-            view.nearClipPlane = .1f; view.farClipPlane = 240; view.fieldOfView = 60;
+            view.nearClipPlane = .1f; view.farClipPlane = 260; view.fieldOfView = 60;
             view.transform.position = new Vector3(0, 65, -65);
             view.transform.rotation = Quaternion.Euler(45, 0, 0);
+            GridLook.Stage(view);
             SetBoundary(52);
         }
 
         private void SetBoundary(float limit)
         {
             float edge = limit + .4f, span = limit * 2 + 1;
-            walls[0].localPosition = new Vector3(-edge, 1, 0); walls[0].localScale = new Vector3(.4f, 2, span);
-            walls[1].localPosition = new Vector3(edge, 1, 0); walls[1].localScale = new Vector3(.4f, 2, span);
-            walls[2].localPosition = new Vector3(0, 1, -edge); walls[2].localScale = new Vector3(span, 2, .4f);
-            walls[3].localPosition = new Vector3(0, 1, edge); walls[3].localScale = new Vector3(span, 2, .4f);
+            Vector3[] centers = { new Vector3(-edge, 0, 0), new Vector3(edge, 0, 0), new Vector3(0, 0, -edge), new Vector3(0, 0, edge) };
+            for (int side = 0; side < 4; side++)
+            {
+                bool alongZ = side < 2;
+                walls[side].localPosition = centers[side] + Vector3.up;
+                walls[side].localScale = alongZ ? new Vector3(.3f, 2, span) : new Vector3(span, 2, .3f);
+                wallEdges[side].localPosition = centers[side] + Vector3.up * 2.03f;
+                wallEdges[side].localScale = alongZ ? new Vector3(.34f, .06f, span) : new Vector3(span, .06f, .34f);
+            }
         }
 
         private Transform Bike(string id, bool self)
         {
-            Material color = self ? cycleMaterial : amberMaterial;
-            return CycleVisual.Create(transform, "Online rider " + id, color,
-                self ? glowMaterial : amberMaterial, wallMaterial).transform;
+            return CycleVisual.Create(transform, "Online rider " + id, cycleMaterial,
+                self ? glowMaterial : amberMaterial).transform;
         }
 
         private RectTransform Rect(string name, Transform parent, Vector2 anchor, Vector2 pivot, Vector2 offset, Vector2 size)
@@ -335,12 +339,12 @@ namespace GridRun
                     if (!trails.TryGetValue(segment.id, out var visual))
                     {
                         visual = Box("Online light trail", Vector3.zero, Vector3.one,
-                            segment.ownerId == current.selfId ? glowMaterial : amberMaterial, transform).transform;
+                            GridLook.Trail(segment.ownerId == current.selfId), transform).transform;
                         trails.Add(segment.id, visual);
                     }
                     visual.position = new Vector3((segment.x1 + segment.x2) * .5f, .55f, (segment.z1 + segment.z2) * .5f);
-                    visual.localScale = new Vector3(Mathf.Max(.26f, Mathf.Abs(segment.x2 - segment.x1)), 1.05f,
-                        Mathf.Max(.26f, Mathf.Abs(segment.z2 - segment.z1)));
+                    visual.localScale = new Vector3(Mathf.Max(.14f, Mathf.Abs(segment.x2 - segment.x1)), 1.1f,
+                        Mathf.Max(.14f, Mathf.Abs(segment.z2 - segment.z1)));
                     visual.gameObject.SetActive(segment.active);
                 }
             var removed = new List<int>();

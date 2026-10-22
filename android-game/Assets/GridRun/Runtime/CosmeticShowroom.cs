@@ -54,31 +54,26 @@ namespace GridRun
 
         private void BuildWorld()
         {
-            Box("Showroom floor", new Vector3(0, -.3f, 0), new Vector3(36, .5f, 36), floorMaterial, transform);
-            for (int i = -16; i <= 16; i += 4)
-            {
-                Box("Grid X", new Vector3(i, -.025f, 0), new Vector3(.045f, .02f, 36), gridMaterial, transform);
-                Box("Grid Z", new Vector3(0, -.025f, i), new Vector3(36, .02f, .045f), gridMaterial, transform);
-            }
-            foreach (int x in new[] { -16, 16 })
-                Box("Showroom rail", new Vector3(x, .6f, 0), new Vector3(.35f, 1.2f, 36), wallMaterial, transform);
+            GridLook.Floor(transform, Vector3.zero, new Vector2(70, 70), 2, floorMaterial);
+            GridLook.Stadium(transform, 20);
+            GridLook.Skyline(transform, 90, 150, 60, 31);
             var display = new GameObject("Cosmetic display").transform;
             display.SetParent(transform, false);
             display.localRotation = Quaternion.Euler(0, 65, 0);
-            previewCycle = CycleVisual.Create(display, "Preview cycle",
-                cycleMaterial, glowMaterial, wallMaterial);
+            var ring = GridLook.MeshObject("Display ring", display, GridMesh.Annulus(4.1f, 4.22f, 96, true), glowMaterial);
+            ring.transform.localPosition = new Vector3(0, .01f, 2);
+            ring.transform.localRotation = Quaternion.Euler(0, 0, 90);
+            previewCycle = CycleVisual.Create(display, "Preview cycle", cycleMaterial, glowMaterial);
             previewCycle.transform.localPosition = new Vector3(0, 0, 2);
             previewCycle.transform.localScale = Vector3.one * 2.35f;
-            AddTrail(Box("Light wall", new Vector3(0, .54f, -2.9f), new Vector3(.16f, 1.06f, 7), glowMaterial, display));
-            AddTrail(Box("Trail cap", new Vector3(0, 1.1f, -2.9f), new Vector3(.18f, .06f, 7), glowMaterial, display));
+            AddTrail(Box("Light wall", new Vector3(0, .6f, -2.9f), new Vector3(.12f, 1.2f, 7), GridLook.Trail(true), display));
             var cameraObject = new GameObject("Showroom camera", typeof(Camera), typeof(AudioListener));
             view = cameraObject.GetComponent<Camera>();
             view.tag = "MainCamera";
-            view.clearFlags = CameraClearFlags.SolidColor;
-            view.backgroundColor = new Color(.008f, .015f, .04f);
-            view.nearClipPlane = .1f; view.farClipPlane = 100; view.fieldOfView = 54;
+            view.nearClipPlane = .1f; view.farClipPlane = 200; view.fieldOfView = 54;
             view.transform.position = new Vector3(7, 5.5f, 12);
             view.transform.LookAt(new Vector3(0, -.1f, 0));
+            GridLook.Stage(view);
         }
 
         private void AddTrail(GameObject item) => trailParts.Add(item.GetComponent<Renderer>());
@@ -192,10 +187,11 @@ namespace GridRun
             CurrentEntry = CosmeticCatalog.At(category, selected);
             DisplayedBodyTheme = CurrentEntry.BodyTheme;
             DisplayedTrailTheme = CurrentEntry.TrailTheme;
-            Material body = DisplayedBodyTheme == "solar" ? amberMaterial : cycleMaterial;
-            Material trail = DisplayedTrailTheme == "solar" ? amberMaterial : glowMaterial;
-            previewCycle.SetPalette(body, trail);
-            foreach (var part in trailParts) part.sharedMaterial = trail;
+            bool solarBody = DisplayedBodyTheme == "solar", solarTrail = DisplayedTrailTheme == "solar";
+            // A cycle skin owns the shell and its circuit lines; a trail style owns only the light wall.
+            previewCycle.SetPalette(solarBody ? GridLook.Assets.ShellSolar : cycleMaterial,
+                solarBody ? amberMaterial : glowMaterial);
+            foreach (var part in trailParts) part.sharedMaterial = GridLook.Trail(!solarTrail);
             heading.text = CurrentEntry.Name.ToUpperInvariant();
             description.text = CurrentEntry.Description;
             availability.text = CurrentEntry.Included ? "DEFAULT LOOK  /  INCLUDED IN ARENA" :

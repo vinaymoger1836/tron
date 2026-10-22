@@ -67,36 +67,25 @@ namespace GridRun
 
         private void BuildArena()
         {
-            Box("Arena floor", new Vector3(0, -.3f, 0), new Vector3(100, .5f, 100), floorMaterial, transform);
-            for (int i = -48; i <= 48; i += 4)
-            {
-                Box("Grid X", new Vector3(i, -.035f, 0), new Vector3(.035f, .02f, 96), gridMaterial, transform);
-                Box("Grid Z", new Vector3(0, -.035f, i), new Vector3(96, .02f, .035f), gridMaterial, transform);
-            }
+            GridLook.Floor(transform, Vector3.zero, new Vector2(108, 108), 4, floorMaterial);
+            GridLook.Stadium(transform, 52);
+            GridLook.Skyline(transform, 120, 175, 70, 7);
             foreach (int edge in new[] { -1, 1 })
             {
-                Box("Boundary east/west", new Vector3(edge * 49, 1, 0), new Vector3(.4f, 2, 100), wallMaterial, transform);
-                Box("Boundary north/south", new Vector3(0, 1, edge * 49), new Vector3(100, 2, .4f), wallMaterial, transform);
-                Box("Boundary light", new Vector3(edge * 49, 2.1f, 0), new Vector3(.45f, .12f, 100), glowMaterial, transform);
-                Box("Boundary light", new Vector3(0, 2.1f, edge * 49), new Vector3(100, .12f, .45f), glowMaterial, transform);
+                Box("Boundary east/west", new Vector3(edge * 49, 1, 0), new Vector3(.3f, 2, 100), GridLook.Assets.Boundary, transform);
+                Box("Boundary north/south", new Vector3(0, 1, edge * 49), new Vector3(100, 2, .3f), GridLook.Assets.Boundary, transform);
+                Box("Boundary light", new Vector3(edge * 49, 2.03f, 0), new Vector3(.34f, .06f, 100), glowMaterial, transform);
+                Box("Boundary light", new Vector3(0, 2.03f, edge * 49), new Vector3(100, .06f, .34f), glowMaterial, transform);
             }
-            for (int i = -40; i <= 40; i += 20)
-                foreach (int edge in new[] { -1, 1 })
-                {
-                    Box("Outer column", new Vector3(i, 5, edge * 55), new Vector3(3, 10, 3), wallMaterial, transform);
-                    Box("Column light", new Vector3(i, 7, edge * 53.4f), new Vector3(.25f, 5, .2f), amberMaterial, transform);
-                }
-            rider = CycleVisual.Create(transform, "Player cycle",
-                cycleMaterial, glowMaterial, wallMaterial).transform;
+            rider = CycleVisual.Create(transform, "Player cycle", cycleMaterial, glowMaterial).transform;
             var cameraObject = new GameObject("Arena camera", typeof(Camera));
             view = cameraObject.GetComponent<Camera>();
             view.tag = "MainCamera";
-            view.clearFlags = CameraClearFlags.SolidColor;
-            view.backgroundColor = new Color(.012f, .02f, .045f);
             view.nearClipPlane = .1f;
-            view.farClipPlane = 220f;
+            view.farClipPlane = 260f;
             view.fieldOfView = 60f;
             cameraObject.AddComponent<AudioListener>();
+            GridLook.Stage(view);
         }
 
         private RectTransform Panel(string label, Transform parent, Vector2 anchor, Vector2 pivot, Vector2 position, Vector2 size)

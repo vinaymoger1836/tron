@@ -18,7 +18,7 @@ namespace GridRun
         private Camera view;
         private Font font;
         private HoldControl forward;
-        private Text score, status, resultText, autoText, pauseText;
+        private Text score, status, resultText, autoText, pauseText, graphicsText;
         private GameObject landing, resultPanel, pausePanel, playHud;
         private bool playing, paused, autoDrive = true;
         private bool ignoreHostFocusForVerification;
@@ -57,36 +57,41 @@ namespace GridRun
             return obj;
         }
 
-        private Transform Bike(string name, Material body, Material light)
+        private Transform Bike(string name, Material light)
         {
-            return CycleVisual.Create(transform, name, body, light, wallMaterial).transform;
+            return CycleVisual.Create(transform, name, cycleMaterial, light).transform;
         }
 
         private void BuildWorld()
         {
-            Box("Arena floor", new Vector3(0, -.3f, 0), new Vector3(100, .5f, 100), floorMaterial, transform);
-            for (int i = -48; i <= 48; i += 4)
-            {
-                Box("Grid X", new Vector3(i, -.035f, 0), new Vector3(.035f, .02f, 96), gridMaterial, transform);
-                Box("Grid Z", new Vector3(0, -.035f, i), new Vector3(96, .02f, .035f), gridMaterial, transform);
-            }
+            GridLook.Floor(transform, Vector3.zero, new Vector2(110, 110), 4, floorMaterial);
+            GridLook.Stadium(transform, 52);
+            GridLook.Skyline(transform, 120, 175, 70, 7);
             for (int edge = 0; edge < 2; edge++)
             {
                 int sign = edge == 0 ? -1 : 1;
-                boundaryVisuals[edge * 4] = Box("Wall X", new Vector3(sign * 49, 1, 0), new Vector3(.4f, 2, 100), wallMaterial, transform).transform;
-                boundaryVisuals[edge * 4 + 1] = Box("Wall Z", new Vector3(0, 1, sign * 49), new Vector3(100, 2, .4f), wallMaterial, transform).transform;
-                boundaryVisuals[edge * 4 + 2] = Box("Edge X", new Vector3(sign * 49, 2.1f, 0), new Vector3(.45f, .12f, 100), glowMaterial, transform).transform;
-                boundaryVisuals[edge * 4 + 3] = Box("Edge Z", new Vector3(0, 2.1f, sign * 49), new Vector3(100, .12f, .45f), glowMaterial, transform).transform;
+                boundaryVisuals[edge * 4] = Box("Wall X", new Vector3(sign * 49, 1, 0), new Vector3(.3f, 2, 100), GridLook.Assets.Boundary, transform).transform;
+                boundaryVisuals[edge * 4 + 1] = Box("Wall Z", new Vector3(0, 1, sign * 49), new Vector3(100, 2, .3f), GridLook.Assets.Boundary, transform).transform;
+                boundaryVisuals[edge * 4 + 2] = Box("Edge X", new Vector3(sign * 49, 2.03f, 0), new Vector3(.34f, .06f, 100), glowMaterial, transform).transform;
+                boundaryVisuals[edge * 4 + 3] = Box("Edge Z", new Vector3(0, 2.03f, sign * 49), new Vector3(100, .06f, .34f), glowMaterial, transform).transform;
             }
-            playerVisual = Bike("Player cycle", cycleMaterial, glowMaterial);
-            rivalVisual = Bike("Rival cycle", amberMaterial, amberMaterial);
+            playerVisual = Bike("Player cycle", glowMaterial);
+            rivalVisual = Bike("Rival cycle", amberMaterial);
             var cameraObject = new GameObject("Arena camera", typeof(Camera), typeof(AudioListener));
             view = cameraObject.GetComponent<Camera>();
             view.tag = "MainCamera";
-            view.clearFlags = CameraClearFlags.SolidColor;
-            view.backgroundColor = new Color(.012f, .02f, .045f);
-            view.nearClipPlane = .1f; view.farClipPlane = 220f; view.fieldOfView = 60f;
+            view.nearClipPlane = .1f; view.farClipPlane = 260f; view.fieldOfView = 60f;
+            GridLook.Stage(view);
         }
+
+        private void ToggleGraphics()
+        {
+            GridLook.HighQuality = !GridLook.HighQuality;
+            GridLook.ApplyQuality(view);
+            graphicsText.text = GraphicsLabel();
+        }
+
+        private static string GraphicsLabel() => GridLook.HighQuality ? "GFX: HIGH" : "GFX: LOW";
 
         private RectTransform Rect(string name, Transform parent, Vector2 anchor, Vector2 pivot, Vector2 offset, Vector2 size)
         {
@@ -190,6 +195,8 @@ namespace GridRun
             if (Application.CanStreamedLevelBeLoaded("PhaseFourShowroom"))
                 Button("Style Preview", "STYLE PREVIEW", landing.transform, new Vector2(.5f, 0), new Vector2(.5f, 0),
                     new Vector2(0, 275), new Vector2(420, 85), () => SceneManager.LoadScene("PhaseFourShowroom"));
+            graphicsText = Button("Graphics", GraphicsLabel(), landing.transform, new Vector2(1, 0), new Vector2(1, 0),
+                new Vector2(-25, 165), new Vector2(200, 85), ToggleGraphics).GetComponentInChildren<Text>();
             resultPanel = Overlay("Result", safe.transform, "HEAT COMPLETE", "");
             resultText = resultPanel.transform.Find("Result details").GetComponent<Text>();
             Button("Next Heat", "NEXT HEAT", resultPanel.transform, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 45), new Vector2(440, 95), NextHeat);
@@ -303,11 +310,11 @@ namespace GridRun
             {
                 var trail = match.Trails[i];
                 if (trailVisuals.Count <= i)
-                    trailVisuals.Add(Box("Light trail", Vector3.zero, Vector3.one, trail.Owner == 0 ? glowMaterial : amberMaterial, transform).transform);
+                    trailVisuals.Add(Box("Light trail", Vector3.zero, Vector3.one, GridLook.Trail(trail.Owner == 0), transform).transform);
                 var visual = trailVisuals[i];
-                visual.GetComponent<Renderer>().sharedMaterial = trail.Owner == 0 ? glowMaterial : amberMaterial;
+                visual.GetComponent<Renderer>().sharedMaterial = GridLook.Trail(trail.Owner == 0);
                 visual.position = new Vector3((trail.X0 + trail.X1) * .5f, .55f, (trail.Z0 + trail.Z1) * .5f);
-                visual.localScale = new Vector3(Mathf.Max(.28f, Mathf.Abs(trail.X1 - trail.X0)), 1.05f, Mathf.Max(.28f, Mathf.Abs(trail.Z1 - trail.Z0)));
+                visual.localScale = new Vector3(Mathf.Max(.14f, Mathf.Abs(trail.X1 - trail.X0)), 1.1f, Mathf.Max(.14f, Mathf.Abs(trail.Z1 - trail.Z0)));
             }
         }
 
@@ -319,13 +326,13 @@ namespace GridRun
             {
                 int sign = edge == 0 ? -1 : 1;
                 boundaryVisuals[edge * 4].localPosition = new Vector3(sign * extent, 1, 0);
-                boundaryVisuals[edge * 4].localScale = new Vector3(.4f, 2, span);
+                boundaryVisuals[edge * 4].localScale = new Vector3(.3f, 2, span);
                 boundaryVisuals[edge * 4 + 1].localPosition = new Vector3(0, 1, sign * extent);
-                boundaryVisuals[edge * 4 + 1].localScale = new Vector3(span, 2, .4f);
-                boundaryVisuals[edge * 4 + 2].localPosition = new Vector3(sign * extent, 2.1f, 0);
-                boundaryVisuals[edge * 4 + 2].localScale = new Vector3(.45f, .12f, span);
-                boundaryVisuals[edge * 4 + 3].localPosition = new Vector3(0, 2.1f, sign * extent);
-                boundaryVisuals[edge * 4 + 3].localScale = new Vector3(span, .12f, .45f);
+                boundaryVisuals[edge * 4 + 1].localScale = new Vector3(span, 2, .3f);
+                boundaryVisuals[edge * 4 + 2].localPosition = new Vector3(sign * extent, 2.03f, 0);
+                boundaryVisuals[edge * 4 + 2].localScale = new Vector3(.34f, .06f, span);
+                boundaryVisuals[edge * 4 + 3].localPosition = new Vector3(0, 2.03f, sign * extent);
+                boundaryVisuals[edge * 4 + 3].localScale = new Vector3(span, .06f, .34f);
             }
         }
 
