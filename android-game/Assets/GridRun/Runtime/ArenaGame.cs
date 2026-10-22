@@ -16,6 +16,7 @@ namespace GridRun
         private readonly Transform[] boundaryVisuals = new Transform[8];
         private Transform playerVisual, rivalVisual;
         private Camera view;
+        private Vector3 cameraAim;
         private Font font;
         private HoldControl forward;
         private Text score, status, resultText, autoText, pauseText, graphicsText;
@@ -294,9 +295,9 @@ namespace GridRun
             SyncBoundary();
             // Move away from the wall on a crash so near-field boundary geometry
             // cannot cover the result card while the player is at the edge.
-            var target = match.HeatEnded ? new Vector3(0, 55, -55) : playerVisual.position + new Vector3(0, 18, -20);
-            view.transform.position = Vector3.Lerp(view.transform.position, target, 1 - Mathf.Exp(-7 * Time.deltaTime));
-            view.transform.rotation = Quaternion.Euler(45, 0, 0);
+            Vector3 target = new Vector3(0, 55, -55), aim = Vector3.zero;
+            if (!match.HeatEnded) ChaseCamera.Target(playerVisual.position, playerVisual.rotation, out target, out aim);
+            ChaseCamera.Follow(view.transform, ref cameraAim, target, aim, Time.deltaTime);
         }
 
         private static void PositionBike(Transform visual, ArenaMatch.Rider rider)
@@ -347,8 +348,9 @@ namespace GridRun
         private void SnapCamera()
         {
             if (view == null) return;
-            view.transform.position = new Vector3(match.Player.X, 18, match.Player.Z - 20);
-            view.transform.rotation = Quaternion.Euler(45, 0, 0);
+            ChaseCamera.Target(new Vector3(match.Player.X, 0, match.Player.Z), Quaternion.Euler(0, match.Player.Heading * 90, 0),
+                out var position, out var aim);
+            ChaseCamera.Snap(view.transform, ref cameraAim, position, aim);
         }
 
         private void Suspend()
