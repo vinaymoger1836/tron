@@ -89,6 +89,14 @@ namespace GridRun
             yield return Shot("look-arena-play.png");
             arena.TogglePause();
             var player = GameObject.Find("Player cycle").transform;
+            foreach (var renderer in FindObjectsByType<Renderer>(FindObjectsSortMode.None))
+            {
+                var b = renderer.bounds;
+                if (b.size.x > 30 || b.size.z > 30) continue;
+                if (Mathf.Abs(b.center.x - player.position.x) < 3 && b.center.z < player.position.z + 1 && b.center.z > player.position.z - 40)
+                    Debug.Log("LOOK_NEAR " + renderer.name + " mat=" + renderer.sharedMaterial?.name +
+                        " center=" + b.center.ToString("F2") + " size=" + b.size.ToString("F2"));
+            }
             yield return Hero(arena, player, new Vector3(3.2f, 1.6f, 3.6f), "look-arena-hero-front.png", this);
             yield return Hero(arena, player, new Vector3(-4.5f, 2.4f, -5.5f), "look-arena-hero-rear.png", this);
             var rival = GameObject.Find("Rival cycle").transform;
