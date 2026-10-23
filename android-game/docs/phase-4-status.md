@@ -64,6 +64,12 @@ Checks after the change: solo flow 97/97 (including "main menu has no preview en
 
 Production gaps that remain outside UI: the APK is debug signed (a release keystore and its safe storage are a user decision), the Android application ID is still the development `com.gridrun.prototype` (changing it creates a separate app identity), and no physical-device install, performance, or accessibility validation has been done.
 
+## First phone run and APK hosting - 2026-10-23
+
+v0.5.0 ran on the user's Galaxy M35 (SM-M356B, Android 16 / API 36, Exynos 1380 with a Mali GPU, 1080x2340, display at 60 Hz) over USB debugging. About four minutes of play were sampled every 10 s with SurfaceFlinger timestats: a steady 60 fps, p99 frame time 16 ms, 2 frames over 33 ms in total, battery 32.8 to 34.5 °C, thermal status 0 throughout, memory 250-310 MB PSS, and no crash. The user judged performance good. Evidence is in ignored artifacts/android-device/session-1/. The log showed one error: GameObject.CreatePrimitive added a collider, but player builds strip the unused physics module. Cubes and the sky dome now come from GridMesh (GridLook.Cube), with no visual change. Checks after the fix: solo 97/97, Transit 33/33, showroom 28/28, and the 28 Capture-Look screenshots reviewed. v0.5.1 / code 7 (36,397,646 bytes; SHA-256 E0318F4EF5461FD962C82F3FED0907737076716E1300A60C73B25AB0976A3BB4) has not yet been installed on the phone; the device disconnected before the install.
+
+Git pushes to main redeploy Vercel production from the repository, which never contained the Git-ignored APK, so the download kept disappearing. At the user's request the APK moved to GitHub Releases: scripts/publish-android-release.mjs uploads it (tag android-v0.5.1), downloads it back to confirm size and SHA-256, and then writes the tracked dist/android-release.json that the landing page reads. The old CLI staging script was removed.
+
 ## Remaining Phase 4 work
 
 - Select and approve the database, costs, and guest purchase-data policy; define retention and deletion support without an in-app account.
