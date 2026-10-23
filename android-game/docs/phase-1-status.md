@@ -2,6 +2,8 @@
 
 **State: in progress.** The first offline Arena slice runs in a separate Unity scene. Phase 0 physical-phone validation is still open, and this is a development preview rather than a Phase 1 release.
 
+**Superseded 2026-10-22:** the offline modes in `phase-3-status.md` replaced this slice. `ArenaMatch` and `DevelopmentArenaCapture` were retired. The `PhaseOneArena` scene now hosts the main menu and the ported rules, which already include the gun, pickups, mode/difficulty/map choices, settings, and records listed below. The device items still apply; the first Galaxy M35 session is in `device-validation.md`.
+
 ## Implemented slice
 
 - `ArenaMatch` owns the 120 Hz fixed-step rules for two equal-speed riders: relative left/right turns, no reverse, swept axis-aligned trail/wall collision, an AI rider that checks clearance, three-point match scoring, explicit crash reasons, and a 180-second boundary shrink.

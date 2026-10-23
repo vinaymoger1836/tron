@@ -22,7 +22,8 @@ Do not silently change the game's architecture or expand the requested scope. Ex
 
 ## 3. Project architecture
 
-- This is a buildless browser game: `dist/index.html` contains the UI and `dist/game.js` contains the WebGL renderer, game loop, AI riders, collision logic, and input handling.
+- The browser game is buildless: `dist/index.html` contains the UI, `dist/game.js` contains the WebGL renderer, game loop, input, audio, and persistence, and the rules live in ES modules beside it (`simulation.js`, `arena-rules.js`, `match.js`, `arena.js`, `maps.js`, `operations.js`, `grid-shift.js`). The optional Node room server (`lan-server.mjs`, `online-server.mjs`) imports those modules directly.
+- `android-game/` is a separate Unity port whose rules are an exact C# copy of the browser modules. The browser modules stay the behavior reference, so change rules in both and re-run the parity check (`android-game/docs/architecture.md`).
 - Keep the game playable as a static site. Do not add a backend, account system, database, third-party game engine, or external runtime dependency without explaining the need and obtaining approval.
 - Keep rendering, input, game state, and persistence behavior understandable. Use browser-local storage only for non-sensitive local preferences and scores.
 - Preserve keyboard and touch play, pause/resume, and the ability to restart a round. Keep gameplay rules consistent across screen sizes and frame rates.

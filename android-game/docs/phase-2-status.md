@@ -22,11 +22,11 @@ The native client uses the server's JSON room API, an in-memory cookie jar for t
 
 ## Remaining Phase 2 work
 
-- Finish Phase 1 gameplay and visual parity. The offline Unity Arena currently ends at three wins, while the existing online Node Arena ends after exactly three heats. Online snapshots include bullets/pickups and other modes, but this Unity scene currently renders only riders and trails on Classic Grid.
+- Bring the online scene up to the offline game. Offline play now uses the exact rules port, including the browser's three-heat Arena (2026-10-22), but online snapshots include bullets, pickups, and other modes that this Unity scene does not render; it shows only riders and trails on Classic Grid. It also maps simulation z straight to Unity z, so relative turns look mirrored on screen; the offline game uses Unity z = -simulation z. Online work for the new modes was deferred at the user's request.
 - Add 2-4 seat choice, supported map/rule selection, ready state, names and noncolor cues in-world, full weapon/pickup/effect rendering, interpolation and command ordering, and robust error/status messages during play.
 - Define a versioned protocol with clear old-client errors; test reconnect, timeout, stale-room cleanup, server restart, host departure, app backgrounding, and network changes on devices.
 - Measure latency, jitter, bandwidth, server tick time, concurrent rooms, capacity, and cost. Test four devices with simulated 50/150/250 ms latency and 1-5% loss where practical.
-- Validate Android HTTP streaming/cookies, touch controls, safe areas, and power/network interruption on the Galaxy M35. The user plans to test the APK later.
+- Validate Android HTTP streaming/cookies, touch controls, safe areas, and power/network interruption on the Galaxy M35. The first phone session (2026-10-23) was planned around offline modes; the Online Room was not checked on the phone.
 
 ## Reproduce locally
 

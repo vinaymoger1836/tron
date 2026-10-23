@@ -2,6 +2,8 @@
 
 **State: in progress.** The source project, generated scene, and installable development APK are ready. Physical-device validation and final performance/support budgets remain open.
 
+**Update 2026-10-23:** the first physical-device session ran on the user's Galaxy M35 (Android 16, Exynos 1380), using the current Grid Run app (v0.5.0) rather than this probe: a steady 60 fps, no throttling, and 250-310 MB memory over about four minutes. Device details and results are in `device-validation.md`. The 20-minute session, interruption and rotation checks, and budgets below remain open.
+
 ## Completed
 
 - Unity 6000.3.26f1 LTS installed with Android Build Support, SDK/NDK, and OpenJDK. The Editor imported and compiled the project successfully.
@@ -31,9 +33,9 @@ Ignored evidence: `artifacts/android-phase-0/prepare.log`, `desktop-build.log`, 
 
 ## Pending Phase 0 gate
 
-1. User will connect the Samsung Galaxy M35 and test the APK later. Capture exact Android version, RAM/SoC/GPU details, screen, screenshots, touch behavior, interruptions, and a 20-minute performance/thermal session using `docs/device-validation.md`.
+1. Galaxy M35 details and a first short performance baseline were captured on 2026-10-23 (`device-validation.md`). Still needed: phone screenshots, touch behavior, interruptions, and a 20-minute performance/thermal session on battery.
 2. Choose minimum-tier, high-end, and tablet reference devices. Validate the provisional API 29 compatibility floor and device support policy.
 3. Establish measured frame-time tolerance, memory, launch-time, download-size, battery, and thermal budgets from physical-device evidence.
 4. Confirm Unity license tier and eligibility for eventual commercial distribution. The local Unity license was active for this build; that does not establish commercial plan eligibility.
 
-The current app is a movement and rendering probe. It is not the Arena MVP, and no in-app purchases or online rooms are in the Unity client yet. The Play Store identity/signing and release policy checks are later-phase work.
+The Phase 0 scene is a movement and rendering probe. The shipped app built on it now has every offline mode and a two-seat Online Room (see later phase status docs); it has no in-app purchases. The Play Store identity/signing and release policy checks are later-phase work.

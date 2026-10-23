@@ -1,6 +1,6 @@
 ﻿# Phase 4 status - 2026-10-21
 
-**State: in progress.** The first Phase 4 slice is a cosmetic showroom with no checkout. Phases 0-3 retain open device, content, and network gates. This is not a commercial release or an ownership system.
+**State: in progress.** The first Phase 4 slice is a cosmetic showroom with no checkout; since 2026-10-22 it is excluded from Android builds (see "Preview UI removed"). The shipped app is Grid Run v0.5.1, published through GitHub Releases. Phases 0-3 retain open device, content, and network gates. This is not a commercial release or an ownership system.
 
 ## Implemented slice
 
@@ -79,4 +79,4 @@ Git pushes to main redeploy Vercel production from the repository, which never c
 
 ## Reproduce locally
 
-Run android-game/scripts/Verify-Showroom.ps1 from the repository root. It builds a development desktop player and saves an ignored report, logs, and screenshots under artifacts/android-phase-4/. The Android build method is GridRun.Editor.PhaseFourBuild.BuildAndroid. The preview APK and evidence directory are ignored by Git.
+Run android-game/scripts/Verify-Showroom.ps1 from the repository root. It builds a development desktop player and saves an ignored report, logs, and screenshots under artifacts/android-phase-4/. The player APK comes from GridRun.Editor.PhaseFourBuild.BuildAndroidRelease (`Builds/Android/grid-run.apk`); BuildAndroid makes the larger development APK. Publish with `node scripts/publish-android-release.mjs <version> android-game/Builds/Android/grid-run.apk` (see the repository README). APKs and evidence are ignored by Git.
