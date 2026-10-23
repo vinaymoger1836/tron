@@ -22,7 +22,7 @@ namespace GridRun
 
         private static Kit kit;
         private static Cubemap environment;
-        private static Mesh quad, sphere;
+        private static Mesh quad, sphere, cube;
         private static readonly Dictionary<string, Dictionary<int, Mesh>> setCache = new Dictionary<string, Dictionary<int, Mesh>>();
         internal static readonly List<CycleVisual> Emitters = new List<CycleVisual>();
 
@@ -263,11 +263,19 @@ namespace GridRun
 
         private static Mesh SphereMesh()
         {
-            if (sphere != null) return sphere;
-            var primitive = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            sphere = primitive.GetComponent<MeshFilter>().sharedMesh;
-            UnityEngine.Object.Destroy(primitive);
+            if (sphere == null) sphere = GridMesh.Ellipsoid(Vector3.one * .5f, 32, 16);
             return sphere;
+        }
+
+        // Same as PrimitiveType.Cube but without the collider CreatePrimitive adds: player builds
+        // strip the unused physics module, so CreatePrimitive logs an error on every call there.
+        public static GameObject Cube(string name, Material material)
+        {
+            if (cube == null) cube = GridMesh.Box(Vector3.zero, Vector3.one);
+            var obj = new GameObject(name, typeof(MeshFilter), typeof(MeshRenderer));
+            obj.GetComponent<MeshFilter>().sharedMesh = cube;
+            obj.GetComponent<MeshRenderer>().sharedMaterial = material;
+            return obj;
         }
 
         // Procedural HDR environment for glossy reflections: horizon glow, light panels, soft overhead light.

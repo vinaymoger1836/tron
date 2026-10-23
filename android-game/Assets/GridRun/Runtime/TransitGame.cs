@@ -49,13 +49,10 @@ namespace GridRun
 
         private GameObject Box(string name, Vector3 position, Vector3 scale, Material material, Transform parent)
         {
-            var obj = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            obj.name = name;
+            var obj = GridLook.Cube(name, material);
             obj.transform.SetParent(parent, false);
             obj.transform.localPosition = position;
             obj.transform.localScale = scale;
-            obj.GetComponent<Renderer>().sharedMaterial = material;
-            Destroy(obj.GetComponent<Collider>());
             return obj;
         }
 
