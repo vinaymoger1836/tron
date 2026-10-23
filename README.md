@@ -12,21 +12,17 @@ py -m http.server 8000 --directory dist
 
 Open [http://localhost:8000](http://localhost:8000). A local HTTP server is needed because the game uses JavaScript modules.
 
-## Android APK download on Vercel
+## Android APK download
 
-The landing page shows an **Android App** download when the deployed site contains a matching APK and release manifest. The app is **Grid Run** v0.5.0: every offline mode (Duel, Arena, Daily Signal, Grid Shift, Operations and Journey, Solar Transit, Play lesson), the two-rider Online Room, and the Grid look. Build it with `GridRun.Editor.PhaseFourBuild.BuildAndroidRelease` (output `android-game/Builds/Android/grid-run.apk`). It is still debug signed, has not yet passed physical Galaxy M35 validation, and is not a Play Store release.
+The landing page shows an **Android App** download when `dist/android-release.json` is present. The APK itself is attached to this repository's GitHub Releases (tag `android-v<version>`), and the tracked manifest records its version, size, SHA-256, and download URL, so every Vercel deploy, including Git-triggered ones, keeps the download. The app is **Grid Run** v0.5.1: every offline mode (Duel, Arena, Daily Signal, Grid Shift, Operations and Journey, Solar Transit, Play lesson), the two-rider Online Room, and the Grid look. Build it with `GridRun.Editor.PhaseFourBuild.BuildAndroidRelease` (output `android-game/Builds/Android/grid-run.apk`). It is still debug signed and is not a Play Store release.
 
-From the repository root, stage the build and deploy the complete static site to the **existing** Vercel project:
+Install the GitHub CLI and log in once (`winget install GitHub.cli`, then `gh auth login`). From the repository root:
 
 ```powershell
-node scripts/stage-android-apk.mjs 4 0.5.0 android-game/Builds/Android/grid-run.apk
-npx --yes vercel deploy --dry
-npx --yes vercel deploy --prod
+node scripts/publish-android-release.mjs 0.5.1 android-game/Builds/Android/grid-run.apk
 ```
 
-For later builds, replace `0.5.0` with the app version and keep the build number argument (`4`) for the release manifest. Run `npx --yes vercel login` and `npx --yes vercel link` once if this checkout is not yet linked; select the **existing website project**. Use the repository root as the Vercel project root. The repository `vercel.json` serves `dist/` with no build, and `.vercelignore` uploads only `dist/` and its configuration. Review `npx --yes vercel deploy --dry` before production deployment: it must list `dist/downloads/grid-run-android.apk` and must not list Unity project files, evidence, or secrets. After deployment, open the production page and confirm the phase/version and APK download. The APK and manifest are intentionally Git-ignored. A Git-triggered deployment cannot include them, so repeat the staging and CLI deployment after each website release that should keep the APK available.
-
-The current staged payload is about 36.5 MB, within Vercel Hobby's 100 MB CLI upload limit. Development-build APKs (over 130 MB for Phase 4) exceed it and are rejected; stage the release-packaged APK instead. Check that limit and the dry-run size as later APKs grow. Vercel bandwidth usage may also increase with downloads. Downloaded development APKs require Android's manual installation flow; Play Store distribution later uses a separate signed release process.
+The script creates or updates the release, downloads the published APK back to confirm it is byte-identical, and only then writes `dist/android-release.json`. Commit that file to update the website. For an APK attached by hand on github.com, add `--verify-only` to skip the upload. GitHub release assets may be up to 2 GiB; downloads use GitHub bandwidth, not Vercel's. Downloaded APKs require Android's manual installation flow; Play Store distribution later uses a separate signed release process.
 
 ## Play together online
 
