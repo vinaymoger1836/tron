@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using GridRun.Sim;
 using GridRun.Solo;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -18,19 +19,17 @@ namespace GridRun
         private Font font;
         private Camera view;
         private Vector3 cameraAim;
-        private readonly Dictionary<string, Transform> riders = new Dictionary<string, Transform>();
-        private readonly Dictionary<int, Transform> trails = new Dictionary<int, Transform>();
-        private readonly Transform[] walls = new Transform[4];
-        private readonly Transform[] wallEdges = new Transform[4];
+        // The solo renderer draws server snapshots too, so maps, trails, and fading walls look the same online.
+        private SoloWorld world;
+        private readonly SceneView scene = new SceneView();
         private GameObject setupPanel, roomPanel, playHud;
         private InputField serverField, nameField, codeField;
-        private Button createButton, joinButton, startButton, pauseButton;
-        private Text notice, roomHeading, roster, score, phase, startLabel, pauseLabel, autoLabel;
+        private Button createButton, joinButton, startButton, pauseButton, mapButton, wallsButton;
+        private Text notice, roomHeading, roster, score, phase, startLabel, pauseLabel, autoLabel, mapLabel, wallsLabel;
         private HoldControl forward, fire;
         private OnlineRoomClient.RoomView shown;
         // Seat colours follow createLanRound's order (by position in the room's player list).
         private static readonly string[] SeatColours = { "CYAN", "ORANGE", "VIOLET", "GOLD" };
-        private readonly Dictionary<string, Material> materials = new Dictionary<string, Material>();
         private Text seatsLabel;
         private int seats = 2;
         private bool autoDrive = true;
@@ -54,25 +53,9 @@ namespace GridRun
             ShowSetup();
         }
 
-        private GameObject Box(string name, Vector3 position, Vector3 size, Material material, Transform parent)
-        {
-            var obj = GridLook.Cube(name, material);
-            obj.transform.SetParent(parent, false);
-            obj.transform.localPosition = position;
-            obj.transform.localScale = size;
-            return obj;
-        }
-
         private void BuildWorld()
         {
-            GridLook.Floor(transform, Vector3.zero, new Vector2(120, 120), 4, floorMaterial);
-            GridLook.Stadium(transform, 56);
-            GridLook.Skyline(transform, 125, 180, 70, 11);
-            for (int side = 0; side < 4; side++)
-            {
-                walls[side] = Box("Moving boundary", Vector3.zero, Vector3.one, GridLook.Assets.Boundary, transform).transform;
-                wallEdges[side] = Box("Boundary edge", Vector3.zero, Vector3.one, glowMaterial, transform).transform;
-            }
+            world = new SoloWorld(transform, floorMaterial, cycleMaterial, glowMaterial);
             var cameraObject = new GameObject("Online camera", typeof(Camera), typeof(AudioListener));
             view = cameraObject.GetComponent<Camera>();
             view.tag = "MainCamera";
@@ -80,50 +63,16 @@ namespace GridRun
             view.transform.position = new Vector3(0, 65, -65);
             view.transform.rotation = Quaternion.Euler(45, 0, 0);
             GridLook.Stage(view);
-            SetBoundary(52);
+            ShowMap("classic");
         }
 
-        private void SetBoundary(float limit)
+        // Lobby and setup backdrop: the chosen map with no riders.
+        private void ShowMap(string mapId)
         {
-            float edge = limit + .4f, span = limit * 2 + 1;
-            Vector3[] centers = { new Vector3(-edge, 0, 0), new Vector3(edge, 0, 0), new Vector3(0, 0, -edge), new Vector3(0, 0, edge) };
-            for (int side = 0; side < 4; side++)
-            {
-                bool alongZ = side < 2;
-                walls[side].localPosition = centers[side] + Vector3.up;
-                walls[side].localScale = alongZ ? new Vector3(.3f, 2, span) : new Vector3(span, 2, .3f);
-                wallEdges[side].localPosition = centers[side] + Vector3.up * 2.03f;
-                wallEdges[side].localScale = alongZ ? new Vector3(.34f, .06f, span) : new Vector3(span, .06f, .34f);
-            }
-        }
-
-        private Transform Bike(OnlineRoomClient.RiderView rider)
-        {
-            return CycleVisual.Create(transform, "Online rider " + rider.id, cycleMaterial, Glow(rider.color)).transform;
-        }
-
-        // Same looks as SoloWorld.Glow and SoloWorld.Wall: seat colour plus a style stripe on trails.
-        private Material Glow(float[] color)
-        {
-            if (color == null || color.Length < 3) return glowMaterial;
-            string key = "glow" + string.Join(",", color);
-            if (materials.TryGetValue(key, out var m)) return m;
-            m = new Material(glowMaterial) { name = "Online glow " + key };
-            m.SetColor("_BaseColor", new Color(color[0] * 2.2f, color[1] * 2.2f, color[2] * 2.2f));
-            return materials[key] = m;
-        }
-        private Material Wall(OnlineRoomClient.RiderView owner)
-        {
-            if (owner?.color == null || owner.color.Length < 3) return GridLook.Assets.TrailCyan;
-            string style = owner.style ?? "player", key = "wall" + style + string.Join(",", owner.color);
-            if (materials.TryGetValue(key, out var m)) return m;
-            var c = owner.color;
-            m = new Material(GridLook.Assets.TrailCyan) { name = "Online trail " + key };
-            m.SetColor("_Color", new Color(c[0] * 2.1f, c[1] * 2.1f, c[2] * 2.1f));
-            m.SetFloat("_FillAlpha", .34f);
-            m.SetFloat("_StripeA", style == "hunter" ? .69f : style == "survivor" ? .45f : style == "trapper" ? .33f : 0);
-            m.SetFloat("_StripeB", style == "trapper" ? .74f : 0);
-            return materials[key] = m;
+            world.Clear();
+            scene.Riders.Clear(); scene.Segments.Clear();
+            scene.Map = mapId; scene.Rule = "classic"; scene.Elapsed = 0;
+            scene.Limit = SimMaps.Get(mapId).Limit; scene.TrailLifetime = double.PositiveInfinity;
         }
 
         private RectTransform Rect(string name, Transform parent, Vector2 anchor, Vector2 pivot, Vector2 offset, Vector2 size)
@@ -222,13 +171,17 @@ namespace GridRun
             createButton = Button("Create Room", "CREATE ROOM", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(-165, -410), new Vector2(260, 85), Create);
             joinButton = Button("Join Room", "JOIN ROOM", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(255, -410), new Vector2(440, 85), Join);
             notice = Label("Online notice", "", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 205), new Vector2(1080, 75), 25, TextAnchor.MiddleCenter);
-            Label("Setup rules", "Arena / Classic Grid / 2-4 riders. The host picks the room size and shares the code; START opens when every seat is connected.", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 105), new Vector2(1100, 60), 22, TextAnchor.MiddleCenter);
+            Label("Setup rules", "Arena for 2-4 riders. The host picks the room size, then the map and walls in the lobby; START opens when every seat is connected.", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 105), new Vector2(1100, 60), 22, TextAnchor.MiddleCenter);
             Button("Offline Arena", "MAIN MENU", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 12), new Vector2(350, 78), () => SceneManager.LoadScene("PhaseOneArena"));
             var lobby = Rect("Online room", safe.transform, new Vector2(.5f, .5f), new Vector2(.5f, .5f), Vector2.zero, new Vector2(1280, 760));
             var lobbyImage = lobby.gameObject.AddComponent<Image>();
             UiSkin.Panel(lobbyImage); roomPanel = lobby.gameObject;
             roomHeading = Label("Room heading", "ROOM", lobby, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -25), new Vector2(1120, 75), 47, TextAnchor.MiddleCenter);
-            roster = Label("Room roster", "", lobby, new Vector2(.5f, .5f), new Vector2(.5f, .5f), new Vector2(0, 50), new Vector2(1040, 400), 29, TextAnchor.MiddleCenter);
+            roster = Label("Room roster", "", lobby, new Vector2(.5f, .5f), new Vector2(.5f, .5f), new Vector2(0, 70), new Vector2(1040, 380), 29, TextAnchor.MiddleCenter);
+            mapButton = Button("Room Map", "MAP: CLASSIC GRID", lobby, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(-240, 165), new Vector2(425, 80), CycleMap);
+            mapLabel = mapButton.GetComponentInChildren<Text>();
+            wallsButton = Button("Room Walls", "WALLS: PERSISTENT", lobby, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(240, 165), new Vector2(425, 80), CycleWalls);
+            wallsLabel = wallsButton.GetComponentInChildren<Text>();
             startButton = Button("Start Heat", "START ARENA", lobby, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(-240, 55), new Vector2(425, 95), StartHeat);
             startLabel = startButton.GetComponentInChildren<Text>();
             Button("Leave Room", "LEAVE ROOM", lobby, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(240, 55), new Vector2(425, 95), Leave);
@@ -255,6 +208,20 @@ namespace GridRun
         {
             try { await room.JoinAsync(serverField.text, codeField.text.Trim(), nameField.text); }
             catch { /* The client exposes a clear status message. */ }
+        }
+        // The server accepts map and wall choices from the host in the lobby only.
+        private async void CycleMap()
+        {
+            var current = room.View;
+            if (current == null || current.phase != "lobby") return;
+            string next = SimMaps.Order[(Array.IndexOf(SimMaps.Order, current.map) + 1) % SimMaps.Order.Length];
+            await room.SendAsync("map", map: next);
+        }
+        private async void CycleWalls()
+        {
+            var current = room.View;
+            if (current == null || current.phase != "lobby") return;
+            await room.SendAsync("rule", rule: current.rule == "decay" ? "classic" : "decay");
         }
         private async void Leave() { await room.LeaveAsync(); ShowSetup(); }
         private async void StartHeat() { await room.SendAsync(room.View?.phase == "paused" ? "pause" : "start"); }
@@ -314,7 +281,8 @@ namespace GridRun
             roomPanel.SetActive(!active);
             playHud.SetActive(active);
             roomHeading.text = "ROOM " + current.code + "  /  " + current.phase.ToUpperInvariant();
-            string lines = "ARENA / CLASSIC GRID / " + current.players.Length + "/" + current.maxPlayers + " RIDERS\n";
+            string lines = "ARENA / " + SimMaps.Get(current.map).Name.ToUpperInvariant() + " / " + WallsName(current.rule) + " / " +
+                current.players.Length + "/" + current.maxPlayers + " RIDERS\n";
             for (int i = 0; i < current.players.Length; i++)
             {
                 var player = current.players[i];
@@ -339,6 +307,10 @@ namespace GridRun
             startButton.gameObject.SetActive(host && (current.phase == "lobby" || current.phase == "round-result" || current.phase == "match-result" || current.phase == "paused"));
             startButton.interactable = current.players.Length == current.maxPlayers && Array.TrueForAll(current.players, p => p.connected);
             startLabel.text = current.phase == "paused" ? "RESUME" : current.phase == "match-result" ? "REMATCH" : current.phase == "round-result" ? "NEXT HEAT" : "START ARENA";
+            bool choosing = host && current.phase == "lobby";
+            mapButton.gameObject.SetActive(choosing); wallsButton.gameObject.SetActive(choosing);
+            mapLabel.text = "MAP: " + SimMaps.Get(current.map).Name.ToUpperInvariant();
+            wallsLabel.text = "WALLS: " + WallsName(current.rule);
             pauseButton.gameObject.SetActive(host);
             pauseLabel.text = current.phase == "paused" ? "RESUME" : "PAUSE";
             score.text = "ROOM " + current.code + "  /  HEAT " + current.roundNumber + "  /  " +
@@ -358,56 +330,44 @@ namespace GridRun
             return i < 0 ? id : SeatColours[i % SeatColours.Length] + " " + view.players[i].name;
         }
 
+        private static string WallsName(string rule) => rule == "decay" ? "FADING WALLS" : "PERSISTENT WALLS";
+
+        // Copies the server snapshot into the solo renderer's view; the own seat counts as the player.
         private void RenderRound(OnlineRoomClient.RoomView current)
         {
             var round = current.round;
-            if (round == null) return;
-            SetBoundary(round.limit > 0 ? round.limit : 52);
-            if (round.riders != null)
-                foreach (var rider in round.riders)
+            if (round == null)
+            {
+                if (scene.Map != current.map || scene.Riders.Count > 0) ShowMap(current.map);
+                return;
+            }
+            scene.Map = round.map; scene.Rule = round.rule; scene.Elapsed = round.elapsed;
+            scene.Limit = round.limit > 0 ? round.limit : SimMaps.Get(round.map).Limit;
+            // JsonUtility reads the null lifetime of persistent walls as 0.
+            scene.TrailLifetime = round.rule == "decay" && round.trailLifetime > 0 ? round.trailLifetime : double.PositiveInfinity;
+            scene.Riders.Clear(); scene.Segments.Clear();
+            foreach (var r in round.riders ?? new OnlineRoomClient.RiderView[0])
+                scene.Riders.Add(new Solo.RiderView
                 {
-                    if (!riders.TryGetValue(rider.id, out var visual))
-                    { visual = Bike(rider); riders.Add(rider.id, visual); }
-                    visual.gameObject.SetActive(rider.alive);
-                    // Same sim-to-Unity mapping as offline play, so relative turns read the same way.
-                    visual.position = SoloWorld.W(rider.x, rider.z);
-                    visual.rotation = Quaternion.Euler(0, SoloWorld.Yaw(rider.dir), 0);
-                }
-            var seen = new HashSet<int>();
-            if (round.segments != null)
-                foreach (var segment in round.segments)
-                {
-                    seen.Add(segment.id);
-                    if (!trails.TryGetValue(segment.id, out var visual))
-                    {
-                        visual = Box("Online light trail", Vector3.zero, Vector3.one,
-                            Wall(Array.Find(round.riders ?? new OnlineRoomClient.RiderView[0], r => r.id == segment.ownerId)), transform).transform;
-                        trails.Add(segment.id, visual);
-                    }
-                    visual.position = SoloWorld.W((segment.x1 + segment.x2) * .5f, (segment.z1 + segment.z2) * .5f, .55f);
-                    visual.localScale = new Vector3(Mathf.Max(.14f, Mathf.Abs(segment.x2 - segment.x1)), 1.1f,
-                        Mathf.Max(.14f, Mathf.Abs(segment.z2 - segment.z1)));
-                    visual.gameObject.SetActive(segment.active);
-                }
-            var removed = new List<int>();
-            foreach (var pair in trails) if (!seen.Contains(pair.Key)) { Destroy(pair.Value.gameObject); removed.Add(pair.Key); }
-            foreach (var id in removed) trails.Remove(id);
+                    Id = r.id, X = r.x, Z = r.z, Dir = r.dir, Alive = r.alive, IsPlayer = r.id == current.selfId,
+                    Form = string.IsNullOrEmpty(r.form) ? "cycle" : r.form, Style = r.style, Color = r.color, FormChangedAt = -10,
+                });
+            foreach (var s in round.segments ?? new OnlineRoomClient.SegmentView[0])
+                scene.Segments.Add(new Solo.SegmentView
+                { Id = s.id, OwnerId = s.ownerId, X1 = s.x1, Z1 = s.z1, X2 = s.x2, Z2 = s.z2, Active = s.active, ClosedAt = s.closedAt });
         }
 
         private void LateUpdate()
         {
             if (view == null) return;
+            world.Render(scene, Time.deltaTime);
             Vector3 target = new Vector3(0, 65, -65), aim = Vector3.zero;
-            if (room?.View?.phase == "running" && riders.TryGetValue(room.SelfId ?? "", out var self) && self.gameObject.activeSelf)
+            var self = world.Player;
+            if (room?.View?.phase == "running" && self != null && self.gameObject.activeSelf)
                 ChaseCamera.Target(self.position, self.rotation, out target, out aim);
             ChaseCamera.Follow(view.transform, ref cameraAim, target, aim, Time.deltaTime);
         }
-        private void ClearWorld()
-        {
-            foreach (var rider in riders.Values) Destroy(rider.gameObject);
-            foreach (var trail in trails.Values) Destroy(trail.gameObject);
-            riders.Clear(); trails.Clear(); SetBoundary(52);
-        }
+        private void ClearWorld() => ShowMap("classic");
         private void OnApplicationPause(bool paused)
         {
             if (!paused || room == null) return;
@@ -423,7 +383,6 @@ namespace GridRun
         private void OnDestroy()
         {
             Screen.sleepTimeout = SleepTimeout.SystemSetting;
-            foreach (var material in materials.Values) Destroy(material);
         }
     }
 }

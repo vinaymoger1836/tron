@@ -20,11 +20,11 @@ namespace GridRun
         }
         [Serializable] public sealed class SegmentView
         {
-            public int id; public string ownerId; public float x1, z1, x2, z2; public bool active;
+            public int id; public string ownerId; public float x1, z1, x2, z2, closedAt; public bool active;
         }
         [Serializable] public sealed class RoundView
         {
-            public int tick; public float elapsed, limit; public string map;
+            public int tick; public float elapsed, limit, trailLifetime; public string map, rule;
             public RiderView[] riders; public SegmentView[] segments;
         }
         [Serializable] public sealed class CrashView { public string riderId, reason; }
@@ -159,13 +159,13 @@ namespace GridRun
             _ = StreamLoopAsync(streamCancellation.Token);
         }
 
-        public async Task SendAsync(string type, int sign = 0, bool held = false, bool enabled = false)
+        public async Task SendAsync(string type, int sign = 0, bool held = false, bool enabled = false, string map = null, string rule = null)
         {
             if (string.IsNullOrEmpty(Code) || client == null) return;
             try
             {
                 await TimedRequestAsync("/api/rooms/" + Code + "/action",
-                    new ActionBody { type = type, sign = sign, held = held, enabled = enabled });
+                    new ActionBody { type = type, sign = sign, held = held, enabled = enabled, map = map, rule = rule });
             }
             catch (Exception error) { Status = error.Message; }
         }
@@ -238,8 +238,9 @@ namespace GridRun
                 if (view == null || view.code != Code || view.roundNumber < 0 || view.players == null)
                     throw new InvalidOperationException("Invalid room snapshot.");
                 View = view;
-                Supported = view.mode == "arena" && view.map == "classic" && view.maxPlayers >= 2 && view.maxPlayers <= 4 && view.rule == "classic";
-                Status = !Supported ? "This room uses a mode the app does not support online yet. Online play supports Arena for 2-4 riders on Classic Grid with persistent walls." :
+                Supported = view.mode == "arena" && Array.IndexOf(Sim.SimMaps.Order, view.map) >= 0 &&
+                    view.maxPlayers >= 2 && view.maxPlayers <= 4 && (view.rule == "classic" || view.rule == "decay");
+                Status = !Supported ? "This room uses a mode the app does not support online yet. Online play supports Arena for 2-4 riders on any map, with persistent or fading walls." :
                     !streamOpen ? Status :
                     view.phase == "connection-wait" ? "Waiting for a rider to reconnect..." : "Connected to room " + Code + ".";
             }
