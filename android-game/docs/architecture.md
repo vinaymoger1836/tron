@@ -46,4 +46,4 @@ Visuals and audio are procedural project code plus Unity-provided fonts and shad
 
 ## Known limitations
 
-The original Phase 0 probe had no trails, AI, weapons, scoring, save data, online play, or shop; the app now has all of those except a shop (the cosmetic showroom is excluded from Android builds and has no checkout). Remaining gaps: online play covers only two-seat Classic Grid Arena, and its client mirrors relative turns on screen; signing and app identity are not production; device validation is one short Galaxy M35 session; art is procedural code rather than authored models.
+The original Phase 0 probe had no trails, AI, weapons, scoring, save data, online play, or shop; the app now has all of those except a shop (the cosmetic showroom is excluded from Android builds and has no checkout). Remaining gaps: online play covers only two-seat Classic Grid Arena,; signing and app identity are not production; device validation is one short Galaxy M35 session; art is procedural code rather than authored models.
