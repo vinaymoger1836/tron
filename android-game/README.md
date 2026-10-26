@@ -4,7 +4,7 @@ A separate Unity Android project that ports the browser game in `dist/`. The bro
 
 ## Status
 
-The app is **Grid Run** v0.5.1 (code 7). It opens on a main menu with New Game, Online Game, Solar Transit, Records, and Settings, and it plays every offline mode: Duel, Arena, Daily Signal, Grid Shift, Operations and Journey, Solar Transit, and the Play lesson. The rules come from an exact C# port of the browser modules (`Assets/GridRun/Runtime/Sim/`), proven tick-for-tick against browser traces. The Online Room is a Classic Grid Arena client for the existing Node server, for 2-4 riders in the current source (the v0.5.1 APK predates this and has two seats); online play for the other modes is deferred.
+The app is **Grid Run** v0.5.1 (code 7). It opens on a main menu with New Game, Online Game, Solar Transit, Records, and Settings, and it plays every offline mode: Duel, Arena, Daily Signal, Grid Shift, Operations and Journey, Solar Transit, and the Play lesson. The rules come from an exact C# port of the browser modules (`Assets/GridRun/Runtime/Sim/`), proven tick-for-tick against browser traces. The Online Room is an Arena client for the existing Node server; the current source supports 2-4 riders, all three maps, and fading walls (the v0.5.1 APK predates this: two seats on Classic Grid); online play for the other modes is deferred.
 
 v0.5.0 ran on a Galaxy M35 at a steady 60 fps with no throttling (see `docs/device-validation.md`). The APK is still debug signed with the development application ID, so it is not a Play Store release. Per-phase detail is in `docs/phase-0-status.md` through `docs/phase-4-status.md`.
 
@@ -66,7 +66,7 @@ Each script builds a desktop player (unless noted) and writes an ignored report,
 | `Verify-Solo.ps1` | Every offline mode end to end through the real controls |
 | `Verify-Transit.ps1` | Solar Transit course, jet, sail, timeout, retry |
 | `Verify-Showroom.ps1` | Cosmetic showroom (desktop player only) and the shipped menu |
-| `Verify-Online.ps1` | A local room server and one Unity client per seat (`-Seats 2`, `3`, or `4`; default 2) |
+| `Verify-Online.ps1` | A local room server and one Unity client per seat (`-Seats 2`, `3`, or `4`; `-Map classic|solar|vault`; `-Rule classic|decay`) |
 | `Verify-Desktop.ps1` | The Phase 0 movement probe |
 | `Capture-Look.ps1` | Art-review screenshots, no assertions (`-SkipBuild` reuses the player) |
 | `Build-Android.ps1` | The Phase 0 probe APK, or `-PrepareOnly` for Phase 0 preparation |

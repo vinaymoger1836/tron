@@ -158,6 +158,10 @@ namespace GridRun
             start = self.position;
             yield return new WaitForSecondsRealtime(.4f);
             Check("Rider travels the way it faces after the turn", Vector3.Dot(self.position - start, after) > 0);
+            // The segment closed by the turn is still a wall; the old online renderer hid it.
+            var own = Array.FindAll(room.View.round.segments, s => s.ownerId == selfId && Mathf.Abs(s.x2 - s.x1) + Mathf.Abs(s.z2 - s.z1) > .06f);
+            int drawn = Array.FindAll(FindObjectsByType<Transform>(FindObjectsSortMode.None), t => t.name == "Light trail").Length;
+            Check("Trail from before the turn stays visible", own.Length >= 2 && Array.Exists(own, s => !s.active) && drawn >= own.Length);
         }
 
         private IEnumerator Run()
