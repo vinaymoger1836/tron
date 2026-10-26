@@ -24,6 +24,7 @@ namespace GridRun
         private readonly Report report = new Report();
         private string output, role, server;
         private int seats = 2;
+        private string map = "classic", rule = "classic";
         private OnlineRoomClient room;
         private bool failed;
 
@@ -39,6 +40,8 @@ namespace GridRun
             runner.role = Option(args, "--phase2-role") ?? "host";
             runner.server = Option(args, "--phase2-origin") ?? "http://127.0.0.1:8096";
             if (int.TryParse(Option(args, "--phase2-seats"), out int seats)) runner.seats = seats;
+            runner.map = Option(args, "--phase2-map") ?? "classic";
+            runner.rule = Option(args, "--phase2-rule") ?? "classic";
             Directory.CreateDirectory(runner.output);
             Application.runInBackground = true;
             runner.Invoke(nameof(Timeout), 115);
@@ -118,12 +121,28 @@ namespace GridRun
             report.captures.Add(new Capture { file = role + "-" + file, width = Screen.width, height = Screen.height });
         }
 
+        // Each map has a landmark obstacle that SoloWorld names by its id; Classic Grid has none.
+        private static bool MapShown(string id)
+        {
+            bool solar = GameObject.Find("WEST REACTOR") != null, vault = GameObject.Find("VAULT CORE") != null;
+            return id == "solar" ? solar && !vault : id == "vault" ? vault && !solar : !solar && !vault;
+        }
+        private IEnumerator ChooseMap(string next)
+        {
+            Submit("Room Map");
+            yield return WaitFor(() => room.View?.map == next, 5, "Host chose " + next);
+            // The map rebuilds in LateUpdate and the old one is destroyed at the end of that frame.
+            yield return WaitFor(() => MapShown(next), 3, "Lobby backdrop shows " + next);
+            Check("Map button names " + next, Control("Room Map").GetComponentInChildren<Text>().text ==
+                "MAP: " + Sim.SimMaps.Get(next).Name.ToUpperInvariant());
+        }
+
         // The rider must travel the way its model faces, and LEFT must turn it left on screen.
         private IEnumerator CheckTurnReadsOnScreen()
         {
             string selfId = room.View.selfId;
             int Dir() => Array.Find(room.View?.round?.riders ?? new OnlineRoomClient.RiderView[0], r => r.id == selfId)?.dir ?? -1;
-            var self = GameObject.Find("Online rider " + selfId)?.transform;
+            var self = GameObject.Find("Player cycle")?.transform;
             Check("Own rider rendered", self != null);
             if (self == null) yield break;
             Vector3 start = self.position, before = self.forward;
@@ -165,6 +184,18 @@ namespace GridRun
                 yield return WaitFor(() => room.View?.phase == "lobby", 10, "Host received lobby snapshot");
                 Check("Server room has " + seats + " seats", room.View?.maxPlayers == seats);
                 yield return WaitFor(() => room.View?.players?.Length == seats && Array.TrueForAll(room.View.players, p => p.connected), 30, "Every seat joined the lobby");
+                // Cycle every map once (the backdrop must follow), then settle on the requested map and walls.
+                foreach (string next in new[] { "solar", "vault", "classic" }) yield return ChooseMap(next);
+                foreach (string next in map == "vault" ? new[] { "solar", "vault" } : map == "solar" ? new[] { "solar" } : new string[0])
+                    yield return ChooseMap(next);
+                if (rule == "decay")
+                {
+                    Submit("Room Walls");
+                    yield return WaitFor(() => room.View?.rule == "decay", 5, "Host chose fading walls");
+                    yield return null;
+                    Check("Walls button names fading walls", Control("Room Walls").GetComponentInChildren<Text>().text == "WALLS: FADING WALLS");
+                }
+                Check("Room settled on " + map + " with " + rule + " walls", room.View?.map == map && room.View?.rule == rule);
                 yield return CaptureLayout("lobby-desktop.png", 1280, 720);
                 yield return CaptureLayout("lobby-phone.png", 1170, 540);
                 Submit("Start Heat");
@@ -215,11 +246,23 @@ namespace GridRun
             Check("Server tick advances", (room.View.round?.tick ?? -1) > firstTick);
             var streamed = room.View.round?.riders ?? new OnlineRoomClient.RiderView[0];
             Check("Server streams " + seats + " riders", streamed.Length == seats);
-            Check("Unity renders every rider", Array.TrueForAll(streamed, r => GameObject.Find("Online rider " + r.id) != null));
+            // SoloWorld names the own seat "Player cycle" and every other seat "Rider <id>".
+            Check("Unity renders every rider", Array.TrueForAll(streamed, r =>
+                GameObject.Find(r.id == room.View.selfId ? "Player cycle" : "Rider " + r.id) != null));
+            Check("Heat runs on " + map + " with " + rule + " walls", room.View.round?.map == map && room.View.round?.rule == rule &&
+                (rule == "decay" ? room.View.round.trailLifetime == 10 : room.View.round.trailLifetime == 0));
+            Check("Arena shows the " + map + " map", MapShown(map));
             var colours = new HashSet<string>();
             foreach (var rider in streamed) colours.Add(rider.color == null ? "" : string.Join(",", rider.color));
             Check("Each seat has its own colour", colours.Count == seats && !colours.Contains(""));
-            if (role == "host")
+            // Solar Circuit and Data Vault heats can end within two seconds on Auto Drive (spawns face
+            // obstacles or each other), so the timed turn and pause checks run on Classic Grid only.
+            if (role == "host" && map != "classic")
+            {
+                yield return CaptureLayout("arena-desktop.png", 1280, 720);
+                yield return CaptureLayout("arena-phone.png", 1170, 540);
+            }
+            else if (role == "host")
             {
                 yield return CheckTurnReadsOnScreen();
                 Submit("Host Pause");
