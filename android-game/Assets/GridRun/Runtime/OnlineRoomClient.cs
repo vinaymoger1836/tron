@@ -237,6 +237,8 @@ namespace GridRun
                 var view = JsonUtility.FromJson<RoomView>(newest);
                 if (view == null || view.code != Code || view.roundNumber < 0 || view.players == null)
                     throw new InvalidOperationException("Invalid room snapshot.");
+                // JsonUtility turns "round": null into an empty RoundView; a real round always names its map.
+                if (view.round != null && string.IsNullOrEmpty(view.round.map)) view.round = null;
                 View = view;
                 Supported = view.mode == "arena" && Array.IndexOf(Sim.SimMaps.Order, view.map) >= 0 &&
                     view.maxPlayers >= 2 && view.maxPlayers <= 4 && (view.rule == "classic" || view.rule == "decay");

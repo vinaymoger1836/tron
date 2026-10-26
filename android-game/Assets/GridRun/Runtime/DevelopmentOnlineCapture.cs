@@ -151,7 +151,8 @@ namespace GridRun
             int dir = Dir();
             Submit("Left");
             yield return WaitFor(() => Dir() != dir, 3, "Server applied the LEFT turn");
-            yield return null;
+            // SoloWorld redraws in LateUpdate, after this coroutine resumes.
+            yield return WaitFor(() => Vector3.Angle(before, self.forward) > 45, 1, "Rendered rider turned");
             Vector3 after = self.forward;
             Check("LEFT turns the rider left on screen", Vector3.Cross(before, after).y < -.5f);
             start = self.position;
@@ -239,7 +240,8 @@ namespace GridRun
                 // Guest controls and network state are checked; host captures both viewports.
                 Check("Guest lobby controls fit viewport", ControlsFit());
             }
-            yield return WaitFor(() => room.View?.phase == "running", 15, "Arena heat started on every client");
+            // The host may spend a while choosing maps and walls in the lobby first.
+            yield return WaitFor(() => room.View?.phase == "running", 45, "Arena heat started on every client");
             if (room.View?.phase != "running") { Save(); Application.Quit(2); yield break; }
             int firstTick = room.View.round?.tick ?? -1;
             yield return new WaitForSecondsRealtime(.4f);
