@@ -22,7 +22,12 @@ namespace GridRun
         private Vector3 cameraAim;
         private SoloWorld world;
         private SoloHud hud;
-        private readonly SceneView scene = new SceneView();
+        // Snapshots arrive about 20 times a second. The drawn view blends the previous snapshot toward
+        // the latest over one snapshot interval, so riders and trails move every frame (about 50 ms behind).
+        private readonly SceneView latest = new SceneView(), earlier = new SceneView(), drawn = new SceneView();
+        private bool blend;
+        private int blendRound = -1;
+        private float arrivedAt, interval = .05f;
         private GameObject setupPanel, roomPanel, playHud;
         private InputField serverField, nameField, codeField;
         private Button createButton, joinButton, startButton, modeButton, mapButton, wallsButton;
@@ -82,10 +87,11 @@ namespace GridRun
         private void ShowMap(string mapId)
         {
             world.Clear();
-            scene.Riders.Clear(); scene.Segments.Clear(); scene.Bullets.Clear(); scene.Pickups.Clear(); scene.Discs.Clear();
+            latest.Riders.Clear(); latest.Segments.Clear(); latest.Bullets.Clear(); latest.Pickups.Clear(); latest.Discs.Clear();
             lastEffectId = 0;
-            scene.Map = mapId; scene.Rule = "classic"; scene.Elapsed = 0;
-            scene.Limit = SimMaps.Get(mapId).Limit; scene.TrailLifetime = double.PositiveInfinity;
+            blend = false; blendRound = -1;
+            latest.Map = mapId; latest.Rule = "classic"; latest.Elapsed = 0;
+            latest.Limit = SimMaps.Get(mapId).Limit; latest.TrailLifetime = double.PositiveInfinity;
         }
 
         private RectTransform Rect(string name, Transform parent, Vector2 anchor, Vector2 pivot, Vector2 offset, Vector2 size)
@@ -524,7 +530,7 @@ namespace GridRun
                     case "pickup":
                         hud.ShowToast(e.riderId == current.selfId ? item + " PICKED UP" : Seat(current, e.riderId) + " TOOK " + item);
                         if (e.riderId == current.selfId) sound.Beep(980, .12, "triangle", .03);
-                        var picker = scene.Riders.Find(r => r.Id == e.riderId);
+                        var picker = latest.Riders.Find(r => r.Id == e.riderId);
                         if (picker.Id != null)
                             world.Ring(picker.X, picker.Z, e.pickup == "ammo" ? new[] { .25f, .85f, 1f } : e.pickup == "nitro" ? new[] { .25f, 1f, .4f } : new[] { 1f, .54f, .18f }, 1.4f);
                         break;
@@ -545,17 +551,27 @@ namespace GridRun
             var round = current.round;
             if (round == null)
             {
-                if (scene.Map != current.map || scene.Riders.Count > 0) ShowMap(current.map);
+                if (latest.Map != current.map || latest.Riders.Count > 0) ShowMap(current.map);
                 return;
             }
-            scene.Map = round.map; scene.Rule = round.rule; scene.Elapsed = round.elapsed;
-            scene.Limit = round.limit > 0 ? round.limit : SimMaps.Get(round.map).Limit;
+            // Blend only within one heat; the measured gap (clamped, so a pause does not stretch it) sets the pace.
+            float now = Time.unscaledTime;
+            blend = current.roundNumber == blendRound;
+            if (blend)
+            {
+                earlier.CopyFrom(latest);
+                interval = Mathf.Clamp(Mathf.Lerp(interval, now - arrivedAt, .2f), .03f, .12f);
+            }
+            blendRound = current.roundNumber;
+            arrivedAt = now;
+            latest.Map = round.map; latest.Rule = round.rule; latest.Elapsed = round.elapsed;
+            latest.Limit = round.limit > 0 ? round.limit : SimMaps.Get(round.map).Limit;
             // JsonUtility reads the null lifetime of persistent walls as 0.
-            scene.TrailLifetime = round.rule == "decay" && round.trailLifetime > 0 ? round.trailLifetime : double.PositiveInfinity;
+            latest.TrailLifetime = round.rule == "decay" && round.trailLifetime > 0 ? round.trailLifetime : double.PositiveInfinity;
             var discs = current.mode == "shift" ? round.shift?.discs ?? new OnlineRoomClient.DiscView[0] : new OnlineRoomClient.DiscView[0];
-            scene.Riders.Clear(); scene.Segments.Clear(); scene.Bullets.Clear(); scene.Pickups.Clear(); scene.Discs.Clear();
+            latest.Riders.Clear(); latest.Segments.Clear(); latest.Bullets.Clear(); latest.Pickups.Clear(); latest.Discs.Clear();
             foreach (var r in round.riders ?? new OnlineRoomClient.RiderView[0])
-                scene.Riders.Add(new Solo.RiderView
+                latest.Riders.Add(new Solo.RiderView
                 {
                     Id = r.id, X = r.x, Z = r.z, Dir = r.dir, Alive = r.alive, IsPlayer = r.id == current.selfId,
                     Form = string.IsNullOrEmpty(r.form) ? "cycle" : r.form, Style = r.style, Color = r.color,
@@ -564,22 +580,24 @@ namespace GridRun
                     FlightStartedAt = r.flightStartedAt, FlightUntil = r.flightUntil,
                 });
             foreach (var s in round.segments ?? new OnlineRoomClient.SegmentView[0])
-                scene.Segments.Add(new Solo.SegmentView
+                latest.Segments.Add(new Solo.SegmentView
                 { Id = s.id, OwnerId = s.ownerId, X1 = s.x1, Z1 = s.z1, X2 = s.x2, Z2 = s.z2, Active = s.active, ClosedAt = s.closedAt });
             foreach (var b in round.bullets ?? new OnlineRoomClient.BulletView[0])
-                scene.Bullets.Add(new Solo.BulletView { X = b.x, Z = b.z, Rocket = b.rocket, FromPlayer = b.ownerId == current.selfId, Vx = b.vx, Vz = b.vz });
+                latest.Bullets.Add(new Solo.BulletView { X = b.x, Z = b.z, Rocket = b.rocket, FromPlayer = b.ownerId == current.selfId, Vx = b.vx, Vz = b.vz });
             foreach (var p in round.pickups ?? new OnlineRoomClient.PickupView[0])
-                if (p.active) scene.Pickups.Add(new Solo.PickupView { Id = p.id, Type = p.type, X = p.x, Z = p.z });
+                if (p.active) latest.Pickups.Add(new Solo.PickupView { Id = p.id, Type = p.type, X = p.x, Z = p.z });
             foreach (var d in discs)
-                scene.Discs.Add(new Solo.DiscView { X = d.x, Z = d.z, FromPlayer = d.ownerId == current.selfId });
+                latest.Discs.Add(new Solo.DiscView { X = d.x, Z = d.z, FromPlayer = d.ownerId == current.selfId });
             PlayEffects(current);
         }
 
         private void LateUpdate()
         {
             if (view == null) return;
-            world.Render(scene, Time.deltaTime);
-            if (playHud.activeSelf) hud.DrawRadar(scene, Time.deltaTime);
+            if (blend) drawn.Interpolate(earlier, latest, Mathf.Clamp01((Time.unscaledTime - arrivedAt) / interval));
+            else drawn.CopyFrom(latest);
+            world.Render(drawn, Time.deltaTime);
+            if (playHud.activeSelf) hud.DrawRadar(drawn, Time.deltaTime);
             Vector3 target = new Vector3(0, 65, -65), aim = Vector3.zero;
             var self = world.Player;
             if (room?.View?.phase == "running" && self != null && self.gameObject.activeSelf)

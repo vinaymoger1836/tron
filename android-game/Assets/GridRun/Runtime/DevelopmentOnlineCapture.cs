@@ -227,6 +227,28 @@ namespace GridRun
         }
 
         // The rider must travel the way its model faces, and LEFT must turn it left on screen.
+        // Snapshots arrive at about 20 Hz. With blending, the drawn rider should move on nearly every
+        // rendered frame and never step backwards; without it, it moves on roughly one frame in three at 60 fps.
+        private IEnumerator CheckSmoothMotion(Transform rider, float seconds)
+        {
+            int frames = 0, moved = 0, backwards = 0;
+            Vector3 last = rider.position;
+            float until = Time.realtimeSinceStartup + seconds;
+            while (Time.realtimeSinceStartup < until)
+            {
+                yield return new WaitForEndOfFrame();
+                Vector3 step = rider.position - last;
+                last = rider.position;
+                frames++;
+                if (step.magnitude > .001f) moved++;
+                if (Vector3.Dot(step, rider.forward) < -.01f) backwards++;
+            }
+            Debug.Log("PHASE2_MOTION " + role + " frames " + frames + " moved " + moved + " backwards " + backwards);
+            Check("Enough frames to judge motion (" + frames + ")", frames >= seconds * 35);
+            Check("Rider moves on most frames between snapshots (" + moved + "/" + frames + ")", moved >= frames * .8f);
+            Check("Rider never steps backwards", backwards == 0);
+        }
+
         private IEnumerator CheckTurnReadsOnScreen()
         {
             string selfId = room.View.selfId;
@@ -235,7 +257,7 @@ namespace GridRun
             Check("Own rider rendered", self != null);
             if (self == null) yield break;
             Vector3 start = self.position, before = self.forward;
-            yield return new WaitForSecondsRealtime(.4f);
+            yield return CheckSmoothMotion(self, .4f);
             Check("Rider travels the way it faces", Vector3.Dot(self.position - start, before) > 0);
             int dir = Dir();
             Submit("Left");
@@ -385,6 +407,9 @@ namespace GridRun
             var audio = FindFirstObjectByType<Solo.SoloAudio>();
             Check("Online sound follows the Sound setting", audio != null && audio.Enabled == Solo.SoloProfile.Sound && audio.Enabled);
             Check("Countdown and start sounds played", Heard("beep 440") && Heard("beep 730") && Heard("wall"));
+            // The Classic Grid host measures motion inside its turn check; everyone else measures here.
+            var own = GameObject.Find("Player cycle")?.transform;
+            if (own != null && !(role == "host" && map == "classic")) yield return CheckSmoothMotion(own, .4f);
             // Solar Circuit and Data Vault heats can end within two seconds on Auto Drive (spawns face
             // obstacles or each other), so the timed turn and pause checks run on Classic Grid only.
             if (role == "host" && map != "classic")
