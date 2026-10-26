@@ -23,6 +23,7 @@ namespace GridRun
         }
         private readonly Report report = new Report();
         private string output, role, server;
+        private int seats = 2;
         private OnlineRoomClient room;
         private bool failed;
 
@@ -37,6 +38,7 @@ namespace GridRun
             runner.output = Path.GetFullPath(args[index + 1]);
             runner.role = Option(args, "--phase2-role") ?? "host";
             runner.server = Option(args, "--phase2-origin") ?? "http://127.0.0.1:8096";
+            if (int.TryParse(Option(args, "--phase2-seats"), out int seats)) runner.seats = seats;
             Directory.CreateDirectory(runner.output);
             Application.runInBackground = true;
             runner.Invoke(nameof(Timeout), 115);
@@ -149,6 +151,9 @@ namespace GridRun
             string codePath = Path.Combine(output, "room-code.txt");
             if (role == "host")
             {
+                var sizeLabel = Control("Room Size").GetComponentInChildren<Text>();
+                for (int i = 0; i < 3 && sizeLabel.text != "RIDERS: " + seats; i++) Submit("Room Size");
+                Check("Room size shows " + seats + " riders", sizeLabel.text == "RIDERS: " + seats);
                 yield return CaptureLayout("setup-phone.png", 1170, 540);
                 Submit("Create Room");
                 yield return WaitFor(() => !string.IsNullOrEmpty(room.Code), 10, "Host created a room");
@@ -156,10 +161,30 @@ namespace GridRun
                 Check("Host received six digits", System.Text.RegularExpressions.Regex.IsMatch(room.Code, "^[0-9]{6}$"));
                 File.WriteAllText(codePath, room.Code);
                 yield return WaitFor(() => room.View?.phase == "lobby", 10, "Host received lobby snapshot");
-                yield return WaitFor(() => room.View?.players?.Length == 2 && room.View.players[1].connected, 20, "Friend joined the lobby");
+                Check("Server room has " + seats + " seats", room.View?.maxPlayers == seats);
+                yield return WaitFor(() => room.View?.players?.Length == seats && Array.TrueForAll(room.View.players, p => p.connected), 30, "Every seat joined the lobby");
                 yield return CaptureLayout("lobby-desktop.png", 1280, 720);
                 yield return CaptureLayout("lobby-phone.png", 1170, 540);
                 Submit("Start Heat");
+            }
+            else if (role != "guest")
+            {
+                // Extra seats join directly. guest2 also leaves the lobby and rejoins, which reopens a
+                // seat in the middle of the list; the host can only start if seat ids stay unique.
+                yield return WaitFor(() => File.Exists(codePath), 20, role + " found the room code");
+                if (!File.Exists(codePath)) { Save(); Application.Quit(2); yield break; }
+                Field("Room code").text = File.ReadAllText(codePath).Trim();
+                Submit("Join Room");
+                yield return WaitFor(() => room.View?.phase == "lobby", 15, role + " joined via six-digit code");
+                if (role == "guest2")
+                {
+                    Submit("Leave Room");
+                    yield return WaitFor(() => room.Code == null, 5, "guest2 left the lobby");
+                    yield return new WaitForSecondsRealtime(.5f);
+                    Submit("Join Room");
+                    yield return WaitFor(() => room.View?.phase == "lobby", 15, "guest2 rejoined the lobby");
+                }
+                Check(role + " lobby controls fit viewport", ControlsFit());
             }
             else
             {
@@ -184,8 +209,12 @@ namespace GridRun
             int firstTick = room.View.round?.tick ?? -1;
             yield return new WaitForSecondsRealtime(.4f);
             Check("Server tick advances", (room.View.round?.tick ?? -1) > firstTick);
-            Check("Server streams two riders", room.View.round?.riders?.Length == 2);
-            Check("Unity renders both riders", GameObject.Find("Online rider P1") != null && GameObject.Find("Online rider P2") != null);
+            var streamed = room.View.round?.riders ?? new OnlineRoomClient.RiderView[0];
+            Check("Server streams " + seats + " riders", streamed.Length == seats);
+            Check("Unity renders every rider", Array.TrueForAll(streamed, r => GameObject.Find("Online rider " + r.id) != null));
+            var colours = new HashSet<string>();
+            foreach (var rider in streamed) colours.Add(rider.color == null ? "" : string.Join(",", rider.color));
+            Check("Each seat has its own colour", colours.Count == seats && !colours.Contains(""));
             if (role == "host")
             {
                 yield return CheckTurnReadsOnScreen();

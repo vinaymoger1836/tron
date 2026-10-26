@@ -1,8 +1,9 @@
 [CmdletBinding()]
-param([int]$Port = 0, [string]$UnityPlayer)
+param([int]$Port = 0, [string]$UnityPlayer, [ValidateRange(2, 4)][int]$Seats = 2)
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$evidence = Join-Path $root 'artifacts/android-phase-2/final'
+$evidence = Join-Path $root $(if ($Seats -eq 2) { 'artifacts/android-phase-2/final' } else { "artifacts/android-phase-2/final-$Seats-seats" })
+$roles = @('host', 'guest', 'guest2', 'guest3')[0..($Seats - 1)]
 New-Item -ItemType Directory -Force -Path $evidence | Out-Null
 if (-not $UnityPlayer) { $UnityPlayer = Join-Path $root 'android-game/Builds/Verification/GridRunOnline.exe' }
 if (-not (Test-Path -LiteralPath $UnityPlayer)) { throw 'Build the Phase 2 desktop player first.' }
@@ -19,7 +20,7 @@ $runStartedUtc = [DateTime]::UtcNow
 $serverOrigin = 'http://127.0.0.1:' + $Port
 $env:TRON_PUBLIC_ORIGIN = $serverOrigin
 $env:PORT = [string]$Port
-$server = $null; $hostPlayer = $null; $guestPlayer = $null
+$server = $null; $players = @{}
 try {
     $server = Start-Process -FilePath $node -ArgumentList 'online-server.mjs' -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $evidence 'server.log') -RedirectStandardError (Join-Path $evidence 'server-error.log')
     $ready = $false
@@ -29,15 +30,15 @@ try {
         Start-Sleep -Milliseconds 200
     }
     if (-not $ready) { throw 'Local online server did not become healthy.' }
-    $common = @('-force-d3d11', '-screen-fullscreen', '0', '--phase2-capture-dir', ('"' + $evidence + '"'), '--phase2-origin', $serverOrigin)
-    $hostArguments = @('-screen-width','1280','-screen-height','720','-logFile',('"' + (Join-Path $evidence 'host-player.log') + '"'),'--phase2-role','host') + $common
-    $guestArguments = @('-screen-width','1170','-screen-height','540','-logFile',('"' + (Join-Path $evidence 'guest-player.log') + '"'),'--phase2-role','guest') + $common
-    $hostPlayer = Start-Process -FilePath $UnityPlayer -ArgumentList $hostArguments -WindowStyle Hidden -PassThru
-    $guestPlayer = Start-Process -FilePath $UnityPlayer -ArgumentList $guestArguments -WindowStyle Hidden -PassThru
-    if (-not $hostPlayer.WaitForExit(125000)) { throw 'Host verification timed out.' }
-    if (-not $guestPlayer.WaitForExit(125000)) { throw 'Guest verification timed out.' }
+    $common = @('-force-d3d11', '-screen-fullscreen', '0', '--phase2-capture-dir', ('"' + $evidence + '"'), '--phase2-origin', $serverOrigin, '--phase2-seats', [string]$Seats)
+    foreach ($role in $roles) {
+        $size = if ($role -eq 'host') { @('-screen-width','1280','-screen-height','720') } else { @('-screen-width','1170','-screen-height','540') }
+        $arguments = $size + @('-logFile',('"' + (Join-Path $evidence ($role + '-player.log')) + '"'),'--phase2-role',$role) + $common
+        $players[$role] = Start-Process -FilePath $UnityPlayer -ArgumentList $arguments -WindowStyle Hidden -PassThru
+    }
+    foreach ($role in $roles) { if (-not $players[$role].WaitForExit(125000)) { throw "$role verification timed out." } }
     $total = 0
-    foreach ($role in @('host','guest')) {
+    foreach ($role in $roles) {
         $path = Join-Path $evidence ($role + '-verification.json')
         if (-not (Test-Path -LiteralPath $path) -or (Get-Item -LiteralPath $path).LastWriteTimeUtc -lt $runStartedUtc) {
             throw "$role verification report is missing or stale."
@@ -48,13 +49,13 @@ try {
         $failed | Format-Table name,passed
         $total += $failed.Count
     }
-    if ($hostPlayer.ExitCode -ne 0 -or $guestPlayer.ExitCode -ne 0 -or $total) {
-        throw "Online verification failed. Host exit $($hostPlayer.ExitCode); guest exit $($guestPlayer.ExitCode). Review $evidence."
+    $exits = $roles | ForEach-Object { "$_ exit $($players[$_].ExitCode)" }
+    if (@($roles | Where-Object { $players[$_].ExitCode -ne 0 }).Count -or $total) {
+        throw "Online verification failed. $($exits -join '; '). Review $evidence."
     }
-    Write-Host "Two-client online verification passed. Evidence: $evidence"
+    Write-Host "$Seats-client online verification passed. Evidence: $evidence"
 }
 finally {
-    if ($hostPlayer -and -not $hostPlayer.HasExited) { Stop-Process -Id $hostPlayer.Id -Force }
-    if ($guestPlayer -and -not $guestPlayer.HasExited) { Stop-Process -Id $guestPlayer.Id -Force }
+    foreach ($player in $players.Values) { if (-not $player.HasExited) { Stop-Process -Id $player.Id -Force } }
     if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
 }
