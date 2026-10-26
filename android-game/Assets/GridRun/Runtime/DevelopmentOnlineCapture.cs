@@ -231,6 +231,9 @@ namespace GridRun
             else Check("Guest Arena controls fit viewport", ControlsFit());
             yield return WaitFor(() => room.View?.phase == "round-result" || room.View?.phase == "match-result", 35, "Authoritative heat result arrived");
             Check("Result includes crash cause", room.View?.result?.crashes?.Length > 0);
+            yield return null;
+            string roster = GameObject.Find("Room roster")?.GetComponent<Text>()?.text ?? "";
+            Check("Result names the winner or a draw", (roster.Contains("WINS THE HEAT") || roster.Contains("HEAT DRAW")) && !roster.Contains("\n WINS"));
             if (role == "host")
             {
                 yield return CaptureLayout("result-phone.png", 1170, 540);
