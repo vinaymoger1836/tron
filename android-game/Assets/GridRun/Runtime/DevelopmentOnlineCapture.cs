@@ -116,6 +116,28 @@ namespace GridRun
             report.captures.Add(new Capture { file = role + "-" + file, width = Screen.width, height = Screen.height });
         }
 
+        // The rider must travel the way its model faces, and LEFT must turn it left on screen.
+        private IEnumerator CheckTurnReadsOnScreen()
+        {
+            string selfId = room.View.selfId;
+            int Dir() => Array.Find(room.View?.round?.riders ?? new OnlineRoomClient.RiderView[0], r => r.id == selfId)?.dir ?? -1;
+            var self = GameObject.Find("Online rider " + selfId)?.transform;
+            Check("Own rider rendered", self != null);
+            if (self == null) yield break;
+            Vector3 start = self.position, before = self.forward;
+            yield return new WaitForSecondsRealtime(.4f);
+            Check("Rider travels the way it faces", Vector3.Dot(self.position - start, before) > 0);
+            int dir = Dir();
+            Submit("Left");
+            yield return WaitFor(() => Dir() != dir, 3, "Server applied the LEFT turn");
+            yield return null;
+            Vector3 after = self.forward;
+            Check("LEFT turns the rider left on screen", Vector3.Cross(before, after).y < -.5f);
+            start = self.position;
+            yield return new WaitForSecondsRealtime(.4f);
+            Check("Rider travels the way it faces after the turn", Vector3.Dot(self.position - start, after) > 0);
+        }
+
         private IEnumerator Run()
         {
             report.role = role; report.engine = Application.unityVersion; report.platform = Application.platform.ToString();
@@ -166,6 +188,7 @@ namespace GridRun
             Check("Unity renders both riders", GameObject.Find("Online rider P1") != null && GameObject.Find("Online rider P2") != null);
             if (role == "host")
             {
+                yield return CheckTurnReadsOnScreen();
                 Submit("Host Pause");
                 yield return WaitFor(() => room.View?.phase == "paused", 5, "Host pause stops the heat");
                 yield return WaitFor(() => GameObject.Find("Start Heat") != null, 5, "Resume control is visible");

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using GridRun.Solo;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
@@ -318,8 +319,9 @@ namespace GridRun
                     if (!riders.TryGetValue(rider.id, out var visual))
                     { visual = Bike(rider.id, rider.id == current.selfId); riders.Add(rider.id, visual); }
                     visual.gameObject.SetActive(rider.alive);
-                    visual.position = new Vector3(rider.x, 0, rider.z);
-                    visual.rotation = Quaternion.Euler(0, ((2 - rider.dir + 4) % 4) * 90, 0);
+                    // Same sim-to-Unity mapping as offline play, so relative turns read the same way.
+                    visual.position = SoloWorld.W(rider.x, rider.z);
+                    visual.rotation = Quaternion.Euler(0, SoloWorld.Yaw(rider.dir), 0);
                 }
             var seen = new HashSet<int>();
             if (round.segments != null)
@@ -332,7 +334,7 @@ namespace GridRun
                             GridLook.Trail(segment.ownerId == current.selfId), transform).transform;
                         trails.Add(segment.id, visual);
                     }
-                    visual.position = new Vector3((segment.x1 + segment.x2) * .5f, .55f, (segment.z1 + segment.z2) * .5f);
+                    visual.position = SoloWorld.W((segment.x1 + segment.x2) * .5f, (segment.z1 + segment.z2) * .5f, .55f);
                     visual.localScale = new Vector3(Mathf.Max(.14f, Mathf.Abs(segment.x2 - segment.x1)), 1.1f,
                         Mathf.Max(.14f, Mathf.Abs(segment.z2 - segment.z1)));
                     visual.gameObject.SetActive(segment.active);
