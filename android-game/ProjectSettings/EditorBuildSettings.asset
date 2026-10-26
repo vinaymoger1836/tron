@@ -11,5 +11,8 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/GridRun/Scenes/PhaseTwoOnline.unity
     guid: 1a3a1ea585f534c438f0f12fc15786de
+  - enabled: 1
+    path: Assets/GridRun/Scenes/PhaseThreeTransit.unity
+    guid: c29b426720fb6ec43bdc4841aac33514
   m_configObjects: {}
   m_UseUCBPForAssetBundles: 0

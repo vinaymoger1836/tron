@@ -57,7 +57,9 @@ namespace GridRun
         public string SelfId { get; private set; }
         public RoomView View { get; private set; }
         public string Status { get; private set; } = "Choose Create or Join.";
-        public bool Connected { get; private set; }
+        // Tracks the live stream itself: a snapshot queued before a drop must not mark the seat connected.
+        private volatile bool streamOpen;
+        public bool Connected => streamOpen && View != null;
         public bool Supported { get; private set; } = true;
         public bool Busy { get; private set; }
         public bool IsHost => View != null && View.selfId == View.hostId;
@@ -197,6 +199,7 @@ namespace GridRun
                             throw new IOException("Room stream returned " + (int)response.StatusCode + ".");
                         }
                         liveStream = response;
+                        streamOpen = true;
                         Status = "Connected to room.";
                         using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
                         using (var reader = new StreamReader(stream))
@@ -217,7 +220,7 @@ namespace GridRun
                     Status = "Connection interrupted. Reconnecting...";
                 }
                 catch (Exception error) { Status = "Connection interrupted. Reconnecting: " + error.Message; }
-                finally { liveStream = null; Connected = false; }
+                finally { liveStream = null; streamOpen = false; }
                 try { await Task.Delay(1000, token).ConfigureAwait(false); }
                 catch (OperationCanceledException) { break; }
             }
@@ -235,9 +238,9 @@ namespace GridRun
                 if (view == null || view.code != Code || view.roundNumber < 0 || view.players == null)
                     throw new InvalidOperationException("Invalid room snapshot.");
                 View = view;
-                Connected = true;
                 Supported = view.mode == "arena" && view.map == "classic" && view.maxPlayers >= 2 && view.maxPlayers <= 4 && view.rule == "classic";
                 Status = !Supported ? "This room uses a mode the app does not support online yet. Online play supports Arena for 2-4 riders on Classic Grid with persistent walls." :
+                    !streamOpen ? Status :
                     view.phase == "connection-wait" ? "Waiting for a rider to reconnect..." : "Connected to room " + Code + ".";
             }
             catch (Exception error) { Status = "Room data error: " + error.Message; }
@@ -254,7 +257,7 @@ namespace GridRun
             streamCancellation?.Dispose();
             streamCancellation = null; liveStream = null;
             client?.Dispose(); client = null;
-            Code = SelfId = null; View = null; Connected = false; Supported = true;
+            Code = SelfId = null; View = null; streamOpen = false; Supported = true;
             while (snapshots.TryDequeue(out _)) { }
         }
         private void OnDestroy() { CloseSession(); }

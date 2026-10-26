@@ -1,6 +1,6 @@
 # Phase 2 status - 2026-10-19
 
-**State: in progress.** The Unity client has a playable two-rider online Arena prototype using the existing Node room service. Phase 0 physical-device validation and Phase 1 content/device work remain open. This is not the online MVP exit gate.
+**State: in progress.** The Unity client has a playable 2-4 rider online Arena prototype using the existing Node room service. Phase 0 physical-device validation and Phase 1 content/device work remain open. This is not the online MVP exit gate.
 
 ## Prototype decision
 
@@ -10,7 +10,7 @@ The native client uses the server's JSON room API, an in-memory cookie jar for t
 
 ## Implemented slice
 
-- A separate online Unity scene supports create/join by six-digit room code, a two-seat Arena lobby on Classic Grid, host start/pause/resume, live server riders/trails, relative turns, Auto Drive toggle, forward/fire holds, heat result, next heat, departure, and reconnection status. Unsupported modes, maps, seat counts, and wall rules display a clear leave-room message.
+- A separate online Unity scene supports create/join by six-digit room code, an Arena lobby for 2-4 riders on Classic Grid (the host picks the size), host start/pause/resume, live server riders/trails, relative turns, Auto Drive toggle, forward/fire holds, heat result, next heat, departure, and reconnection status. Unsupported modes, maps, seat counts, and wall rules display a clear leave-room message.
 - The combined Phase 2 build starts at the offline Arena landing, opens Online Room, and can return to offline play after leaving a room. The Phase 1-only build hides the online link when the online scene is absent.
 - The server remains authoritative. Unity does not advance local online collision, score, or pickup state.
 
@@ -20,16 +20,24 @@ The native client uses the server's JSON room API, an in-memory cookie jar for t
 
 **Update 2026-10-26 (mirrored turns fixed):** the online scene now renders riders and trails with the offline mapping (`SoloWorld.W`, `SoloWorld.Yaw`: Unity z = -simulation z, yaw = dir x 90), so a LEFT or RIGHT press turns the rider that way on screen. The host verifier gained five checks: its own rider is rendered, travels the way it faces, the server applies a LEFT press, the rider turns left on screen (the sign of the cross product of the facing before and after; the old mapping fails this), and it still travels the way it faces afterwards. After rebuilding `PhaseTwoBuild.BuildDesktop`, `Verify-Online.ps1` passed **55/55** (host 39, guest 16). `PhaseFourBuild.Prepare` then restored the shipped product settings. Desktop evidence only; not checked on a phone.
 
+**Update 2026-10-26 (2-4 seats):** the setup screen has a RIDERS: 2/3/4 cycle button beside CREATE ROOM; joining, the lobby, and START already worked for any size the server allows. Each seat renders in its server colour (cyan, orange, violet, gold), and trails carry the solo game's style stripes so riders differ by more than colour. The lobby roster, result lines, and HUD score name riders by seat colour and name, and the lobby says how many riders it is still waiting for. Fixes found while testing:
+- Server (`lan-server.mjs`, shared with the browser): a joiner took seat `P<count+1>`, so after a lobby departure in a 3-4 seat room two riders could share an id and the round could not start. Joiners now take the lowest free seat. Reproduced and confirmed with a scripted HTTP join/leave/join sequence against a local server (ids `P1 P3 P3 P4` before, `P1 P3 P2 P4` after); `node --test tests/*.test.mjs` 11/11.
+- Unity client: a heat draw showed " WINS THE HEAT" with no name, because JsonUtility reads a null winner as an empty string. It now shows HEAT DRAW.
+- Unity client: `Connected` was set by any applied snapshot, including one queued before the stream dropped, so a reconnecting client could briefly report itself connected. It now follows the live stream. This was the likely cause of the guest's "stream interruption detected" check failing in 3 of 4 multi-seat runs before the change; none failed in six runs after it.
+- Verifier: the room-code file is written then renamed so guests never read it half-written.
+
+`Verify-Online.ps1` gained `-Seats`. Extra seats (guest2, guest3) join directly; guest2 also leaves the lobby and rejoins, which exercises the seat-id fix. New checks cover the room-size control, server seat count, every seat joining, riders streamed and rendered per seat, distinct seat colours, and a named result or draw. After rebuilding `PhaseTwoBuild.BuildDesktop`, two consecutive rounds of 2, 3, and 4 seats all passed: 2 seats 61 checks (host 43, guest 18), 3 seats 79 (plus guest2 18), 4 seats 94 (plus guest3 15). Screenshots of setup, a full 4/4 lobby, the match, and a four-rider draw result were reviewed at phone 1170x540 and desktop 1280x720. `PhaseFourBuild.Prepare` then restored the shipped product settings. Desktop evidence only; the extra Unity windows render black on this host, so only host screenshots are visual evidence.
+
 `GridRun.Editor.PhaseTwoBuild.BuildAndroid` also completed on the final source. The local debug-signed APK is `android-game/Builds/Android/grid-run-phase2-preview.apk` (132,152,715 bytes; SHA-256 `DE1894310BA11DED7D48D5D9C5B814B619B8796630983B2CD1DAF7F8440D54CF`). Android build-tools verified its v2 signature and manifest: `com.gridrun.prototype`, version `0.2.0`/code 3, minimum API 29, ARM64, and `android.permission.INTERNET`. Its ZIP payload is much smaller than the file because of substantial padding between entries in this Unity build; package size needs investigation and reduction before a website release. The APK was not published to Vercel. No physical-phone networking, mobile data transition, or thermal result is claimed.
 
 ## Remaining Phase 2 work
 
 - Bring the online scene up to the offline game. Offline play now uses the exact rules port, including the browser's three-heat Arena (2026-10-22), but online snapshots include bullets, pickups, and other modes that this Unity scene does not render; it shows only riders and trails on Classic Grid. Since 2026-10-26 it uses the offline mapping (Unity z = -simulation z), so relative turns are no longer mirrored on screen. Online work for the new modes was deferred at the user's request.
-- Add 2-4 seat choice, supported map/rule selection, ready state, names and noncolor cues in-world, full weapon/pickup/effect rendering, interpolation and command ordering, and robust error/status messages during play.
+- Add supported map/rule selection, ready state, rider names in-world, full weapon/pickup/effect rendering, interpolation and command ordering, and robust error/status messages during play.
 - Define a versioned protocol with clear old-client errors; test reconnect, timeout, stale-room cleanup, server restart, host departure, app backgrounding, and network changes on devices.
 - Measure latency, jitter, bandwidth, server tick time, concurrent rooms, capacity, and cost. Test four devices with simulated 50/150/250 ms latency and 1-5% loss where practical.
 - Validate Android HTTP streaming/cookies, touch controls, safe areas, and power/network interruption on the Galaxy M35. The first phone session (2026-10-23) was planned around offline modes; the Online Room was not checked on the phone.
 
 ## Reproduce locally
 
-Build the desktop player from `android-game/` using pinned Unity with `-executeMethod GridRun.Editor.PhaseTwoBuild.BuildDesktop`, then run `android-game/scripts/Verify-Online.ps1` from the repository root. The script uses a localhost-only online server, two hidden Unity players, and ignored evidence. The Android build command is `GridRun.Editor.PhaseTwoBuild.BuildAndroid`; its preview APK is ignored under `android-game/Builds/Android/` and is not the website download.
+Build the desktop player from `android-game/` using pinned Unity with `-executeMethod GridRun.Editor.PhaseTwoBuild.BuildDesktop`, then run `android-game/scripts/Verify-Online.ps1 [-Seats 2|3|4]` from the repository root. The script uses a localhost-only online server, one hidden Unity player per seat, and ignored evidence (`artifacts/android-phase-2/final/` for two seats, `final-<N>-seats/` otherwise). The Android build command is `GridRun.Editor.PhaseTwoBuild.BuildAndroid`; its preview APK is ignored under `android-game/Builds/Android/` and is not the website download.
