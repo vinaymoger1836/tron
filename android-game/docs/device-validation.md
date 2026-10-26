@@ -25,7 +25,7 @@ Grid Run v0.5.0 (release-packaged APK, debug signed), installed from the website
 | Memory | 250-310 MB PSS, no growth trend |
 | Stability | No crash or ANR |
 
-The user judged the performance good. The log showed one Unity error at launch: `GameObject.CreatePrimitive` tried to add a collider, which the release build strips. v0.5.1 removes those calls; it has not yet been rechecked on the phone. The render surface also reports that 2x MSAA is unsupported and falls back to 1 sample. These are four minutes on a charging phone, not the 20-minute session below, nothing ran at 120 Hz, and whether part of the session used Graphics LOW was not recorded. Evidence (timeline CSV and logcat) is in ignored `artifacts/android-device/session-1/`.
+The user judged the performance good. The log showed one Unity error at launch: `GameObject.CreatePrimitive` tried to add a collider, which the release build strips. v0.5.1 removed those calls; neither v0.5.1 nor v0.6.0 (2026-10-26, with the new online play) has been rechecked on the phone yet. The render surface also reports that 2x MSAA is unsupported and falls back to 1 sample. These are four minutes on a charging phone, not the 20-minute session below, nothing ran at 120 Hz, and whether part of the session used Graphics LOW was not recorded. Evidence (timeline CSV and logcat) is in ignored `artifacts/android-device/session-1/`.
 
 ## Targets
 

@@ -1,6 +1,6 @@
 ﻿# Phase 4 status - 2026-10-21
 
-**State: in progress.** The first Phase 4 slice is a cosmetic showroom with no checkout; since 2026-10-22 it is excluded from Android builds (see "Preview UI removed"). The shipped app is Grid Run v0.5.1, published through GitHub Releases. Phases 0-3 retain open device, content, and network gates. This is not a commercial release or an ownership system.
+**State: in progress.** The first Phase 4 slice is a cosmetic showroom with no checkout; since 2026-10-22 it is excluded from Android builds (see "Preview UI removed"). The shipped app is Grid Run v0.6.0 (code 8), published through GitHub Releases on 2026-10-26 (`android-v0.6.0`, 36,419,990 bytes, SHA-256 `aecbdec4...81bfcf`; v2 signature verified, debug signed; `com.gridrun.prototype`, API 29-36, ARM64). It adds the 2026-10-26 online work (see `phase-2-status.md`); the publish script downloaded the asset back and matched its size and hash. Not yet installed on a phone. Phases 0-3 retain open device, content, and network gates. This is not a commercial release or an ownership system.
 
 ## Implemented slice
 

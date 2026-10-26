@@ -19,7 +19,7 @@ The landing page shows an **Android App** download when `dist/android-release.js
 Install the GitHub CLI and log in once (`winget install GitHub.cli`, then `gh auth login`). From the repository root:
 
 ```powershell
-node scripts/publish-android-release.mjs 0.5.1 android-game/Builds/Android/grid-run.apk
+node scripts/publish-android-release.mjs 0.6.0 android-game/Builds/Android/grid-run.apk
 ```
 
 The script creates or updates the release, downloads the published APK back to confirm it is byte-identical, and only then writes `dist/android-release.json`. Commit that file to update the website. For an APK attached by hand on github.com, add `--verify-only` to skip the upload. GitHub release assets may be up to 2 GiB; downloads use GitHub bandwidth, not Vercel's. Downloaded APKs require Android's manual installation flow; Play Store distribution later uses a separate signed release process.

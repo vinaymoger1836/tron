@@ -37,8 +37,8 @@ namespace GridRun.Editor
                 new EditorBuildSettingsScene(PhaseThreeBuild.ScenePath, true),
             };
             PlayerSettings.productName = "Grid Run";
-            PlayerSettings.bundleVersion = "0.5.1";
-            PlayerSettings.Android.bundleVersionCode = 7;
+            PlayerSettings.bundleVersion = "0.6.0";
+            PlayerSettings.Android.bundleVersionCode = 8;
             PlayerSettings.Android.forceInternetPermission = true;
             AssetDatabase.SaveAssets();
             Debug.Log("PHASE4_SHOWROOM_PREPARED " + ScenePath);

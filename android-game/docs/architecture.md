@@ -32,7 +32,7 @@ Phase 1 should replace prototype geometry with authored models and improve light
 
 ## Android identity and data
 
-`com.gridrun.prototype` is a development identifier only; the product name is now **Grid Run** (v0.5.1). ARM64 IL2CPP and OpenGL ES 3 are the first build configuration. API 29 is a provisional compatibility floor; API 36 is an explicit build target, not a permanent store-policy claim. Landscape supports both left and right rotation and respects display cutouts.
+`com.gridrun.prototype` is a development identifier only; the product name is now **Grid Run** (v0.6.0). ARM64 IL2CPP and OpenGL ES 3 are the first build configuration. API 29 is a provisional compatibility floor; API 36 is an explicit build target, not a permanent store-policy claim. Landscape supports both left and right rotation and respects display cutouts.
 
 There is no gameplay telemetry or player data transmission. Local records and settings stay in PlayerPrefs; the Online Room sends only room and input traffic to the Node server. Device evidence is local and ignored. Use debug signing only; a production key and final app identity are separate release decisions. Website downloads come from GitHub Releases through the tracked `dist/android-release.json` (`scripts/publish-android-release.mjs`).
 
@@ -46,4 +46,4 @@ Visuals and audio are procedural project code plus Unity-provided fonts and shad
 
 ## Known limitations
 
-The original Phase 0 probe had no trails, AI, weapons, scoring, save data, online play, or shop; the app now has all of those except a shop (the cosmetic showroom is excluded from Android builds and has no checkout). Remaining gaps: online play is not yet in a released APK (in source since 2026-10-26 it covers Arena, Duel, and Grid Shift for 2-4 seats on all maps, drawn, controlled, and voiced like solo play; the v0.5.1 APK has two-seat Classic Grid Arena only); signing and app identity are not production; device validation is one short Galaxy M35 session; art is procedural code rather than authored models.
+The original Phase 0 probe had no trails, AI, weapons, scoring, save data, online play, or shop; the app now has all of those except a shop (the cosmetic showroom is excluded from Android builds and has no checkout). Remaining gaps: online play (Arena, Duel, and Grid Shift for 2-4 seats on all maps, drawn, controlled, and voiced like solo play, released in v0.6.0) has only desktop evidence; signing and app identity are not production; device validation is one short Galaxy M35 session; art is procedural code rather than authored models.
