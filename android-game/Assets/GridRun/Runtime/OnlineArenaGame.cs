@@ -30,7 +30,9 @@ namespace GridRun
         private OnlineRoomClient.RoomView shown;
         // Seat colours follow createLanRound's order (by position in the room's player list).
         private static readonly string[] SeatColours = { "CYAN", "ORANGE", "VIOLET", "GOLD" };
-        private Text seatsLabel;
+        private Text seatsLabel, fireLabel, toast;
+        private float toastUntil;
+        private int lastEffectId;
         private int seats = 2;
         private bool autoDrive = true;
         private int lastRoundNumber;
@@ -70,7 +72,8 @@ namespace GridRun
         private void ShowMap(string mapId)
         {
             world.Clear();
-            scene.Riders.Clear(); scene.Segments.Clear();
+            scene.Riders.Clear(); scene.Segments.Clear(); scene.Bullets.Clear(); scene.Pickups.Clear();
+            lastEffectId = 0; toastUntil = 0;
             scene.Map = mapId; scene.Rule = "classic"; scene.Elapsed = 0;
             scene.Limit = SimMaps.Get(mapId).Limit; scene.TrailLifetime = double.PositiveInfinity;
         }
@@ -154,7 +157,10 @@ namespace GridRun
             TurnButton(Button("Left", "LEFT", hud, Vector2.zero, Vector2.zero, new Vector2(32, 28), new Vector2(225, 140), null), -1);
             TurnButton(Button("Right", "RIGHT", hud, Vector2.zero, Vector2.zero, new Vector2(278, 28), new Vector2(225, 140), null), 1);
             forward = Button("Forward", "FORWARD", hud, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-32, 28), new Vector2(260, 140), null).gameObject.AddComponent<HoldControl>();
-            fire = Button("Fire", "FIRE", hud, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-310, 28), new Vector2(230, 140), null).gameObject.AddComponent<HoldControl>();
+            var fireButton = Button("Fire", "FIRE", hud, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-310, 28), new Vector2(230, 140), null);
+            fire = fireButton.gameObject.AddComponent<HoldControl>();
+            fireLabel = fireButton.GetComponentInChildren<Text>();
+            toast = Label("Online toast", "", hud, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -190), new Vector2(1100, 60), 34, TextAnchor.MiddleCenter);
             autoLabel = Button("Auto Drive", "AUTO: ON", hud, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-32, 190), new Vector2(260, 78), ToggleAuto).GetComponentInChildren<Text>();
             var setup = Rect("Online setup", safe.transform, new Vector2(.5f, .5f), new Vector2(.5f, .5f), Vector2.zero, new Vector2(1280, 820));
             var setupImage = setup.gameObject.AddComponent<Image>();
@@ -241,6 +247,7 @@ namespace GridRun
         {
             if (room == null) return;
             createButton.interactable = joinButton.interactable = !room.Busy;
+            toast.gameObject.SetActive(Time.unscaledTime < toastUntil);
             notice.text = room.Status;
             if (!room.Connected && !string.IsNullOrEmpty(room.Code) && room.View != null)
             {
@@ -316,7 +323,8 @@ namespace GridRun
             score.text = "ROOM " + current.code + "  /  HEAT " + current.roundNumber + "  /  " +
                 string.Join("   ", Array.ConvertAll(current.players, p => Seat(current, p.id) + " " + p.wins));
             phase.text = current.phase == "countdown" ? "STARTING IN " + Mathf.CeilToInt(current.countdownMs / 1000f) :
-                current.phase == "running" ? "LIVE ARENA  /  " + (room.Connected ? "CONNECTED" : "RECONNECTING") : current.phase.ToUpperInvariant();
+                current.phase == "running" ? "LIVE ARENA  /  " + (room.Connected ? "CONNECTED" : "RECONNECTING") + Weapon(current) :
+                current.phase.ToUpperInvariant();
             if (current.round != null && current.roundNumber != lastRoundNumber)
                 _ = room.SendAsync("auto-drive", enabled: autoDrive);
             lastRoundNumber = current.roundNumber;
@@ -331,6 +339,49 @@ namespace GridRun
         }
 
         private static string WallsName(string rule) => rule == "decay" ? "FADING WALLS" : "PERSISTENT WALLS";
+
+        // Same wording as the solo HUD's weapon line and FIRE button.
+        private string Weapon(OnlineRoomClient.RoomView current)
+        {
+            var self = Array.Find(current.round?.riders ?? new OnlineRoomClient.RiderView[0], r => r.id == current.selfId);
+            if (self == null) return "";
+            fireLabel.text = self.rocketReady ? "ROCKET" : "FIRE " + self.ammo;
+            return "  /  " + (self.rocketReady ? "ROCKET 1" : "GUN " + self.ammo + "/48") +
+                (current.round.elapsed < self.nitroUntil ? "  /  NITRO " + Mathf.CeilToInt(self.nitroUntil - current.round.elapsed) + "S" : "");
+        }
+
+        private void ShowToast(string text)
+        {
+            toast.text = text;
+            toastUntil = Time.unscaledTime + 2;
+        }
+
+        // Effects arrive in several snapshots while the server keeps them, so each id plays once.
+        private void PlayEffects(OnlineRoomClient.RoomView current)
+        {
+            foreach (var e in current.round.effects ?? new OnlineRoomClient.EffectView[0])
+            {
+                if (e.id <= lastEffectId) continue;
+                lastEffectId = e.id;
+                string item = (e.pickup ?? "").ToUpperInvariant();
+                switch (e.type)
+                {
+                    case "pickup-spawn": ShowToast(item + " SPAWNED"); break;
+                    case "pickup":
+                        ShowToast(e.riderId == current.selfId ? item + " PICKED UP" : Seat(current, e.riderId) + " TOOK " + item);
+                        var picker = scene.Riders.Find(r => r.Id == e.riderId);
+                        if (picker.Id != null)
+                            world.Ring(picker.X, picker.Z, e.pickup == "ammo" ? new[] { .25f, .85f, 1f } : e.pickup == "nitro" ? new[] { .25f, 1f, .4f } : new[] { 1f, .54f, .18f }, 1.4f);
+                        break;
+                    case "rocket-explode":
+                        world.Impact(e.x, e.z);
+                        world.Ring(e.x, e.z, new[] { 1f, .48f, .13f }, 3.2f);
+                        ShowToast("ROCKET IMPACT");
+                        break;
+                    case "arena-shrink": ShowToast("GRID SHRINKING / " + Mathf.RoundToInt(e.limit)); break;
+                }
+            }
+        }
 
         // Copies the server snapshot into the solo renderer's view; the own seat counts as the player.
         private void RenderRound(OnlineRoomClient.RoomView current)
@@ -355,6 +406,12 @@ namespace GridRun
             foreach (var s in round.segments ?? new OnlineRoomClient.SegmentView[0])
                 scene.Segments.Add(new Solo.SegmentView
                 { Id = s.id, OwnerId = s.ownerId, X1 = s.x1, Z1 = s.z1, X2 = s.x2, Z2 = s.z2, Active = s.active, ClosedAt = s.closedAt });
+            scene.Bullets.Clear(); scene.Pickups.Clear();
+            foreach (var b in round.bullets ?? new OnlineRoomClient.BulletView[0])
+                scene.Bullets.Add(new Solo.BulletView { X = b.x, Z = b.z, Rocket = b.rocket, FromPlayer = b.ownerId == current.selfId, Vx = b.vx, Vz = b.vz });
+            foreach (var p in round.pickups ?? new OnlineRoomClient.PickupView[0])
+                if (p.active) scene.Pickups.Add(new Solo.PickupView { Id = p.id, Type = p.type, X = p.x, Z = p.z });
+            PlayEffects(current);
         }
 
         private void LateUpdate()

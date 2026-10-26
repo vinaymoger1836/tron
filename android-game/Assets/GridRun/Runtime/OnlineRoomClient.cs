@@ -16,8 +16,12 @@ namespace GridRun
         [Serializable] public sealed class PlayerView { public string id, name; public bool connected; public int wins; }
         [Serializable] public sealed class RiderView
         {
-            public string id, form, style; public float x, z; public float[] color; public int dir, ammo; public bool alive, autoDrive, rocketReady;
+            public string id, form, style; public float x, z, nitroUntil; public float[] color; public int dir, ammo; public bool alive, autoDrive, rocketReady;
         }
+        [Serializable] public sealed class BulletView { public string ownerId; public float x, z; public int vx, vz; public bool rocket; }
+        [Serializable] public sealed class PickupView { public int id; public string type; public float x, z; public bool active; }
+        // Pickup, pickup-spawn, rocket-explode, and arena-shrink events the server keeps for about a second.
+        [Serializable] public sealed class EffectView { public int id; public string type, riderId, pickup; public float x, z, limit; }
         [Serializable] public sealed class SegmentView
         {
             public int id; public string ownerId; public float x1, z1, x2, z2, closedAt; public bool active;
@@ -26,6 +30,7 @@ namespace GridRun
         {
             public int tick; public float elapsed, limit, trailLifetime; public string map, rule;
             public RiderView[] riders; public SegmentView[] segments;
+            public BulletView[] bullets; public PickupView[] pickups; public EffectView[] effects;
         }
         [Serializable] public sealed class CrashView { public string riderId, reason; }
         [Serializable] public sealed class ResultView

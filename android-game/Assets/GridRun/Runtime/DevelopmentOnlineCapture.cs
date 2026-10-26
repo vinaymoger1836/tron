@@ -137,6 +137,38 @@ namespace GridRun
                 "MAP: " + Sim.SimMaps.Get(next).Name.ToUpperInvariant());
         }
 
+        // Records, after each rendered frame, whether snapshot bullets and pickups were actually drawn.
+        private bool sawBullet, sawPickup, sawSpawnToast;
+        private IEnumerator WatchCombat()
+        {
+            while (room.View != null && room.View.phase != "round-result" && room.View.phase != "match-result")
+            {
+                yield return new WaitForEndOfFrame();
+                var round = room.View?.round;
+                if (round == null) continue;
+                if (round.bullets?.Length > 0 && (GameObject.Find("Bullet") != null || GameObject.Find("Rocket") != null)) sawBullet = true;
+                foreach (var p in round.pickups ?? new OnlineRoomClient.PickupView[0])
+                    if (p.active && GameObject.Find("Pickup " + p.type) != null) sawPickup = true;
+                if ((GameObject.Find("Online toast")?.GetComponent<Text>()?.text ?? "").EndsWith(" SPAWNED")) sawSpawnToast = true;
+            }
+        }
+
+        // Holding FIRE through the real control spends server ammo and updates the HUD.
+        private IEnumerator CheckFire()
+        {
+            string selfId = room.View.selfId;
+            int Ammo() => Array.Find(room.View?.round?.riders ?? new OnlineRoomClient.RiderView[0], r => r.id == selfId)?.ammo ?? -1;
+            int before = Ammo();
+            var control = Control("Fire");
+            var press = new PointerEventData(EventSystem.current) { pointerId = 7 };
+            ExecuteEvents.Execute(control, press, ExecuteEvents.pointerDownHandler);
+            yield return WaitFor(() => Ammo() >= 0 && Ammo() < before, 3, "FIRE spends ammo on the server");
+            ExecuteEvents.Execute(control, press, ExecuteEvents.pointerUpHandler);
+            // Snapshots keep arriving, so wait for the labels to catch up with the newest ammo count.
+            yield return WaitFor(() => control.GetComponentInChildren<Text>().text == "FIRE " + Ammo(), 1, "FIRE button shows the ammo left");
+            yield return WaitFor(() => (GameObject.Find("Online phase")?.GetComponent<Text>()?.text ?? "").Contains("GUN " + Ammo() + "/48"), 1, "HUD shows the gun");
+        }
+
         // The rider must travel the way its model faces, and LEFT must turn it left on screen.
         private IEnumerator CheckTurnReadsOnScreen()
         {
@@ -261,6 +293,7 @@ namespace GridRun
             var colours = new HashSet<string>();
             foreach (var rider in streamed) colours.Add(rider.color == null ? "" : string.Join(",", rider.color));
             Check("Each seat has its own colour", colours.Count == seats && !colours.Contains(""));
+            StartCoroutine(WatchCombat());
             // Solar Circuit and Data Vault heats can end within two seconds on Auto Drive (spawns face
             // obstacles or each other), so the timed turn and pause checks run on Classic Grid only.
             if (role == "host" && map != "classic")
@@ -271,6 +304,7 @@ namespace GridRun
             else if (role == "host")
             {
                 yield return CheckTurnReadsOnScreen();
+                yield return CheckFire();
                 Submit("Host Pause");
                 yield return WaitFor(() => room.View?.phase == "paused", 5, "Host pause stops the heat");
                 yield return WaitFor(() => GameObject.Find("Start Heat") != null, 5, "Resume control is visible");
@@ -282,6 +316,13 @@ namespace GridRun
             else Check("Guest Arena controls fit viewport", ControlsFit());
             yield return WaitFor(() => room.View?.phase == "round-result" || room.View?.phase == "match-result", 35, "Authoritative heat result arrived");
             Check("Result includes crash cause", room.View?.result?.crashes?.Length > 0);
+            // Classic Grid heats outlast the first pickup (4 s) and include the host's gunfire.
+            if (map == "classic")
+            {
+                Check("Bullets were drawn", sawBullet);
+                Check("A spawned pickup was drawn", sawPickup);
+                Check("Pickup spawn was announced", sawSpawnToast);
+            }
             yield return null;
             string roster = GameObject.Find("Room roster")?.GetComponent<Text>()?.text ?? "";
             Check("Result names the winner or a draw", (roster.Contains("WINS THE HEAT") || roster.Contains("HEAT DRAW")) && !roster.Contains("\n WINS"));

@@ -132,7 +132,7 @@ function snapshot(room, selfId) {
         x1: s.x1, z1: s.z1, x2: s.x2, z2: s.z2, active: s.active,
         closedAt: s.closedAt ?? -1 })),
       bullets: (round.shift?.bullets || round.bullets)
-        .map(b => ({ ownerId: b.ownerId, x: b.x, z: b.z, rocket: b.rocket })),
+        .map(b => ({ ownerId: b.ownerId, x: b.x, z: b.z, vx: b.vx, vz: b.vz, rocket: b.rocket })),
       shift: round.shift ? { timeLimit: round.shift.timeLimit,
         discs: round.shift.discs.map(d => ({ ownerId: d.ownerId, x: d.x, z: d.z,
           returning: d.returning })) } : null,

@@ -4,7 +4,7 @@ A separate Unity Android project that ports the browser game in `dist/`. The bro
 
 ## Status
 
-The app is **Grid Run** v0.5.1 (code 7). It opens on a main menu with New Game, Online Game, Solar Transit, Records, and Settings, and it plays every offline mode: Duel, Arena, Daily Signal, Grid Shift, Operations and Journey, Solar Transit, and the Play lesson. The rules come from an exact C# port of the browser modules (`Assets/GridRun/Runtime/Sim/`), proven tick-for-tick against browser traces. The Online Room is an Arena client for the existing Node server; the current source supports 2-4 riders, all three maps, and fading walls (the v0.5.1 APK predates this: two seats on Classic Grid); online play for the other modes is deferred.
+The app is **Grid Run** v0.5.1 (code 7). It opens on a main menu with New Game, Online Game, Solar Transit, Records, and Settings, and it plays every offline mode: Duel, Arena, Daily Signal, Grid Shift, Operations and Journey, Solar Transit, and the Play lesson. The rules come from an exact C# port of the browser modules (`Assets/GridRun/Runtime/Sim/`), proven tick-for-tick against browser traces. The Online Room is an Arena client for the existing Node server; the current source supports 2-4 riders, all three maps, fading walls, bullets, and pickups (the v0.5.1 APK predates this: two seats on Classic Grid); online play for the other modes is deferred.
 
 v0.5.0 ran on a Galaxy M35 at a steady 60 fps with no throttling (see `docs/device-validation.md`). The APK is still debug signed with the development application ID, so it is not a Play Store release. Per-phase detail is in `docs/phase-0-status.md` through `docs/phase-4-status.md`.
 
