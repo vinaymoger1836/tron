@@ -27,6 +27,10 @@ Grid Run v0.5.0 (release-packaged APK, debug signed), installed from the website
 
 The user judged the performance good. The log showed one Unity error at launch: `GameObject.CreatePrimitive` tried to add a collider, which the release build strips. v0.5.1 removed those calls; neither v0.5.1 nor v0.6.0 (2026-10-26, with the new online play) has been rechecked on the phone yet. The render surface also reports that 2x MSAA is unsupported and falls back to 1 sample. These are four minutes on a charging phone, not the 20-minute session below, nothing ran at 120 Hz, and whether part of the session used Graphics LOW was not recorded. Evidence (timeline CSV and logcat) is in ignored `artifacts/android-device/session-1/`.
 
+## v0.6.0 user check - 2026-10-26
+
+The user installed Grid Run v0.6.0 (the first release with 2-4 player online rooms, Duel and Grid Shift online, and online sound) on their phone and reported that the test "looks good". No measurements, logs, modes covered, second device, or network conditions were recorded, so this is a qualitative pass, not a completed checklist item or a performance result. The online motion smoothing added after v0.6.0 was not part of it.
+
 ## Targets
 
 - Galaxy M35: sustained 60 FPS, met in the first short session above; confirm over 20 minutes on battery.
@@ -41,7 +45,7 @@ The user judged the performance good. The log showed one Unity error at launch: 
 Some items were written for the Phase 0 probe (HOLD FORWARD, the 60/30 FPS toggle); apply them to the equivalent controls in the current app.
 
 - [ ] Record APK version, build command, Unity version, phone/OS, quality/render scale, refresh setting, and test conditions.
-- [x] Install and cold-launch the APK without a blank or pink scene (v0.5.0, 2026-10-23; one launch error, fixed in v0.5.1 and not yet rechecked).
+- [x] Install and cold-launch the APK without a blank or pink scene (v0.5.0, 2026-10-23; one launch error, fixed in v0.5.1; v0.6.0 installed and played on 2026-10-26 by the user, launch log not captured).
 - [ ] Confirm rendered arena, player heading, safe-area HUD, legible labels, and reachable controls.
 - [ ] Turn left/right while automatically moving. Confirm forward input does not turn and there is no reverse action.
 - [ ] Disable Auto Drive: release forward to stop; hold forward to move; turn and move with separate fingers.
