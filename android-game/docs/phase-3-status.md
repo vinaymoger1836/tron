@@ -31,7 +31,7 @@ Deliberate differences from the browser: the Play lesson completes after six cle
 
 ## Remaining Phase 3 work
 
-- Online Duel and Grid Shift are still deferred; online Arena gained 2-4 seats, all maps, fading walls, bullets, and pickups on 2026-10-26 (see `phase-2-status.md`). The online client now uses the same sim-to-Unity mapping as solo play (fixed 2026-10-26).
+- Online play gained Duel, Grid Shift, 2-4 seats, all maps, fading walls, bullets, pickups, and the solo HUD on 2026-10-26 (see `phase-2-status.md`); it has no sound yet. The online client now uses the same sim-to-Unity mapping as solo play (fixed 2026-10-26).
 - Improve animation, effects, readability and accessibility settings with measured device budgets. The user played v0.5.0 on a Galaxy M35 for about four minutes on 2026-10-23 (steady 60 fps, no throttling; `device-validation.md`); per-mode device play and touch-comfort checks are still open.
 - Establish import and performance budgets, archive content, and gameplay validation for every advertised mode. The browser game remains the feature reference.
 - Complete prior phase gates: the remaining Galaxy M35 control and 20-minute performance checks, and Phase 2 four-device online/network tests.

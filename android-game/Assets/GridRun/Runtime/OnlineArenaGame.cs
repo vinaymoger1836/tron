@@ -343,7 +343,7 @@ namespace GridRun
             string lines = mode + " / " + mapName + (arena ? " / " + WallsName(current.rule) : "") + " / " +
                 current.players.Length + "/" + current.maxPlayers + " RIDERS\n" +
                 (arena ? "THREE HEATS / MOST HEAT WINS TAKES THE MATCH\n" : current.mode == "shift" ?
-                    "FIRST TO THREE / FORM SWITCHES CYCLE AND ON FOOT / TWO DISC HITS DEREZ\n" : "FIRST TO THREE HEAT WINS\n");
+                    "FIRST TO THREE / CYCLE OR ON FOOT / TWO DISC HITS DEREZ\n" : "FIRST TO THREE HEAT WINS\n");
             for (int i = 0; i < current.players.Length; i++)
             {
                 var player = current.players[i];
