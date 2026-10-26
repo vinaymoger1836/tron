@@ -159,7 +159,9 @@ namespace GridRun
                 yield return WaitFor(() => !string.IsNullOrEmpty(room.Code), 10, "Host created a room");
                 if (string.IsNullOrEmpty(room.Code)) { Save(); Application.Quit(2); yield break; }
                 Check("Host received six digits", System.Text.RegularExpressions.Regex.IsMatch(room.Code, "^[0-9]{6}$"));
-                File.WriteAllText(codePath, room.Code);
+                // Write then rename, so guests polling for the file never read it half-written.
+                File.WriteAllText(codePath + ".tmp", room.Code);
+                File.Move(codePath + ".tmp", codePath);
                 yield return WaitFor(() => room.View?.phase == "lobby", 10, "Host received lobby snapshot");
                 Check("Server room has " + seats + " seats", room.View?.maxPlayers == seats);
                 yield return WaitFor(() => room.View?.players?.Length == seats && Array.TrueForAll(room.View.players, p => p.connected), 30, "Every seat joined the lobby");
