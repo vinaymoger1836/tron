@@ -152,6 +152,7 @@ namespace GridRun
             var jet = Control("Light Jet");
             yield return WaitFor(() => System.Text.RegularExpressions.Regex.IsMatch(jet.GetComponentInChildren<Text>().text, @"^JET \d+\.\dS$") &&
                 !jet.GetComponent<Button>().interactable, 1, "JET shows its cooldown");
+            Check("JET sound played", Heard("beep 840"));
         }
 
         private static string ModeName(string id) => id == "duel" ? "DUEL" : id == "shift" ? "GRID SHIFT" : "ARENA";
@@ -168,6 +169,7 @@ namespace GridRun
             yield return WaitFor(() => Self()?.form == "foot", 3, "FORM dismounts on the server");
             yield return WaitFor(() => Has("Move Up") && Has("Disc") && !Has("Left"), 2, "On-foot pad replaces steering");
             yield return WaitFor(() => Has("On-foot rider"), 2, "Rider drawn on foot");
+            Check("Dismount sound played", Heard("beep 650"));
             yield return WaitFor(() => TextOf("Shift detail").Contains("YOU 2/2 INTEGRITY  /  ON FOOT"), 2, "Shift panel shows integrity and form");
             var body = GameObject.Find("Player cycle").transform;
             float simZ = Self().z, screenZ = body.position.z;
@@ -185,10 +187,13 @@ namespace GridRun
             yield return WaitFor(() => Array.Exists(room.View?.round?.shift?.discs ?? new OnlineRoomClient.DiscView[0], d => d.ownerId == selfId), 3, "DISC throws on the server");
             yield return WaitFor(() => Has("Thrown disc"), 1, "Thrown disc drawn");
             yield return WaitFor(() => Control("Disc").GetComponentInChildren<Text>().text == "DISC OUT", 1, "DISC button shows the disc is out");
+            Check("Disc throw sound played", Heard("beep 780"));
         }
 
+        private static bool Heard(string cue) => FindFirstObjectByType<Solo.SoloAudio>()?.Heard.Contains(cue) ?? false;
+
         // Records, after each rendered frame, whether snapshot bullets and pickups were actually drawn.
-        private bool sawBullet, sawPickup, sawSpawnToast;
+        private bool sawBullet, sawPickup, sawSpawnToast, heardMusic;
         private IEnumerator WatchCombat()
         {
             while (room.View != null && room.View.phase != "round-result" && room.View.phase != "match-result")
@@ -200,6 +205,7 @@ namespace GridRun
                 foreach (var p in round.pickups ?? new OnlineRoomClient.PickupView[0])
                     if (p.active && GameObject.Find("Pickup " + p.type) != null) sawPickup = true;
                 if ((GameObject.Find("Toast")?.GetComponent<Text>()?.text ?? "").EndsWith(" SPAWNED")) sawSpawnToast = true;
+                if (room.View?.phase == "running" && (FindFirstObjectByType<Solo.SoloAudio>()?.MusicOn ?? false)) heardMusic = true;
             }
         }
 
@@ -217,6 +223,7 @@ namespace GridRun
             // Snapshots keep arriving, so wait for the labels to catch up with the newest ammo count.
             yield return WaitFor(() => control.GetComponentInChildren<Text>().text == "FIRE " + Ammo(), 1, "FIRE button shows the ammo left");
             yield return WaitFor(() => (GameObject.Find("Weapon status")?.GetComponent<Text>()?.text ?? "").Contains("GUN " + Ammo() + "/48"), 1, "HUD shows the gun");
+            Check("Gunfire sound played", Heard("beep 930"));
         }
 
         // The rider must travel the way its model faces, and LEFT must turn it left on screen.
@@ -237,6 +244,7 @@ namespace GridRun
             yield return WaitFor(() => Vector3.Angle(before, self.forward) > 45, 1, "Rendered rider turned");
             Vector3 after = self.forward;
             Check("LEFT turns the rider left on screen", Vector3.Cross(before, after).y < -.5f);
+            Check("Turn sound played", Heard("turn"));
             start = self.position;
             yield return new WaitForSecondsRealtime(.4f);
             Check("Rider travels the way it faces after the turn", Vector3.Dot(self.position - start, after) > 0);
@@ -374,6 +382,9 @@ namespace GridRun
             foreach (var rider in streamed) colours.Add(rider.color == null ? "" : string.Join(",", rider.color));
             Check("Each seat has its own colour", colours.Count == seats && !colours.Contains(""));
             StartCoroutine(WatchCombat());
+            var audio = FindFirstObjectByType<Solo.SoloAudio>();
+            Check("Online sound follows the Sound setting", audio != null && audio.Enabled == Solo.SoloProfile.Sound && audio.Enabled);
+            Check("Countdown and start sounds played", Heard("beep 440") && Heard("beep 730") && Heard("wall"));
             // Solar Circuit and Data Vault heats can end within two seconds on Auto Drive (spawns face
             // obstacles or each other), so the timed turn and pause checks run on Classic Grid only.
             if (role == "host" && map != "classic")
@@ -405,7 +416,10 @@ namespace GridRun
                 Check("A spawned pickup was drawn", sawPickup);
                 Check("Pickup spawn was announced", sawSpawnToast);
             }
+            // The result snapshot can carry the final crash; the scene plays its cues on the next frame.
             yield return null;
+            Check("Music played during the heat", heardMusic);
+            Check("Crash sounds played", Heard("crash") && Heard("derez"));
             string roster = GameObject.Find("Room roster")?.GetComponent<Text>()?.text ?? "";
             Check("Result names the winner or a draw", (roster.Contains("WINS THE HEAT") || roster.Contains("HEAT DRAW")) && !roster.Contains("\n WINS"));
             if (role == "host")

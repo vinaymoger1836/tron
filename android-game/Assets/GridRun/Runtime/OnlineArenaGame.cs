@@ -38,6 +38,13 @@ namespace GridRun
         private bool verificationNoFocusPause;
         private bool lastThrottle, lastFire;
         private Vector2 lastMove;
+        private SoloAudio sound;
+        // Previous snapshot per rider, so sound cues can play for what changed.
+        private readonly Dictionary<string, OnlineRoomClient.RiderView> previous = new Dictionary<string, OnlineRoomClient.RiderView>();
+        private readonly HashSet<string> discOwners = new HashSet<string>();
+        private int cueRound = -1, lastCountdown;
+        private string lastPhase;
+        private float goUntil;
 
         private void Awake()
         {
@@ -51,6 +58,8 @@ namespace GridRun
             { Debug.LogError("Phase 2 scene is not prepared."); enabled = false; return; }
             font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             room = gameObject.AddComponent<OnlineRoomClient>();
+            sound = gameObject.AddComponent<SoloAudio>();
+            sound.Enabled = SoloProfile.Sound;
             BuildWorld();
             BuildUI();
             ShowSetup();
@@ -271,6 +280,9 @@ namespace GridRun
             }
             var current = room.View;
             if (current != null && !ReferenceEquals(current, shown)) { shown = current; Present(current); }
+            if (goUntil > 0 && Time.unscaledTime > goUntil) { if (current?.phase == "running") hud.Countdown.text = ""; goUntil = 0; }
+            bool inHeat = room.Connected && (current?.phase == "running" || current?.phase == "countdown");
+            sound.Music(inHeat ? MusicIntensity(current) : (float?)null);
             var self = Self(current);
             bool shift = current?.mode == "shift", foot = shift && self?.form == "foot";
             if (playHud.activeSelf) hud.Sync(HudFor(current, self), shift ? "shift" : "arena", Running);
@@ -381,7 +393,9 @@ namespace GridRun
             hud.Status.text = (room.Connected ? "CONNECTED" : "RECONNECTING") + "  /  " +
                 string.Join("   ", Array.ConvertAll(current.players, p => Seat(current, p.id) + " " + p.wins));
             hud.Score.text = "ROOM " + current.code;
-            hud.Countdown.text = current.phase == "countdown" ? Mathf.Max(1, Mathf.CeilToInt(current.countdownMs / 1000f)).ToString() : "";
+            // GO stays up briefly after the heat starts; Update clears it.
+            if (current.phase == "countdown") hud.Countdown.text = Mathf.Max(1, Mathf.CeilToInt(current.countdownMs / 1000f)).ToString();
+            else if (current.phase != "running") hud.Countdown.text = "";
             ShiftPanel(current);
             if (current.round != null && current.roundNumber != lastRoundNumber)
             {
@@ -390,6 +404,84 @@ namespace GridRun
             }
             lastRoundNumber = current.roundNumber;
             RenderRound(current);
+            PlayCues(current);
+        }
+
+        // The server forwards no events for these, so the solo game's cues play for what changed
+        // between snapshots: countdown, start, own turns, gunfire, flight, forms, discs, and crashes.
+        private void PlayCues(OnlineRoomClient.RoomView current)
+        {
+            string phase = current.phase;
+            if (phase == "countdown")
+            {
+                int number = Mathf.Max(1, Mathf.CeilToInt(current.countdownMs / 1000f));
+                if (number != lastCountdown) { lastCountdown = number; sound.Beep(440 + (3 - number) * 95, .08, "triangle", .03); }
+            }
+            else lastCountdown = 0;
+            if (phase == "running" && lastPhase == "countdown")
+            {
+                hud.Countdown.text = "GO";
+                goUntil = Time.unscaledTime + .42f;
+                sound.Beep(730, .2, "triangle", .06);
+                sound.Motif("wall");
+            }
+            if ((phase == "round-result" || phase == "match-result") && phase != lastPhase && current.result?.winnerId == current.selfId)
+                sound.Motif("win");
+            lastPhase = phase;
+            var round = current.round;
+            if (round == null || current.roundNumber != cueRound) { previous.Clear(); discOwners.Clear(); cueRound = round == null ? -1 : current.roundNumber; }
+            if (round == null) return;
+            var owners = new HashSet<string>();
+            foreach (var d in round.shift?.discs ?? new OnlineRoomClient.DiscView[0]) owners.Add(d.ownerId);
+            foreach (var r in round.riders ?? new OnlineRoomClient.RiderView[0])
+            {
+                bool you = r.id == current.selfId;
+                if (previous.TryGetValue(r.id, out var p))
+                {
+                    if (p.alive && !r.alive)
+                    {
+                        world.Impact(r.x, r.z);
+                        world.Derez(r.x, r.z, r.color ?? GridRules.Colors.Player, false);
+                        sound.Motif("crash");
+                        sound.Motif("derez");
+                        if (!you) hud.ShowToast(Seat(current, r.id) + " DEREZZED");
+                    }
+                    if (r.ammo < p.ammo || (p.rocketReady && !r.rocketReady)) sound.Beep(you ? 930 : 690, .1, "sawtooth", .028);
+                    if (you && r.alive && r.dir != p.dir && r.form != "foot") sound.Motif("turn");
+                    if (you && string.IsNullOrEmpty(p.flightKind) && !string.IsNullOrEmpty(r.flightKind))
+                    {
+                        bool jet = r.flightKind == "jet";
+                        hud.ShowToast(jet ? "LIGHT JET / LIFT" : "SOLAR SAIL / GLIDE");
+                        hud.ShowCaption(jet ? "LIGHT JET" : "SOLAR SAIL");
+                        sound.Beep(jet ? 840 : 610, .15, "triangle", .025);
+                    }
+                    if (!string.IsNullOrEmpty(p.form) && p.form != r.form)
+                    {
+                        hud.ShowToast((you ? "YOU" : Seat(current, r.id)) + (r.form == "foot" ? " DISMOUNTED" : " REMOUNTED"));
+                        sound.Beep(you ? 650 : 460, .18, "triangle", .03);
+                    }
+                    if (owners.Contains(r.id) && !discOwners.Contains(r.id)) sound.Beep(you ? 780 : 580, .13, "sawtooth", .035);
+                }
+                previous[r.id] = r;
+            }
+            discOwners.Clear();
+            discOwners.UnionWith(owners);
+        }
+
+        // Same rule as the solo bed: closer rivals, a longer heat, and a closer match raise the intensity.
+        private static float MusicIntensity(OnlineRoomClient.RoomView current)
+        {
+            var round = current.round;
+            var self = Self(current);
+            if (current.phase == "countdown" || round == null || self == null) return .22f;
+            double nearest = 20;
+            foreach (var r in round.riders ?? new OnlineRoomClient.RiderView[0])
+                if (r.id != self.id && r.alive) nearest = Math.Min(nearest, Math.Sqrt((r.x - self.x) * (r.x - self.x) + (r.z - self.z) * (r.z - self.z)));
+            double pressure = Math.Max(0, 1 - nearest / 16), duration = Math.Min(1, round.elapsed / 38);
+            int wins = 0;
+            foreach (var p in current.players) wins += p.wins;
+            double stakes = current.mode == "arena" ? 0 : Math.Min(1, wins / 4.0);
+            return (float)Math.Min(1, .25 + duration * .2 + pressure * .35 + stakes * .2);
         }
 
         // Integrity, form, and time left, like the solo Grid Shift panel but for every seat.
@@ -431,6 +523,7 @@ namespace GridRun
                     case "pickup-spawn": hud.ShowToast(item + " SPAWNED"); break;
                     case "pickup":
                         hud.ShowToast(e.riderId == current.selfId ? item + " PICKED UP" : Seat(current, e.riderId) + " TOOK " + item);
+                        if (e.riderId == current.selfId) sound.Beep(980, .12, "triangle", .03);
                         var picker = scene.Riders.Find(r => r.Id == e.riderId);
                         if (picker.Id != null)
                             world.Ring(picker.X, picker.Z, e.pickup == "ammo" ? new[] { .25f, .85f, 1f } : e.pickup == "nitro" ? new[] { .25f, 1f, .4f } : new[] { 1f, .54f, .18f }, 1.4f);
@@ -439,6 +532,7 @@ namespace GridRun
                         world.Impact(e.x, e.z);
                         world.Ring(e.x, e.z, new[] { 1f, .48f, .13f }, 3.2f);
                         hud.ShowCaption("ROCKET IMPACT");
+                        sound.Motif("crash");
                         break;
                     case "arena-shrink": hud.ShowToast("GRID SHRINKING / " + Mathf.RoundToInt(e.limit)); break;
                 }

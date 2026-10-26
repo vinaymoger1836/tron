@@ -16,6 +16,17 @@ namespace GridRun.Solo
         AudioSource activeMusic;
 
         public bool Enabled { get; set; } = true;
+        public bool MusicOn => activeMusic != null;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // Verification only: every cue played ("beep 930", "turn", "crash"...), since audio output cannot be inspected.
+        public readonly HashSet<string> Heard = new HashSet<string>();
+#endif
+        void Record(string cue)
+        {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            Heard.Add(cue);
+#endif
+        }
 
         void Awake()
         {
@@ -70,6 +81,7 @@ namespace GridRun.Solo
         public void Beep(double freq, double duration = .11, string type = "sawtooth", double gain = .035)
         {
             if (!Enabled) return;
+            Record("beep " + Math.Round(freq));
             string key = "beep" + freq + type + duration + gain;
             Play(Tone(key, data => Render(data, 0, freq, duration, type, gain * 9, freq * .57), duration + .02));
         }
@@ -77,6 +89,7 @@ namespace GridRun.Solo
         public void Motif(string kind)
         {
             if (!Enabled) return;
+            Record(kind);
             switch (kind)
             {
                 case "turn": Play(Tone(kind, d => Render(d, 0, 520, .08, "triangle", .025 * 9, 780), .1)); break;
