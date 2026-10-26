@@ -28,6 +28,11 @@ namespace GridRun
         private Text notice, roomHeading, roster, score, phase, startLabel, pauseLabel, autoLabel;
         private HoldControl forward, fire;
         private OnlineRoomClient.RoomView shown;
+        // Seat colours follow createLanRound's order (by position in the room's player list).
+        private static readonly string[] SeatColours = { "CYAN", "ORANGE", "VIOLET", "GOLD" };
+        private readonly Dictionary<string, Material> materials = new Dictionary<string, Material>();
+        private Text seatsLabel;
+        private int seats = 2;
         private bool autoDrive = true;
         private int lastRoundNumber;
         private bool verificationNoFocusPause;
@@ -92,10 +97,33 @@ namespace GridRun
             }
         }
 
-        private Transform Bike(string id, bool self)
+        private Transform Bike(OnlineRoomClient.RiderView rider)
         {
-            return CycleVisual.Create(transform, "Online rider " + id, cycleMaterial,
-                self ? glowMaterial : amberMaterial).transform;
+            return CycleVisual.Create(transform, "Online rider " + rider.id, cycleMaterial, Glow(rider.color)).transform;
+        }
+
+        // Same looks as SoloWorld.Glow and SoloWorld.Wall: seat colour plus a style stripe on trails.
+        private Material Glow(float[] color)
+        {
+            if (color == null || color.Length < 3) return glowMaterial;
+            string key = "glow" + string.Join(",", color);
+            if (materials.TryGetValue(key, out var m)) return m;
+            m = new Material(glowMaterial) { name = "Online glow " + key };
+            m.SetColor("_BaseColor", new Color(color[0] * 2.2f, color[1] * 2.2f, color[2] * 2.2f));
+            return materials[key] = m;
+        }
+        private Material Wall(OnlineRoomClient.RiderView owner)
+        {
+            if (owner?.color == null || owner.color.Length < 3) return GridLook.Assets.TrailCyan;
+            string style = owner.style ?? "player", key = "wall" + style + string.Join(",", owner.color);
+            if (materials.TryGetValue(key, out var m)) return m;
+            var c = owner.color;
+            m = new Material(GridLook.Assets.TrailCyan) { name = "Online trail " + key };
+            m.SetColor("_Color", new Color(c[0] * 2.1f, c[1] * 2.1f, c[2] * 2.1f));
+            m.SetFloat("_FillAlpha", .34f);
+            m.SetFloat("_StripeA", style == "hunter" ? .69f : style == "survivor" ? .45f : style == "trapper" ? .33f : 0);
+            m.SetFloat("_StripeB", style == "trapper" ? .74f : 0);
+            return materials[key] = m;
         }
 
         private RectTransform Rect(string name, Transform parent, Vector2 anchor, Vector2 pivot, Vector2 offset, Vector2 size)
@@ -169,6 +197,8 @@ namespace GridRun
             var scrim = Rect("Top contrast", hud, new Vector2(.5f, 1), new Vector2(.5f, 1), Vector2.zero, new Vector2(2300, 175));
             scrim.gameObject.AddComponent<Image>().color = new Color(.005f, .015f, .03f, .88f);
             score = Label("Online score", "", hud, new Vector2(0, 1), new Vector2(0, 1), new Vector2(32, -17), new Vector2(1320, 54), 32);
+            // Four rider names can outgrow one line; shrink rather than spill into the phase line.
+            score.resizeTextForBestFit = true; score.resizeTextMinSize = 20; score.resizeTextMaxSize = 32;
             phase = Label("Online phase", "", hud, new Vector2(0, 1), new Vector2(0, 1), new Vector2(32, -80), new Vector2(1300, 55), 26);
             pauseButton = Button("Host Pause", "PAUSE", hud, Vector2.one, Vector2.one, new Vector2(-32, -27), new Vector2(190, 85), Pause);
             pauseLabel = pauseButton.GetComponentInChildren<Text>();
@@ -188,10 +218,11 @@ namespace GridRun
             Label("Code caption", "FRIEND'S SIX-DIGIT CODE", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(265, -260), new Vector2(390, 40), 22);
             codeField = Field("Room code", "", setup, new Vector2(265, -305), new Vector2(390, 70), 6);
             codeField.contentType = InputField.ContentType.IntegerNumber;
-            createButton = Button("Create Room", "CREATE ROOM", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(-255, -410), new Vector2(440, 85), Create);
+            seatsLabel = Button("Room Size", "RIDERS: 2", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(-390, -410), new Vector2(170, 85), CycleSeats).GetComponentInChildren<Text>();
+            createButton = Button("Create Room", "CREATE ROOM", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(-165, -410), new Vector2(260, 85), Create);
             joinButton = Button("Join Room", "JOIN ROOM", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(255, -410), new Vector2(440, 85), Join);
             notice = Label("Online notice", "", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 205), new Vector2(1080, 75), 25, TextAnchor.MiddleCenter);
-            Label("Setup rules", "Arena / Classic Grid / 2 riders. Host shares the code; both riders connect before START.", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 105), new Vector2(1100, 60), 22, TextAnchor.MiddleCenter);
+            Label("Setup rules", "Arena / Classic Grid / 2-4 riders. The host picks the room size and shares the code; START opens when every seat is connected.", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 105), new Vector2(1100, 60), 22, TextAnchor.MiddleCenter);
             Button("Offline Arena", "MAIN MENU", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 12), new Vector2(350, 78), () => SceneManager.LoadScene("PhaseOneArena"));
             var lobby = Rect("Online room", safe.transform, new Vector2(.5f, .5f), new Vector2(.5f, .5f), Vector2.zero, new Vector2(1280, 760));
             var lobbyImage = lobby.gameObject.AddComponent<Image>();
@@ -212,8 +243,13 @@ namespace GridRun
         }
         private async void Create()
         {
-            try { await room.CreateAsync(serverField.text, nameField.text, 2); }
+            try { await room.CreateAsync(serverField.text, nameField.text, seats); }
             catch { /* The client exposes a clear status message. */ }
+        }
+        private void CycleSeats()
+        {
+            seats = seats == 4 ? 2 : seats + 1;
+            seatsLabel.text = "RIDERS: " + seats;
         }
         private async void Join()
         {
@@ -279,15 +315,21 @@ namespace GridRun
             playHud.SetActive(active);
             roomHeading.text = "ROOM " + current.code + "  /  " + current.phase.ToUpperInvariant();
             string lines = "ARENA / CLASSIC GRID / " + current.players.Length + "/" + current.maxPlayers + " RIDERS\n";
-            foreach (var player in current.players)
-                lines += player.name + (player.id == current.selfId ? " / YOU" : "") +
+            for (int i = 0; i < current.players.Length; i++)
+            {
+                var player = current.players[i];
+                lines += SeatColours[i % SeatColours.Length] + "  " + player.name + (player.id == current.selfId ? " / YOU" : "") +
                     "  -  " + player.wins + " HEAT WINS  -  " + (player.connected ? "CONNECTED" : "OFFLINE") + "\n";
+            }
+            int open = current.maxPlayers - current.players.Length;
+            if (current.phase == "lobby" && open > 0) lines += "Waiting for " + open + (open == 1 ? " more rider.\n" : " more riders.\n");
             if (current.phase == "connection-wait") lines += "Waiting for a rider to reconnect.\n";
             if (current.result != null && (current.phase == "round-result" || current.phase == "match-result"))
             {
                 lines += current.result.winnerName == null ? "HEAT DRAW\n" : current.result.winnerName + " WINS THE HEAT\n";
                 if (current.result.crashes != null)
-                    foreach (var crash in current.result.crashes) lines += crash.riderId + ": " + crash.reason + "\n";
+                    foreach (var crash in current.result.crashes)
+                        lines += (Array.Find(current.players, p => p.id == crash.riderId)?.name ?? crash.riderId) + ": " + crash.reason + "\n";
                 if (current.phase == "match-result")
                     lines += current.result.matchDraw ? "MATCH DRAW" : current.result.matchWinnerName + " WINS THE MATCH";
             }
@@ -317,7 +359,7 @@ namespace GridRun
                 foreach (var rider in round.riders)
                 {
                     if (!riders.TryGetValue(rider.id, out var visual))
-                    { visual = Bike(rider.id, rider.id == current.selfId); riders.Add(rider.id, visual); }
+                    { visual = Bike(rider); riders.Add(rider.id, visual); }
                     visual.gameObject.SetActive(rider.alive);
                     // Same sim-to-Unity mapping as offline play, so relative turns read the same way.
                     visual.position = SoloWorld.W(rider.x, rider.z);
@@ -331,7 +373,7 @@ namespace GridRun
                     if (!trails.TryGetValue(segment.id, out var visual))
                     {
                         visual = Box("Online light trail", Vector3.zero, Vector3.one,
-                            GridLook.Trail(segment.ownerId == current.selfId), transform).transform;
+                            Wall(Array.Find(round.riders ?? new OnlineRoomClient.RiderView[0], r => r.id == segment.ownerId)), transform).transform;
                         trails.Add(segment.id, visual);
                     }
                     visual.position = SoloWorld.W((segment.x1 + segment.x2) * .5f, (segment.z1 + segment.z2) * .5f, .55f);
@@ -370,6 +412,10 @@ namespace GridRun
         {
             if (!focused && !verificationNoFocusPause) OnApplicationPause(true);
         }
-        private void OnDestroy() { Screen.sleepTimeout = SleepTimeout.SystemSetting; }
+        private void OnDestroy()
+        {
+            Screen.sleepTimeout = SleepTimeout.SystemSetting;
+            foreach (var material in materials.Values) Destroy(material);
+        }
     }
 }
