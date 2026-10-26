@@ -323,7 +323,10 @@ async function handleApi(req, res, pathname) {
     if (room.phase !== 'lobby') return fail(res, 409, 'This match has already started.');
     if (room.players.length >= room.maxPlayers) return fail(res, 409, 'Room is full.');
     const body = await readJson(req);
-    const player = createPlayer('P' + (room.players.length + 1), body.name);
+    // A lobby departure leaves a gap, so take the lowest free seat rather than the count.
+    let seat = 1;
+    while (room.players.some(p => p.id === 'P' + seat)) seat++;
+    const player = createPlayer('P' + seat, body.name);
     room.players.push(player);
     broadcast(room);
     seatCookie(res, player);

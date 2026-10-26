@@ -16,7 +16,7 @@ namespace GridRun
         [Serializable] public sealed class PlayerView { public string id, name; public bool connected; public int wins; }
         [Serializable] public sealed class RiderView
         {
-            public string id, form; public float x, z; public int dir, ammo; public bool alive, autoDrive, rocketReady;
+            public string id, form, style; public float x, z; public float[] color; public int dir, ammo; public bool alive, autoDrive, rocketReady;
         }
         [Serializable] public sealed class SegmentView
         {
@@ -236,8 +236,8 @@ namespace GridRun
                     throw new InvalidOperationException("Invalid room snapshot.");
                 View = view;
                 Connected = true;
-                Supported = view.mode == "arena" && view.map == "classic" && view.maxPlayers == 2 && view.rule == "classic";
-                Status = !Supported ? "This room uses a mode the app does not support online yet. Online play supports two-rider Arena on Classic Grid with persistent walls." :
+                Supported = view.mode == "arena" && view.map == "classic" && view.maxPlayers >= 2 && view.maxPlayers <= 4 && view.rule == "classic";
+                Status = !Supported ? "This room uses a mode the app does not support online yet. Online play supports Arena for 2-4 riders on Classic Grid with persistent walls." :
                     view.phase == "connection-wait" ? "Waiting for a rider to reconnect..." : "Connected to room " + Code + ".";
             }
             catch (Exception error) { Status = "Room data error: " + error.Message; }
