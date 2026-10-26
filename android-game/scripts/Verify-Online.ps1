@@ -1,9 +1,11 @@
 [CmdletBinding()]
 param([int]$Port = 0, [string]$UnityPlayer, [ValidateRange(2, 4)][int]$Seats = 2,
-    [ValidateSet('classic', 'solar', 'vault')][string]$Map = 'classic', [ValidateSet('classic', 'decay')][string]$Rule = 'classic')
+    [ValidateSet('classic', 'solar', 'vault')][string]$Map = 'classic', [ValidateSet('classic', 'decay')][string]$Rule = 'classic',
+    [ValidateSet('arena', 'duel', 'shift')][string]$Mode = 'arena')
 $ErrorActionPreference = 'Stop'
+if ($Rule -eq 'decay' -and $Mode -ne 'arena') { throw 'Fading walls exist only in Arena.' }
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$variant = $(if ($Seats -ne 2) { "-$Seats-seats" }) + $(if ($Map -ne 'classic') { "-$Map" }) + $(if ($Rule -eq 'decay') { '-fading' })
+$variant = $(if ($Mode -ne 'arena') { "-$Mode" }) + $(if ($Seats -ne 2) { "-$Seats-seats" }) + $(if ($Map -ne 'classic') { "-$Map" }) + $(if ($Rule -eq 'decay') { '-fading' })
 $evidence = Join-Path $root ('artifacts/android-phase-2/final' + $variant)
 $roles = @('host', 'guest', 'guest2', 'guest3')[0..($Seats - 1)]
 New-Item -ItemType Directory -Force -Path $evidence | Out-Null
@@ -32,7 +34,7 @@ try {
         Start-Sleep -Milliseconds 200
     }
     if (-not $ready) { throw 'Local online server did not become healthy.' }
-    $common = @('-force-d3d11', '-screen-fullscreen', '0', '--phase2-capture-dir', ('"' + $evidence + '"'), '--phase2-origin', $serverOrigin, '--phase2-seats', [string]$Seats, '--phase2-map', $Map, '--phase2-rule', $Rule)
+    $common = @('-force-d3d11', '-screen-fullscreen', '0', '--phase2-capture-dir', ('"' + $evidence + '"'), '--phase2-origin', $serverOrigin, '--phase2-seats', [string]$Seats, '--phase2-map', $Map, '--phase2-rule', $Rule, '--phase2-mode', $Mode)
     foreach ($role in $roles) {
         $size = if ($role -eq 'host') { @('-screen-width','1280','-screen-height','720') } else { @('-screen-width','1170','-screen-height','540') }
         $arguments = $size + @('-logFile',('"' + (Join-Path $evidence ($role + '-player.log')) + '"'),'--phase2-role',$role) + $common

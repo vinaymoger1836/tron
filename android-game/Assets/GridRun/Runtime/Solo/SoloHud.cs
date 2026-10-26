@@ -6,13 +6,35 @@ using UnityEngine.UI;
 
 namespace GridRun.Solo
 {
+    // The player's rider as the HUD sees it. Solo play fills it from the Round; online play from a snapshot.
+    public struct HudPlayer
+    {
+        public bool Present, Alive, RocketReady, DiscOut;
+        public string Form, FlightKind;
+        public int Ammo;
+        public double Elapsed, JetReadyAt, SailReadyAt, FlightUntil, DiscReadyAt, NitroUntil;
+
+        public static HudPlayer From(Round round)
+        {
+            var p = round?.Player;
+            if (p == null) return default;
+            return new HudPlayer
+            {
+                Present = true, Alive = p.Alive, RocketReady = p.RocketReady, Form = p.Form, FlightKind = p.FlightKind,
+                Ammo = p.Ammo, Elapsed = round.Elapsed, JetReadyAt = p.JetReadyAt, SailReadyAt = p.SailReadyAt,
+                FlightUntil = p.FlightUntil, DiscReadyAt = p.DiscReadyAt, NitroUntil = p.NitroUntil,
+                DiscOut = round.Shift != null && round.Shift.Discs.Exists(d => d.OwnerId == p.Id),
+            };
+        }
+    }
+
     // In-round HUD, radar, and touch controls. Control GameObject names are stable for the
     // desktop verification flows (Left, Right, Forward, Fire, Light Jet, Solar Sail, Form, Disc...).
     public sealed class SoloHud
     {
         public GameObject Root { get; }
         public Text Matchline, Status, Intent, Score, Countdown, Toast, Caption, Weapon, ObjectiveTitle, ObjectiveProgress, ObjectiveWarning, Shift;
-        readonly GameObject objective, shiftPanel, cycleLeft, cycleRight, footLeft, footRight, flightRow, formButton, fireButton;
+        readonly GameObject objective, shiftPanel, cycleLeft, cycleRight, footLeft, footRight, flightRow, formButton, fireButton, pauseButton;
         readonly HoldControl forward, fire, up, down, left, right;
         readonly Text autoLabel, pauseLabel, jetLabel, sailLabel, fireLabel, discLabel;
         readonly Button jetButton, sailButton, discButton;
@@ -47,7 +69,9 @@ namespace GridRun.Solo
             UiSkin.Panel(shiftPanel.AddComponent<Image>());
             Shift = SoloUi.Label("Shift detail", "", shiftPanel.transform, new Vector2(0, .5f), new Vector2(0, .5f), new Vector2(24, 0), new Vector2(712, 84), 23);
 
-            pauseLabel = SoloUi.Caption(SoloUi.Button("Pause", "PAUSE", hud, Vector2.one, Vector2.one, new Vector2(-30, -26), new Vector2(170, 80), pause));
+            var pauseControl = SoloUi.Button("Pause", "PAUSE", hud, Vector2.one, Vector2.one, new Vector2(-30, -26), new Vector2(170, 80), pause);
+            pauseButton = pauseControl.gameObject;
+            pauseLabel = SoloUi.Caption(pauseControl);
             autoLabel = SoloUi.Caption(SoloUi.Button("Auto Drive", "AUTO ON", hud, Vector2.one, Vector2.one, new Vector2(-214, -26), new Vector2(200, 80), auto, false, 22));
             radar = SoloUi.Rect("Radar", hud, Vector2.one, Vector2.one, new Vector2(-30, -124), new Vector2(236, 236)).gameObject.AddComponent<RawImage>();
             radar.raycastTarget = false;
@@ -107,6 +131,8 @@ namespace GridRun.Solo
         }
 
         public void SetPaused(bool paused) => pauseLabel.text = paused ? "RESUME" : "PAUSE";
+        // Online rooms let only the host pause.
+        public void SetPauseVisible(bool visible) => pauseButton.SetActive(visible);
         public void SetAuto(bool auto) => autoLabel.text = auto ? "AUTO ON" : "AUTO OFF";
 
         public void ClearHolds()
@@ -115,13 +141,14 @@ namespace GridRun.Solo
         }
 
         // Shows the control set for the current mode/form and refreshes labels and cooldowns.
-        public void Sync(Round round, string mode, bool running)
+        public void Sync(Round round, string mode, bool running) => Sync(HudPlayer.From(round), mode, running);
+
+        public void Sync(HudPlayer player, string mode, bool running)
         {
             if (Time.unscaledTime > toastUntil) Toast.text = "";
             if (Time.unscaledTime > captionUntil) Caption.text = "";
-            var player = round?.Player;
             bool shift = mode == "shift", lesson = mode == "lesson";
-            bool foot = shift && player != null && player.Form == "foot";
+            bool foot = shift && player.Present && player.Form == "foot";
             cycleLeft.SetActive(!foot);
             cycleRight.SetActive(!foot);
             footLeft.SetActive(foot);
@@ -129,25 +156,24 @@ namespace GridRun.Solo
             fireButton.SetActive(!lesson);
             flightRow.SetActive(!lesson && !foot);
             formButton.SetActive(shift);
-            if (player == null) return;
+            if (!player.Present) return;
             fireLabel.text = player.RocketReady ? "ROCKET" : "FIRE " + player.Ammo;
             foreach (var (kind, button, label) in new[] { ("jet", jetButton, jetLabel), ("sail", sailButton, sailLabel) })
             {
                 double readyAt = kind == "jet" ? player.JetReadyAt : player.SailReadyAt;
-                double remaining = Math.Max(0, readyAt - round.Elapsed);
-                bool active = player.FlightKind == kind && round.Elapsed < player.FlightUntil;
+                double remaining = Math.Max(0, readyAt - player.Elapsed);
+                bool active = player.FlightKind == kind && player.Elapsed < player.FlightUntil;
                 label.text = kind.ToUpperInvariant() + (active ? " ACTIVE" : remaining > 0 ? " " + remaining.ToString("0.0") + "S" : "");
                 button.interactable = running && player.Alive && player.FlightKind == null && remaining <= 0;
             }
-            if (shift && round.Shift != null)
+            if (shift)
             {
-                bool discOut = round.Shift.Discs.Exists(d => d.OwnerId == player.Id);
-                double cooldown = Math.Max(0, player.DiscReadyAt - round.Elapsed);
-                discLabel.text = discOut ? "DISC OUT" : cooldown > 0 ? "DISC " + cooldown.ToString("0.0") + "S" : "DISC";
-                discButton.interactable = running && !discOut && cooldown <= 0;
+                double cooldown = Math.Max(0, player.DiscReadyAt - player.Elapsed);
+                discLabel.text = player.DiscOut ? "DISC OUT" : cooldown > 0 ? "DISC " + cooldown.ToString("0.0") + "S" : "DISC";
+                discButton.interactable = running && !player.DiscOut && cooldown <= 0;
             }
             Weapon.text = lesson ? "" : (foot ? "ON FOOT" : player.RocketReady ? "ROCKET 1" : "GUN " + player.Ammo + "/48") +
-                (round.Elapsed < player.NitroUntil ? "  /  NITRO " + Math.Ceiling(player.NitroUntil - round.Elapsed) + "S" : "");
+                (player.Elapsed < player.NitroUntil ? "  /  NITRO " + Math.Ceiling(player.NitroUntil - player.Elapsed) + "S" : "");
         }
 
         public void SetObjective(bool visible, string title = "", string progress = "", string warning = "")

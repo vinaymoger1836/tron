@@ -24,7 +24,7 @@ namespace GridRun
         private readonly Report report = new Report();
         private string output, role, server;
         private int seats = 2;
-        private string map = "classic", rule = "classic";
+        private string map = "classic", rule = "classic", mode = "arena";
         private OnlineRoomClient room;
         private bool failed;
 
@@ -41,6 +41,7 @@ namespace GridRun
             runner.server = Option(args, "--phase2-origin") ?? "http://127.0.0.1:8096";
             if (int.TryParse(Option(args, "--phase2-seats"), out int seats)) runner.seats = seats;
             runner.map = Option(args, "--phase2-map") ?? "classic";
+            runner.mode = Option(args, "--phase2-mode") ?? "arena";
             runner.rule = Option(args, "--phase2-rule") ?? "classic";
             Directory.CreateDirectory(runner.output);
             Application.runInBackground = true;
@@ -137,6 +138,39 @@ namespace GridRun
                 "MAP: " + Sim.SimMaps.Get(next).Name.ToUpperInvariant());
         }
 
+        private static string ModeName(string id) => id == "duel" ? "DUEL" : id == "shift" ? "GRID SHIFT" : "ARENA";
+        private static bool Has(string name) => GameObject.Find(name) != null;
+        private static string TextOf(string name) => GameObject.Find(name)?.GetComponent<Text>()?.text ?? "";
+
+        // Grid Shift through the real controls: FORM dismounts, the pad moves north on screen and in
+        // the simulation (-z), DISC throws a disc that is drawn, and the HUD switches to the foot set.
+        private IEnumerator CheckShift()
+        {
+            string selfId = room.View.selfId;
+            OnlineRoomClient.RiderView Self() => Array.Find(room.View?.round?.riders ?? new OnlineRoomClient.RiderView[0], r => r.id == selfId);
+            Submit("Form");
+            yield return WaitFor(() => Self()?.form == "foot", 3, "FORM dismounts on the server");
+            yield return WaitFor(() => Has("Move Up") && Has("Disc") && !Has("Left"), 2, "On-foot pad replaces steering");
+            yield return WaitFor(() => Has("On-foot rider"), 2, "Rider drawn on foot");
+            yield return WaitFor(() => TextOf("Shift detail").Contains("YOU 2/2 INTEGRITY  /  ON FOOT"), 2, "Shift panel shows integrity and form");
+            var body = GameObject.Find("Player cycle").transform;
+            float simZ = Self().z, screenZ = body.position.z;
+            var pad = Control("Move Up");
+            var press = new PointerEventData(EventSystem.current) { pointerId = 8 };
+            ExecuteEvents.Execute(pad, press, ExecuteEvents.pointerDownHandler);
+            yield return new WaitForSecondsRealtime(.6f);
+            ExecuteEvents.Execute(pad, press, ExecuteEvents.pointerUpHandler);
+            Check("UP moves north in the simulation", Self().z < simZ - .5f);
+            Check("UP moves up the screen", body.position.z > screenZ + .5f);
+            yield return new WaitForSecondsRealtime(.4f);
+            var camera = Camera.main.transform;
+            Check("Camera is north-up on foot", Vector3.Dot(camera.forward, Vector3.forward) > .5f && camera.position.z < body.position.z);
+            Submit("Disc");
+            yield return WaitFor(() => Array.Exists(room.View?.round?.shift?.discs ?? new OnlineRoomClient.DiscView[0], d => d.ownerId == selfId), 3, "DISC throws on the server");
+            yield return WaitFor(() => Has("Thrown disc"), 1, "Thrown disc drawn");
+            yield return WaitFor(() => Control("Disc").GetComponentInChildren<Text>().text == "DISC OUT", 1, "DISC button shows the disc is out");
+        }
+
         // Records, after each rendered frame, whether snapshot bullets and pickups were actually drawn.
         private bool sawBullet, sawPickup, sawSpawnToast;
         private IEnumerator WatchCombat()
@@ -149,7 +183,7 @@ namespace GridRun
                 if (round.bullets?.Length > 0 && (GameObject.Find("Bullet") != null || GameObject.Find("Rocket") != null)) sawBullet = true;
                 foreach (var p in round.pickups ?? new OnlineRoomClient.PickupView[0])
                     if (p.active && GameObject.Find("Pickup " + p.type) != null) sawPickup = true;
-                if ((GameObject.Find("Online toast")?.GetComponent<Text>()?.text ?? "").EndsWith(" SPAWNED")) sawSpawnToast = true;
+                if ((GameObject.Find("Toast")?.GetComponent<Text>()?.text ?? "").EndsWith(" SPAWNED")) sawSpawnToast = true;
             }
         }
 
@@ -166,7 +200,7 @@ namespace GridRun
             ExecuteEvents.Execute(control, press, ExecuteEvents.pointerUpHandler);
             // Snapshots keep arriving, so wait for the labels to catch up with the newest ammo count.
             yield return WaitFor(() => control.GetComponentInChildren<Text>().text == "FIRE " + Ammo(), 1, "FIRE button shows the ammo left");
-            yield return WaitFor(() => (GameObject.Find("Online phase")?.GetComponent<Text>()?.text ?? "").Contains("GUN " + Ammo() + "/48"), 1, "HUD shows the gun");
+            yield return WaitFor(() => (GameObject.Find("Weapon status")?.GetComponent<Text>()?.text ?? "").Contains("GUN " + Ammo() + "/48"), 1, "HUD shows the gun");
         }
 
         // The rider must travel the way its model faces, and LEFT must turn it left on screen.
@@ -230,9 +264,21 @@ namespace GridRun
                     Submit("Room Walls");
                     yield return WaitFor(() => room.View?.rule == "decay", 5, "Host chose fading walls");
                     yield return null;
-                    Check("Walls button names fading walls", Control("Room Walls").GetComponentInChildren<Text>().text == "WALLS: FADING WALLS");
+                    Check("Walls button names fading walls", Control("Room Walls").GetComponentInChildren<Text>().text == "WALLS: FADING");
                 }
                 Check("Room settled on " + map + " with " + rule + " walls", room.View?.map == map && room.View?.rule == rule);
+                // Walls are chosen first: the server accepts a wall rule only while the room is in Arena.
+                for (int i = 0; i < 2 && room.View?.mode != mode; i++)
+                {
+                    string before = room.View?.mode;
+                    Submit("Room Mode");
+                    yield return WaitFor(() => room.View?.mode != before, 5, "Host changed the mode from " + before);
+                    yield return null;
+                }
+                Check("Room plays " + mode, room.View?.mode == mode);
+                Check("Mode button names " + ModeName(mode), Control("Room Mode").GetComponentInChildren<Text>().text == "MODE: " + ModeName(mode));
+                Check("Start button names " + ModeName(mode), Control("Start Heat").GetComponentInChildren<Text>().text == "START " + ModeName(mode));
+                Check("Walls choice is Arena only", Control("Room Walls").GetComponent<Button>().interactable == (mode == "arena"));
                 yield return CaptureLayout("lobby-desktop.png", 1280, 720);
                 yield return CaptureLayout("lobby-phone.png", 1170, 540);
                 Submit("Start Heat");
@@ -290,6 +336,8 @@ namespace GridRun
             Check("Heat runs on " + map + " with " + rule + " walls", room.View.round?.map == map && room.View.round?.rule == rule &&
                 (rule == "decay" ? room.View.round.trailLifetime == 10 : room.View.round.trailLifetime == 0));
             Check("Arena shows the " + map + " map", MapShown(map));
+            Check("Heat plays " + mode, room.View.mode == mode &&
+                (GameObject.Find("Matchline")?.GetComponent<Text>()?.text ?? "").StartsWith(ModeName(mode) + " / HEAT"));
             var colours = new HashSet<string>();
             foreach (var rider in streamed) colours.Add(rider.color == null ? "" : string.Join(",", rider.color));
             Check("Each seat has its own colour", colours.Count == seats && !colours.Contains(""));
@@ -305,7 +353,8 @@ namespace GridRun
             {
                 yield return CheckTurnReadsOnScreen();
                 yield return CheckFire();
-                Submit("Host Pause");
+                if (mode == "shift") yield return CheckShift();
+                Submit("Pause");
                 yield return WaitFor(() => room.View?.phase == "paused", 5, "Host pause stops the heat");
                 yield return WaitFor(() => GameObject.Find("Start Heat") != null, 5, "Resume control is visible");
                 Submit("Start Heat");

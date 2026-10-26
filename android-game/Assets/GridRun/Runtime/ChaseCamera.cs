@@ -19,6 +19,13 @@ namespace GridRun
             aim = ground + forward * Lead + Vector3.up * AimHeight;
         }
 
+        // North-up view on foot, matching the browser: arena directions never rotate.
+        public static void NorthUp(Vector3 riderPosition, out Vector3 position, out Vector3 aim)
+        {
+            position = new Vector3(riderPosition.x, 10.5f, riderPosition.z - 8f);
+            aim = new Vector3(riderPosition.x, .6f, riderPosition.z + 1.5f);
+        }
+
         public static void Follow(Transform camera, ref Vector3 currentAim, Vector3 position, Vector3 aim, float deltaTime)
         {
             float blend = 1 - Mathf.Exp(-Sharpness * deltaTime);

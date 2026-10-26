@@ -1201,14 +1201,7 @@ namespace GridRun.Solo
 
         void Pose(Transform player, out Vector3 position, out Vector3 aim)
         {
-            if (world.PlayerOnFoot)
-            {
-                // North-up view on foot, matching the browser: arena directions never rotate.
-                var p = player.position;
-                position = new Vector3(p.x, 10.5f, p.z - 8f);
-                aim = new Vector3(p.x, .6f, p.z + 1.5f);
-                return;
-            }
+            if (world.PlayerOnFoot) { ChaseCamera.NorthUp(player.position, out position, out aim); return; }
             ChaseCamera.Target(player.position, player.rotation, out position, out aim);
         }
 

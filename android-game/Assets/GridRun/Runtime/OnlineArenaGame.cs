@@ -10,7 +10,8 @@ using UnityEngine.UI;
 
 namespace GridRun
 {
-    // Phase 2 two-client prototype: the Node server owns all match state and outcomes.
+    // Online rooms for 2-4 riders (Arena, Duel, Grid Shift): the Node server owns all match state and outcomes.
+    // Snapshots are drawn with the solo renderer and HUD, so online play looks and controls like solo play.
     public sealed class OnlineArenaGame : MonoBehaviour
     {
         [SerializeField] private Material floorMaterial, gridMaterial, wallMaterial, cycleMaterial, glowMaterial, amberMaterial;
@@ -19,24 +20,24 @@ namespace GridRun
         private Font font;
         private Camera view;
         private Vector3 cameraAim;
-        // The solo renderer draws server snapshots too, so maps, trails, and fading walls look the same online.
         private SoloWorld world;
+        private SoloHud hud;
         private readonly SceneView scene = new SceneView();
         private GameObject setupPanel, roomPanel, playHud;
         private InputField serverField, nameField, codeField;
-        private Button createButton, joinButton, startButton, pauseButton, mapButton, wallsButton;
-        private Text notice, roomHeading, roster, score, phase, startLabel, pauseLabel, autoLabel, mapLabel, wallsLabel;
-        private HoldControl forward, fire;
+        private Button createButton, joinButton, startButton, modeButton, mapButton, wallsButton;
+        private Text notice, roomHeading, roster, startLabel, modeLabel, mapLabel, wallsLabel, seatsLabel;
         private OnlineRoomClient.RoomView shown;
         // Seat colours follow createLanRound's order (by position in the room's player list).
         private static readonly string[] SeatColours = { "CYAN", "ORANGE", "VIOLET", "GOLD" };
-        private Text seatsLabel, fireLabel, toast;
-        private float toastUntil;
+        private static readonly string[] Modes = { "arena", "duel", "shift" };
         private int lastEffectId;
         private int seats = 2;
         private bool autoDrive = true;
         private int lastRoundNumber;
         private bool verificationNoFocusPause;
+        private bool lastThrottle, lastFire;
+        private Vector2 lastMove;
 
         private void Awake()
         {
@@ -72,8 +73,8 @@ namespace GridRun
         private void ShowMap(string mapId)
         {
             world.Clear();
-            scene.Riders.Clear(); scene.Segments.Clear(); scene.Bullets.Clear(); scene.Pickups.Clear();
-            lastEffectId = 0; toastUntil = 0;
+            scene.Riders.Clear(); scene.Segments.Clear(); scene.Bullets.Clear(); scene.Pickups.Clear(); scene.Discs.Clear();
+            lastEffectId = 0;
             scene.Map = mapId; scene.Rule = "classic"; scene.Elapsed = 0;
             scene.Limit = SimMaps.Get(mapId).Limit; scene.TrailLifetime = double.PositiveInfinity;
         }
@@ -122,15 +123,6 @@ namespace GridRun
             return input;
         }
 
-        private void TurnButton(Button button, int sign)
-        {
-            var trigger = button.gameObject.AddComponent<EventTrigger>();
-            var pointer = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
-            pointer.callback.AddListener(_ => Turn(sign)); trigger.triggers.Add(pointer);
-            var submit = new EventTrigger.Entry { eventID = EventTriggerType.Submit };
-            submit.callback.AddListener(_ => Turn(sign)); trigger.triggers.Add(submit);
-        }
-
         private void BuildUI()
         {
             new GameObject("UI input", typeof(EventSystem), typeof(StandaloneInputModule));
@@ -144,28 +136,13 @@ namespace GridRun
             var safeRect = (RectTransform)safe.transform;
             safeRect.anchorMin = Vector2.zero; safeRect.anchorMax = Vector2.one;
             safeRect.offsetMin = safeRect.offsetMax = Vector2.zero;
-            var hud = Rect("Online HUD", safe.transform, Vector2.zero, Vector2.zero, Vector2.zero, Vector2.zero);
-            hud.anchorMin = Vector2.zero; hud.anchorMax = Vector2.one; playHud = hud.gameObject;
-            var scrim = Rect("Top contrast", hud, new Vector2(.5f, 1), new Vector2(.5f, 1), Vector2.zero, new Vector2(2300, 175));
-            scrim.gameObject.AddComponent<Image>().color = new Color(.005f, .015f, .03f, .88f);
-            score = Label("Online score", "", hud, new Vector2(0, 1), new Vector2(0, 1), new Vector2(32, -17), new Vector2(1320, 54), 32);
-            // Four rider names can outgrow one line; shrink rather than spill into the phase line.
-            score.resizeTextForBestFit = true; score.resizeTextMinSize = 20; score.resizeTextMaxSize = 32;
-            phase = Label("Online phase", "", hud, new Vector2(0, 1), new Vector2(0, 1), new Vector2(32, -80), new Vector2(1300, 55), 26);
-            pauseButton = Button("Host Pause", "PAUSE", hud, Vector2.one, Vector2.one, new Vector2(-32, -27), new Vector2(190, 85), Pause);
-            pauseLabel = pauseButton.GetComponentInChildren<Text>();
-            TurnButton(Button("Left", "LEFT", hud, Vector2.zero, Vector2.zero, new Vector2(32, 28), new Vector2(225, 140), null), -1);
-            TurnButton(Button("Right", "RIGHT", hud, Vector2.zero, Vector2.zero, new Vector2(278, 28), new Vector2(225, 140), null), 1);
-            forward = Button("Forward", "FORWARD", hud, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-32, 28), new Vector2(260, 140), null).gameObject.AddComponent<HoldControl>();
-            var fireButton = Button("Fire", "FIRE", hud, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-310, 28), new Vector2(230, 140), null);
-            fire = fireButton.gameObject.AddComponent<HoldControl>();
-            fireLabel = fireButton.GetComponentInChildren<Text>();
-            toast = Label("Online toast", "", hud, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -190), new Vector2(1100, 60), 34, TextAnchor.MiddleCenter);
-            autoLabel = Button("Auto Drive", "AUTO: ON", hud, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-32, 190), new Vector2(260, 78), ToggleAuto).GetComponentInChildren<Text>();
+            hud = new SoloHud(safe.transform, Turn, Pause, ToggleAuto, () => Flight("jet"), () => Flight("sail"), Form, Disc);
+            hud.SetObjective(false); hud.SetShiftPanel(false);
+            playHud = hud.Root;
             var setup = Rect("Online setup", safe.transform, new Vector2(.5f, .5f), new Vector2(.5f, .5f), Vector2.zero, new Vector2(1280, 820));
             var setupImage = setup.gameObject.AddComponent<Image>();
             UiSkin.Panel(setupImage); setupPanel = setup.gameObject;
-            Label("Setup heading", "GRID RUN  /  ONLINE ARENA", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -25), new Vector2(1120, 75), 48, TextAnchor.MiddleCenter);
+            Label("Setup heading", "GRID RUN  /  ONLINE ROOM", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -25), new Vector2(1120, 75), 48, TextAnchor.MiddleCenter);
             Label("Server caption", "GAME SERVER HTTPS URL", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -125), new Vector2(900, 40), 22);
             serverField = Field("Server origin", defaultServerOrigin, setup, new Vector2(0, -170), new Vector2(920, 70), 160);
             Label("Name caption", "RIDER NAME", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(-265, -260), new Vector2(390, 40), 22);
@@ -177,16 +154,18 @@ namespace GridRun
             createButton = Button("Create Room", "CREATE ROOM", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(-165, -410), new Vector2(260, 85), Create);
             joinButton = Button("Join Room", "JOIN ROOM", setup, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(255, -410), new Vector2(440, 85), Join);
             notice = Label("Online notice", "", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 205), new Vector2(1080, 75), 25, TextAnchor.MiddleCenter);
-            Label("Setup rules", "Arena for 2-4 riders. The host picks the room size, then the map and walls in the lobby; START opens when every seat is connected.", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 105), new Vector2(1100, 60), 22, TextAnchor.MiddleCenter);
+            Label("Setup rules", "Arena, Duel, or Grid Shift for 2-4 riders. The host picks the room size here, then the mode, map, and walls in the lobby; START opens when every seat is connected.", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 105), new Vector2(1100, 60), 22, TextAnchor.MiddleCenter);
             Button("Offline Arena", "MAIN MENU", setup, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 12), new Vector2(350, 78), () => SceneManager.LoadScene("PhaseOneArena"));
             var lobby = Rect("Online room", safe.transform, new Vector2(.5f, .5f), new Vector2(.5f, .5f), Vector2.zero, new Vector2(1280, 760));
             var lobbyImage = lobby.gameObject.AddComponent<Image>();
             UiSkin.Panel(lobbyImage); roomPanel = lobby.gameObject;
             roomHeading = Label("Room heading", "ROOM", lobby, new Vector2(.5f, 1), new Vector2(.5f, 1), new Vector2(0, -25), new Vector2(1120, 75), 47, TextAnchor.MiddleCenter);
             roster = Label("Room roster", "", lobby, new Vector2(.5f, .5f), new Vector2(.5f, .5f), new Vector2(0, 70), new Vector2(1040, 380), 29, TextAnchor.MiddleCenter);
-            mapButton = Button("Room Map", "MAP: CLASSIC GRID", lobby, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(-240, 165), new Vector2(425, 80), CycleMap);
+            modeButton = Button("Room Mode", "MODE: ARENA", lobby, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(-390, 165), new Vector2(360, 80), CycleMode);
+            modeLabel = modeButton.GetComponentInChildren<Text>();
+            mapButton = Button("Room Map", "MAP: CLASSIC GRID", lobby, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(0, 165), new Vector2(360, 80), CycleMap);
             mapLabel = mapButton.GetComponentInChildren<Text>();
-            wallsButton = Button("Room Walls", "WALLS: PERSISTENT", lobby, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(240, 165), new Vector2(425, 80), CycleWalls);
+            wallsButton = Button("Room Walls", "WALLS: PERSISTENT", lobby, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(390, 165), new Vector2(360, 80), CycleWalls);
             wallsLabel = wallsButton.GetComponentInChildren<Text>();
             startButton = Button("Start Heat", "START ARENA", lobby, new Vector2(.5f, 0), new Vector2(.5f, 0), new Vector2(-240, 55), new Vector2(425, 95), StartHeat);
             startLabel = startButton.GetComponentInChildren<Text>();
@@ -198,7 +177,7 @@ namespace GridRun
             setupPanel.SetActive(true); roomPanel.SetActive(false); playHud.SetActive(false);
             notice.text = room.Status;
             shown = null; lastRoundNumber = 0;
-            ClearWorld();
+            ShowMap("classic");
         }
         private async void Create()
         {
@@ -215,7 +194,14 @@ namespace GridRun
             try { await room.JoinAsync(serverField.text, codeField.text.Trim(), nameField.text); }
             catch { /* The client exposes a clear status message. */ }
         }
-        // The server accepts map and wall choices from the host in the lobby only.
+        // The server accepts mode, map, and wall choices from the host in the lobby only.
+        private async void CycleMode()
+        {
+            var current = room.View;
+            if (current == null || current.phase != "lobby") return;
+            string next = Modes[(Array.IndexOf(Modes, current.mode) + 1) % Modes.Length];
+            await room.SendAsync(new OnlineRoomClient.ActionBody { type = "mode", mode = next });
+        }
         private async void CycleMap()
         {
             var current = room.View;
@@ -226,7 +212,7 @@ namespace GridRun
         private async void CycleWalls()
         {
             var current = room.View;
-            if (current == null || current.phase != "lobby") return;
+            if (current == null || current.phase != "lobby" || current.mode != "arena") return;
             await room.SendAsync("rule", rule: current.rule == "decay" ? "classic" : "decay");
         }
         private async void Leave() { await room.LeaveAsync(); ShowSetup(); }
@@ -235,19 +221,43 @@ namespace GridRun
         private async void ToggleAuto()
         {
             autoDrive = !autoDrive;
-            autoLabel.text = autoDrive ? "AUTO: ON" : "AUTO: OFF";
+            hud.SetAuto(autoDrive);
+            hud.ClearHolds();
+            hud.ShowToast(autoDrive ? "AUTO DRIVE ON" : "MANUAL DRIVE / HOLD FORWARD");
             await room.SendAsync("auto-drive", enabled: autoDrive);
         }
+        private bool Running => room.View?.phase == "running" && room.Connected;
         private async void Turn(int sign)
         {
-            if (room.View?.phase == "running" && room.Connected) await room.SendAsync("turn", sign: sign);
+            if (Running) await room.SendAsync("turn", sign: sign);
         }
-        private bool lastThrottle, lastFire;
+        private async void Flight(string kind)
+        {
+            if (!Running) return;
+            if (Self(room.View)?.form == "foot") { hud.ShowToast("MOUNT TO FLY"); return; }
+            await room.SendAsync(new OnlineRoomClient.ActionBody { type = "flight", kind = kind });
+        }
+        private async void Form()
+        {
+            if (!Running || room.View.mode != "shift") return;
+            string refused = await room.SendAsync(new OnlineRoomClient.ActionBody { type = "form" });
+            if (refused != null) hud.ShowToast(refused.TrimEnd('.').ToUpperInvariant());
+        }
+        private async void Disc()
+        {
+            if (!Running || room.View.mode != "shift") return;
+            bool mounted = Self(room.View)?.form != "foot";
+            string refused = await room.SendAsync(new OnlineRoomClient.ActionBody { type = "disc" });
+            if (refused != null) hud.ShowToast(mounted ? "DISMOUNT TO THROW" : "DISC NOT READY");
+        }
+
+        private static OnlineRoomClient.RiderView Self(OnlineRoomClient.RoomView current) =>
+            current?.round == null ? null : Array.Find(current.round.riders ?? new OnlineRoomClient.RiderView[0], r => r.id == current.selfId);
+
         private void Update()
         {
             if (room == null) return;
             createButton.interactable = joinButton.interactable = !room.Busy;
-            toast.gameObject.SetActive(Time.unscaledTime < toastUntil);
             notice.text = room.Status;
             if (!room.Connected && !string.IsNullOrEmpty(room.Code) && room.View != null)
             {
@@ -259,18 +269,58 @@ namespace GridRun
                 roster.text = room.Status + (unavailable ? "\nLeave this room to start again." :
                     "\nYour seat is held while the server allows reconnection.");
             }
-            if (Input.GetKeyDown(KeyCode.A) || Input.GetKeyDown(KeyCode.LeftArrow)) Turn(-1);
-            if (Input.GetKeyDown(KeyCode.D) || Input.GetKeyDown(KeyCode.RightArrow)) Turn(1);
-            if (Input.GetKeyDown(KeyCode.Escape) && room.IsHost &&
-                (room.View?.phase == "running" || room.View?.phase == "paused")) Pause();
             var current = room.View;
             if (current != null && !ReferenceEquals(current, shown)) { shown = current; Present(current); }
+            var self = Self(current);
+            bool shift = current?.mode == "shift", foot = shift && self?.form == "foot";
+            if (playHud.activeSelf) hud.Sync(HudFor(current, self), shift ? "shift" : "arena", Running);
+            if (!foot && (Input.GetKeyDown(KeyCode.A) || Input.GetKeyDown(KeyCode.LeftArrow))) Turn(-1);
+            if (!foot && (Input.GetKeyDown(KeyCode.D) || Input.GetKeyDown(KeyCode.RightArrow))) Turn(1);
+            if (Input.GetKeyDown(KeyCode.Q)) Flight("jet");
+            if (Input.GetKeyDown(KeyCode.R)) Flight("sail");
+            if (Input.GetKeyDown(KeyCode.F)) Form();
+            if (Input.GetKeyDown(KeyCode.Space)) Disc();
+            if (Input.GetKeyDown(KeyCode.Escape) && room.IsHost &&
+                (current?.phase == "running" || current?.phase == "paused")) Pause();
             bool active = room.Connected && room.Supported && current?.phase == "running";
-            bool throttle = active && (forward.Held || Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow));
-            bool firing = active && (fire.Held || Input.GetKey(KeyCode.E));
+            bool throttle = active && !foot && (hud.ForwardHeld || Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow));
+            bool firing = active && (hud.FireHeld || Input.GetKey(KeyCode.E));
             if (throttle != lastThrottle) { lastThrottle = throttle; _ = room.SendAsync("throttle", held: throttle); }
             if (firing != lastFire) { lastFire = firing; _ = room.SendAsync("fire", held: firing); }
+            if (shift)
+            {
+                // On foot the pad moves in arena directions; screen up is north, which is -z in simulation coordinates.
+                var move = active && foot ? hud.FootMove : Vector2.zero;
+                if (active && foot)
+                {
+                    move.x += (Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow) ? 1 : 0) - (Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.LeftArrow) ? 1 : 0);
+                    move.y += (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow) ? 1 : 0) - (Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow) ? 1 : 0);
+                }
+                move.x = Mathf.Clamp(move.x, -1, 1); move.y = Mathf.Clamp(move.y, -1, 1);
+                if (move != lastMove && (active || move == Vector2.zero))
+                {
+                    lastMove = move;
+                    _ = room.SendAsync(new OnlineRoomClient.ActionBody { type = "move", x = move.x, z = -move.y });
+                }
+            }
         }
+
+        private static HudPlayer HudFor(OnlineRoomClient.RoomView current, OnlineRoomClient.RiderView self)
+        {
+            if (self == null) return default;
+            return new HudPlayer
+            {
+                Present = true, Alive = self.alive, RocketReady = self.rocketReady, Ammo = self.ammo,
+                Form = string.IsNullOrEmpty(self.form) ? "cycle" : self.form,
+                // JsonUtility reads a null flight kind as an empty string.
+                FlightKind = string.IsNullOrEmpty(self.flightKind) ? null : self.flightKind,
+                Elapsed = current.round.elapsed, JetReadyAt = self.jetReadyAt, SailReadyAt = self.sailReadyAt,
+                FlightUntil = self.flightUntil, DiscReadyAt = self.discReadyAt, NitroUntil = self.nitroUntil,
+                DiscOut = Array.Exists(current.round.shift?.discs ?? new OnlineRoomClient.DiscView[0], d => d.ownerId == self.id),
+            };
+        }
+
+        private static string ModeName(string mode) => mode == "duel" ? "DUEL" : mode == "shift" ? "GRID SHIFT" : "ARENA";
 
         private void Present(OnlineRoomClient.RoomView current)
         {
@@ -278,18 +328,22 @@ namespace GridRun
             {
                 setupPanel.SetActive(false); roomPanel.SetActive(true); playHud.SetActive(false);
                 roomHeading.text = "UNSUPPORTED ROOM";
-                roster.text = room.Status + "\nLeave this room to create or join a supported Arena match.";
+                roster.text = room.Status + "\nLeave this room to create or join a supported match.";
                 startButton.gameObject.SetActive(false);
                 return;
             }
             bool active = current.phase == "running" || current.phase == "countdown";
+            bool arena = current.mode == "arena";
+            string mode = ModeName(current.mode), mapName = SimMaps.Get(current.map).Name.ToUpperInvariant();
             setupPanel.SetActive(false);
-            if (active) EventSystem.current.SetSelectedGameObject(null);
+            if (active && !playHud.activeSelf) { EventSystem.current.SetSelectedGameObject(null); hud.ClearMessages(); }
             roomPanel.SetActive(!active);
             playHud.SetActive(active);
             roomHeading.text = "ROOM " + current.code + "  /  " + current.phase.ToUpperInvariant();
-            string lines = "ARENA / " + SimMaps.Get(current.map).Name.ToUpperInvariant() + " / " + WallsName(current.rule) + " / " +
-                current.players.Length + "/" + current.maxPlayers + " RIDERS\n";
+            string lines = mode + " / " + mapName + (arena ? " / " + WallsName(current.rule) : "") + " / " +
+                current.players.Length + "/" + current.maxPlayers + " RIDERS\n" +
+                (arena ? "THREE HEATS / MOST HEAT WINS TAKES THE MATCH\n" : current.mode == "shift" ?
+                    "FIRST TO THREE / FORM SWITCHES CYCLE AND ON FOOT / TWO DISC HITS DEREZ\n" : "FIRST TO THREE HEAT WINS\n");
             for (int i = 0; i < current.players.Length; i++)
             {
                 var player = current.players[i];
@@ -313,22 +367,46 @@ namespace GridRun
             bool host = current.selfId == current.hostId;
             startButton.gameObject.SetActive(host && (current.phase == "lobby" || current.phase == "round-result" || current.phase == "match-result" || current.phase == "paused"));
             startButton.interactable = current.players.Length == current.maxPlayers && Array.TrueForAll(current.players, p => p.connected);
-            startLabel.text = current.phase == "paused" ? "RESUME" : current.phase == "match-result" ? "REMATCH" : current.phase == "round-result" ? "NEXT HEAT" : "START ARENA";
+            startLabel.text = current.phase == "paused" ? "RESUME" : current.phase == "match-result" ? "REMATCH" : current.phase == "round-result" ? "NEXT HEAT" : "START " + mode;
             bool choosing = host && current.phase == "lobby";
-            mapButton.gameObject.SetActive(choosing); wallsButton.gameObject.SetActive(choosing);
-            mapLabel.text = "MAP: " + SimMaps.Get(current.map).Name.ToUpperInvariant();
-            wallsLabel.text = "WALLS: " + WallsName(current.rule);
-            pauseButton.gameObject.SetActive(host);
-            pauseLabel.text = current.phase == "paused" ? "RESUME" : "PAUSE";
-            score.text = "ROOM " + current.code + "  /  HEAT " + current.roundNumber + "  /  " +
+            modeButton.gameObject.SetActive(choosing); mapButton.gameObject.SetActive(choosing); wallsButton.gameObject.SetActive(choosing);
+            modeLabel.text = "MODE: " + mode;
+            mapLabel.text = "MAP: " + mapName;
+            // Only Arena has fading walls; the server plays Duel and Grid Shift with persistent walls.
+            wallsButton.interactable = arena;
+            wallsLabel.text = "WALLS: " + (arena && current.rule == "decay" ? "FADING" : "PERSISTENT");
+            hud.SetPauseVisible(host);
+            hud.SetPaused(current.phase == "paused");
+            hud.Matchline.text = mode + " / HEAT " + current.roundNumber + (arena ? "/3" : " / FIRST TO 3") + " / " + mapName;
+            hud.Status.text = (room.Connected ? "CONNECTED" : "RECONNECTING") + "  /  " +
                 string.Join("   ", Array.ConvertAll(current.players, p => Seat(current, p.id) + " " + p.wins));
-            phase.text = current.phase == "countdown" ? "STARTING IN " + Mathf.CeilToInt(current.countdownMs / 1000f) :
-                current.phase == "running" ? "LIVE ARENA  /  " + (room.Connected ? "CONNECTED" : "RECONNECTING") + Weapon(current) :
-                current.phase.ToUpperInvariant();
+            hud.Score.text = "ROOM " + current.code;
+            hud.Countdown.text = current.phase == "countdown" ? Mathf.Max(1, Mathf.CeilToInt(current.countdownMs / 1000f)).ToString() : "";
+            ShiftPanel(current);
             if (current.round != null && current.roundNumber != lastRoundNumber)
+            {
                 _ = room.SendAsync("auto-drive", enabled: autoDrive);
+                hud.SetAuto(autoDrive);
+            }
             lastRoundNumber = current.roundNumber;
             RenderRound(current);
+        }
+
+        // Integrity, form, and time left, like the solo Grid Shift panel but for every seat.
+        private void ShiftPanel(OnlineRoomClient.RoomView current)
+        {
+            var round = current.round;
+            if (current.mode != "shift" || round == null) { hud.SetShiftPanel(false); return; }
+            var self = Self(current);
+            double left = Math.Max(0, Math.Ceiling(round.shift.timeLimit - round.elapsed));
+            string FormName(OnlineRoomClient.RiderView r) => r.form == "foot" ? "ON FOOT" : "CYCLE";
+            string text = (self == null ? "" : "YOU " + Math.Max(0, self.hp) + "/2 INTEGRITY  /  " + FormName(self) + "      ") +
+                ((int)left / 60) + ":" + ((int)left % 60).ToString("00") + "\n";
+            foreach (var r in round.riders ?? new OnlineRoomClient.RiderView[0])
+                if (r.id != current.selfId)
+                    text += SeatColours[Math.Max(0, Array.FindIndex(current.players, p => p.id == r.id)) % SeatColours.Length] + " " +
+                        Math.Max(0, r.hp) + "/2 " + (r.alive ? FormName(r) : "DEREZZED") + "    ";
+            hud.SetShiftPanel(true, text.TrimEnd());
         }
 
         // Colour plus name, so riders who share a name stay distinct without relying on colour alone.
@@ -340,22 +418,6 @@ namespace GridRun
 
         private static string WallsName(string rule) => rule == "decay" ? "FADING WALLS" : "PERSISTENT WALLS";
 
-        // Same wording as the solo HUD's weapon line and FIRE button.
-        private string Weapon(OnlineRoomClient.RoomView current)
-        {
-            var self = Array.Find(current.round?.riders ?? new OnlineRoomClient.RiderView[0], r => r.id == current.selfId);
-            if (self == null) return "";
-            fireLabel.text = self.rocketReady ? "ROCKET" : "FIRE " + self.ammo;
-            return "  /  " + (self.rocketReady ? "ROCKET 1" : "GUN " + self.ammo + "/48") +
-                (current.round.elapsed < self.nitroUntil ? "  /  NITRO " + Mathf.CeilToInt(self.nitroUntil - current.round.elapsed) + "S" : "");
-        }
-
-        private void ShowToast(string text)
-        {
-            toast.text = text;
-            toastUntil = Time.unscaledTime + 2;
-        }
-
         // Effects arrive in several snapshots while the server keeps them, so each id plays once.
         private void PlayEffects(OnlineRoomClient.RoomView current)
         {
@@ -366,9 +428,9 @@ namespace GridRun
                 string item = (e.pickup ?? "").ToUpperInvariant();
                 switch (e.type)
                 {
-                    case "pickup-spawn": ShowToast(item + " SPAWNED"); break;
+                    case "pickup-spawn": hud.ShowToast(item + " SPAWNED"); break;
                     case "pickup":
-                        ShowToast(e.riderId == current.selfId ? item + " PICKED UP" : Seat(current, e.riderId) + " TOOK " + item);
+                        hud.ShowToast(e.riderId == current.selfId ? item + " PICKED UP" : Seat(current, e.riderId) + " TOOK " + item);
                         var picker = scene.Riders.Find(r => r.Id == e.riderId);
                         if (picker.Id != null)
                             world.Ring(picker.X, picker.Z, e.pickup == "ammo" ? new[] { .25f, .85f, 1f } : e.pickup == "nitro" ? new[] { .25f, 1f, .4f } : new[] { 1f, .54f, .18f }, 1.4f);
@@ -376,9 +438,9 @@ namespace GridRun
                     case "rocket-explode":
                         world.Impact(e.x, e.z);
                         world.Ring(e.x, e.z, new[] { 1f, .48f, .13f }, 3.2f);
-                        ShowToast("ROCKET IMPACT");
+                        hud.ShowCaption("ROCKET IMPACT");
                         break;
-                    case "arena-shrink": ShowToast("GRID SHRINKING / " + Mathf.RoundToInt(e.limit)); break;
+                    case "arena-shrink": hud.ShowToast("GRID SHRINKING / " + Mathf.RoundToInt(e.limit)); break;
                 }
             }
         }
@@ -396,21 +458,26 @@ namespace GridRun
             scene.Limit = round.limit > 0 ? round.limit : SimMaps.Get(round.map).Limit;
             // JsonUtility reads the null lifetime of persistent walls as 0.
             scene.TrailLifetime = round.rule == "decay" && round.trailLifetime > 0 ? round.trailLifetime : double.PositiveInfinity;
-            scene.Riders.Clear(); scene.Segments.Clear();
+            var discs = current.mode == "shift" ? round.shift?.discs ?? new OnlineRoomClient.DiscView[0] : new OnlineRoomClient.DiscView[0];
+            scene.Riders.Clear(); scene.Segments.Clear(); scene.Bullets.Clear(); scene.Pickups.Clear(); scene.Discs.Clear();
             foreach (var r in round.riders ?? new OnlineRoomClient.RiderView[0])
                 scene.Riders.Add(new Solo.RiderView
                 {
                     Id = r.id, X = r.x, Z = r.z, Dir = r.dir, Alive = r.alive, IsPlayer = r.id == current.selfId,
-                    Form = string.IsNullOrEmpty(r.form) ? "cycle" : r.form, Style = r.style, Color = r.color, FormChangedAt = -10,
+                    Form = string.IsNullOrEmpty(r.form) ? "cycle" : r.form, Style = r.style, Color = r.color,
+                    FormChangedAt = r.formChangedAt, HasDiscOut = Array.Exists(discs, d => d.ownerId == r.id),
+                    FlightKind = !string.IsNullOrEmpty(r.flightKind) && round.elapsed < r.flightUntil ? r.flightKind : null,
+                    FlightStartedAt = r.flightStartedAt, FlightUntil = r.flightUntil,
                 });
             foreach (var s in round.segments ?? new OnlineRoomClient.SegmentView[0])
                 scene.Segments.Add(new Solo.SegmentView
                 { Id = s.id, OwnerId = s.ownerId, X1 = s.x1, Z1 = s.z1, X2 = s.x2, Z2 = s.z2, Active = s.active, ClosedAt = s.closedAt });
-            scene.Bullets.Clear(); scene.Pickups.Clear();
             foreach (var b in round.bullets ?? new OnlineRoomClient.BulletView[0])
                 scene.Bullets.Add(new Solo.BulletView { X = b.x, Z = b.z, Rocket = b.rocket, FromPlayer = b.ownerId == current.selfId, Vx = b.vx, Vz = b.vz });
             foreach (var p in round.pickups ?? new OnlineRoomClient.PickupView[0])
                 if (p.active) scene.Pickups.Add(new Solo.PickupView { Id = p.id, Type = p.type, X = p.x, Z = p.z });
+            foreach (var d in discs)
+                scene.Discs.Add(new Solo.DiscView { X = d.x, Z = d.z, FromPlayer = d.ownerId == current.selfId });
             PlayEffects(current);
         }
 
@@ -418,20 +485,24 @@ namespace GridRun
         {
             if (view == null) return;
             world.Render(scene, Time.deltaTime);
+            if (playHud.activeSelf) hud.DrawRadar(scene, Time.deltaTime);
             Vector3 target = new Vector3(0, 65, -65), aim = Vector3.zero;
             var self = world.Player;
             if (room?.View?.phase == "running" && self != null && self.gameObject.activeSelf)
-                ChaseCamera.Target(self.position, self.rotation, out target, out aim);
+            {
+                if (world.PlayerOnFoot) ChaseCamera.NorthUp(self.position, out target, out aim);
+                else ChaseCamera.Target(self.position, self.rotation, out target, out aim);
+            }
             ChaseCamera.Follow(view.transform, ref cameraAim, target, aim, Time.deltaTime);
         }
-        private void ClearWorld() => ShowMap("classic");
         private void OnApplicationPause(bool paused)
         {
             if (!paused || room == null) return;
-            forward?.Clear(); fire?.Clear();
+            hud?.ClearHolds();
             lastThrottle = lastFire = false;
             _ = room.SendAsync("throttle", held: false);
             _ = room.SendAsync("fire", held: false);
+            if (room.View?.mode == "shift") { lastMove = Vector2.zero; _ = room.SendAsync(new OnlineRoomClient.ActionBody { type = "move" }); }
         }
         private void OnApplicationFocus(bool focused)
         {

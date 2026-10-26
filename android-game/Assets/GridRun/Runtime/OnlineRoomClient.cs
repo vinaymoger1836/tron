@@ -16,8 +16,11 @@ namespace GridRun
         [Serializable] public sealed class PlayerView { public string id, name; public bool connected; public int wins; }
         [Serializable] public sealed class RiderView
         {
-            public string id, form, style; public float x, z, nitroUntil; public float[] color; public int dir, ammo; public bool alive, autoDrive, rocketReady;
+            public string id, form, style, flightKind; public float x, z, nitroUntil; public float[] color; public int dir, ammo, hp; public bool alive, autoDrive, rocketReady;
+            public float flightStartedAt, flightUntil, jetReadyAt, sailReadyAt, formReadyAt, discReadyAt, recoveryUntil, formChangedAt;
         }
+        [Serializable] public sealed class DiscView { public string ownerId; public float x, z; public bool returning; }
+        [Serializable] public sealed class ShiftView { public float timeLimit; public DiscView[] discs; }
         [Serializable] public sealed class BulletView { public string ownerId; public float x, z; public int vx, vz; public bool rocket; }
         [Serializable] public sealed class PickupView { public int id; public string type; public float x, z; public bool active; }
         // Pickup, pickup-spawn, rocket-explode, and arena-shrink events the server keeps for about a second.
@@ -30,7 +33,7 @@ namespace GridRun
         {
             public int tick; public float elapsed, limit, trailLifetime; public string map, rule;
             public RiderView[] riders; public SegmentView[] segments;
-            public BulletView[] bullets; public PickupView[] pickups; public EffectView[] effects;
+            public BulletView[] bullets; public PickupView[] pickups; public EffectView[] effects; public ShiftView shift;
         }
         [Serializable] public sealed class CrashView { public string riderId, reason; }
         [Serializable] public sealed class ResultView
@@ -47,8 +50,9 @@ namespace GridRun
         [Serializable] private sealed class CreateBody
         { public string name, map = "classic", mode = "arena", rule = "classic"; public int maxPlayers = 2; }
         [Serializable] private sealed class JoinBody { public string name; }
-        [Serializable] private sealed class ActionBody
-        { public string type, mode, map, rule; public int sign; public bool held, enabled; }
+        // One body for every room action; the server reads only the fields its type needs.
+        [Serializable] public sealed class ActionBody
+        { public string type, mode, map, rule, kind; public int sign; public bool held, enabled; public float x, z; }
         [Serializable] private sealed class EntryResult { public string code, playerId, error; }
         [Serializable] private sealed class ApiError { public string error; }
         [Serializable] private sealed class StatusResult { public bool available, online; public int maxPlayers; }
@@ -164,15 +168,19 @@ namespace GridRun
             _ = StreamLoopAsync(streamCancellation.Token);
         }
 
-        public async Task SendAsync(string type, int sign = 0, bool held = false, bool enabled = false, string map = null, string rule = null)
+        public Task<string> SendAsync(string type, int sign = 0, bool held = false, bool enabled = false, string map = null, string rule = null) =>
+            SendAsync(new ActionBody { type = type, sign = sign, held = held, enabled = enabled, map = map, rule = rule });
+
+        // Returns null on success, or the server's reason (for example why FORM or DISC was refused).
+        public async Task<string> SendAsync(ActionBody body)
         {
-            if (string.IsNullOrEmpty(Code) || client == null) return;
+            if (string.IsNullOrEmpty(Code) || client == null) return "Not in a room.";
             try
             {
-                await TimedRequestAsync("/api/rooms/" + Code + "/action",
-                    new ActionBody { type = type, sign = sign, held = held, enabled = enabled, map = map, rule = rule });
+                await TimedRequestAsync("/api/rooms/" + Code + "/action", body);
+                return null;
             }
-            catch (Exception error) { Status = error.Message; }
+            catch (Exception error) { Status = error.Message; return error.Message; }
         }
 
         public async Task LeaveAsync()
@@ -245,9 +253,9 @@ namespace GridRun
                 // JsonUtility turns "round": null into an empty RoundView; a real round always names its map.
                 if (view.round != null && string.IsNullOrEmpty(view.round.map)) view.round = null;
                 View = view;
-                Supported = view.mode == "arena" && Array.IndexOf(Sim.SimMaps.Order, view.map) >= 0 &&
+                Supported = (view.mode == "arena" || view.mode == "duel" || view.mode == "shift") && Array.IndexOf(Sim.SimMaps.Order, view.map) >= 0 &&
                     view.maxPlayers >= 2 && view.maxPlayers <= 4 && (view.rule == "classic" || view.rule == "decay");
-                Status = !Supported ? "This room uses a mode the app does not support online yet. Online play supports Arena for 2-4 riders on any map, with persistent or fading walls." :
+                Status = !Supported ? "This room uses a mode the app does not support online yet. Online play supports Arena, Duel, and Grid Shift for 2-4 riders on any map." :
                     !streamOpen ? Status :
                     view.phase == "connection-wait" ? "Waiting for a rider to reconnect..." : "Connected to room " + Code + ".";
             }
