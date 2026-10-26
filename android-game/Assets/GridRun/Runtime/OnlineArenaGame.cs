@@ -326,12 +326,13 @@ namespace GridRun
             if (current.phase == "connection-wait") lines += "Waiting for a rider to reconnect.\n";
             if (current.result != null && (current.phase == "round-result" || current.phase == "match-result"))
             {
-                lines += current.result.winnerName == null ? "HEAT DRAW\n" : current.result.winnerName + " WINS THE HEAT\n";
+                // JsonUtility reads a null winner as an empty string.
+                lines += string.IsNullOrEmpty(current.result.winnerId) ? "HEAT DRAW\n" : Seat(current, current.result.winnerId) + " WINS THE HEAT\n";
                 if (current.result.crashes != null)
-                    foreach (var crash in current.result.crashes)
-                        lines += (Array.Find(current.players, p => p.id == crash.riderId)?.name ?? crash.riderId) + ": " + crash.reason + "\n";
+                    foreach (var crash in current.result.crashes) lines += Seat(current, crash.riderId) + ": " + crash.reason + "\n";
                 if (current.phase == "match-result")
-                    lines += current.result.matchDraw ? "MATCH DRAW" : current.result.matchWinnerName + " WINS THE MATCH";
+                    lines += current.result.matchDraw || string.IsNullOrEmpty(current.result.matchWinnerId) ? "MATCH DRAW" :
+                        Seat(current, current.result.matchWinnerId) + " WINS THE MATCH";
             }
             roster.text = lines;
             bool host = current.selfId == current.hostId;
@@ -341,13 +342,20 @@ namespace GridRun
             pauseButton.gameObject.SetActive(host);
             pauseLabel.text = current.phase == "paused" ? "RESUME" : "PAUSE";
             score.text = "ROOM " + current.code + "  /  HEAT " + current.roundNumber + "  /  " +
-                string.Join("   ", Array.ConvertAll(current.players, p => p.name + " " + p.wins));
+                string.Join("   ", Array.ConvertAll(current.players, p => Seat(current, p.id) + " " + p.wins));
             phase.text = current.phase == "countdown" ? "STARTING IN " + Mathf.CeilToInt(current.countdownMs / 1000f) :
                 current.phase == "running" ? "LIVE ARENA  /  " + (room.Connected ? "CONNECTED" : "RECONNECTING") : current.phase.ToUpperInvariant();
             if (current.round != null && current.roundNumber != lastRoundNumber)
                 _ = room.SendAsync("auto-drive", enabled: autoDrive);
             lastRoundNumber = current.roundNumber;
             RenderRound(current);
+        }
+
+        // Colour plus name, so riders who share a name stay distinct without relying on colour alone.
+        private static string Seat(OnlineRoomClient.RoomView view, string id)
+        {
+            int i = Array.FindIndex(view.players, p => p.id == id);
+            return i < 0 ? id : SeatColours[i % SeatColours.Length] + " " + view.players[i].name;
         }
 
         private void RenderRound(OnlineRoomClient.RoomView current)

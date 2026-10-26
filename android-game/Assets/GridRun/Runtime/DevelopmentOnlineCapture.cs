@@ -178,6 +178,8 @@ namespace GridRun
                 yield return WaitFor(() => room.View?.phase == "lobby", 15, role + " joined via six-digit code");
                 if (role == "guest2")
                 {
+                    // The lobby panel appears once the presentation component applies the snapshot.
+                    yield return WaitFor(() => GameObject.Find("Leave Room") != null, 3, "guest2 sees the lobby");
                     Submit("Leave Room");
                     yield return WaitFor(() => room.Code == null, 5, "guest2 left the lobby");
                     yield return new WaitForSecondsRealtime(.5f);
@@ -204,7 +206,7 @@ namespace GridRun
                 // Guest controls and network state are checked; host captures both viewports.
                 Check("Guest lobby controls fit viewport", ControlsFit());
             }
-            yield return WaitFor(() => room.View?.phase == "running", 15, "Arena heat started on both clients");
+            yield return WaitFor(() => room.View?.phase == "running", 15, "Arena heat started on every client");
             if (room.View?.phase != "running") { Save(); Application.Quit(2); yield break; }
             int firstTick = room.View.round?.tick ?? -1;
             yield return new WaitForSecondsRealtime(.4f);
