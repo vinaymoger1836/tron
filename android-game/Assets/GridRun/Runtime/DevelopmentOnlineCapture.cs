@@ -138,6 +138,22 @@ namespace GridRun
                 "MAP: " + Sim.SimMaps.Get(next).Name.ToUpperInvariant());
         }
 
+        // JET through the real control: the server starts the flight, the rider lifts on screen,
+        // lands, and the button counts down its cooldown.
+        private IEnumerator CheckJet()
+        {
+            string selfId = room.View.selfId;
+            OnlineRoomClient.RiderView Self() => Array.Find(room.View?.round?.riders ?? new OnlineRoomClient.RiderView[0], r => r.id == selfId);
+            var body = GameObject.Find("Player cycle").transform;
+            Submit("Light Jet");
+            yield return WaitFor(() => Self()?.flightKind == "jet", 3, "JET starts a flight on the server");
+            yield return WaitFor(() => body.localPosition.y > .5f, 1, "Rider lifts off on screen");
+            yield return WaitFor(() => string.IsNullOrEmpty(Self()?.flightKind) && body.localPosition.y < .05f, 3, "Rider lands");
+            var jet = Control("Light Jet");
+            yield return WaitFor(() => System.Text.RegularExpressions.Regex.IsMatch(jet.GetComponentInChildren<Text>().text, @"^JET \d+\.\dS$") &&
+                !jet.GetComponent<Button>().interactable, 1, "JET shows its cooldown");
+        }
+
         private static string ModeName(string id) => id == "duel" ? "DUEL" : id == "shift" ? "GRID SHIFT" : "ARENA";
         private static bool Has(string name) => GameObject.Find(name) != null;
         private static string TextOf(string name) => GameObject.Find(name)?.GetComponent<Text>()?.text ?? "";
@@ -239,6 +255,22 @@ namespace GridRun
             Field("Server origin").text = server;
             Field("Rider name").text = role == "host" ? "HOST" : "FRIEND";
             string codePath = Path.Combine(output, "room-code.txt");
+            if (role == "outdated")
+            {
+                // Plays a build one protocol behind the server: Create and Join must stop with an update message.
+                OnlineRoomClient.SpokenProtocol = OnlineRoomClient.Protocol - 1;
+                Submit("Create Room");
+                yield return WaitFor(() => !room.Busy && room.Status.Contains("Update Grid Run"), 5, "Outdated app cannot create a room");
+                Check("Outdated app stays out of rooms", room.Code == null);
+                Field("Room code").text = "123456";
+                Submit("Join Room");
+                yield return WaitFor(() => !room.Busy && room.Status.Contains("Update Grid Run"), 5, "Outdated app cannot join a room");
+                yield return null;
+                Check("Setup screen explains the update", TextOf("Online notice").Contains("Update Grid Run"));
+                yield return CaptureLayout("outdated-phone.png", 1170, 540);
+                CancelInvoke(nameof(Timeout)); Save(); Application.Quit(failed ? 2 : 0);
+                yield break;
+            }
             if (role == "host")
             {
                 var sizeLabel = Control("Room Size").GetComponentInChildren<Text>();
@@ -353,6 +385,7 @@ namespace GridRun
             {
                 yield return CheckTurnReadsOnScreen();
                 yield return CheckFire();
+                yield return CheckJet();
                 if (mode == "shift") yield return CheckShift();
                 Submit("Pause");
                 yield return WaitFor(() => room.View?.phase == "paused", 5, "Host pause stops the heat");

@@ -47,15 +47,24 @@ namespace GridRun
             public int maxPlayers, roundNumber, countdownMs, waitMs;
             public PlayerView[] players; public RoundView round; public ResultView result;
         }
+        // Online protocol this build speaks; matches PROTOCOL in lan-server.mjs. Raise both together
+        // when a change would break installed builds, so older apps are told to update.
+        public const int Protocol = 1;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // Verification only: lets a desktop check play the part of an outdated build.
+        public static int SpokenProtocol = Protocol;
+#else
+        public const int SpokenProtocol = Protocol;
+#endif
         [Serializable] private sealed class CreateBody
-        { public string name, map = "classic", mode = "arena", rule = "classic"; public int maxPlayers = 2; }
-        [Serializable] private sealed class JoinBody { public string name; }
+        { public string name, map = "classic", mode = "arena", rule = "classic"; public int maxPlayers = 2, protocol = SpokenProtocol; }
+        [Serializable] private sealed class JoinBody { public string name; public int protocol = SpokenProtocol; }
         // One body for every room action; the server reads only the fields its type needs.
         [Serializable] public sealed class ActionBody
         { public string type, mode, map, rule, kind; public int sign; public bool held, enabled; public float x, z; }
         [Serializable] private sealed class EntryResult { public string code, playerId, error; }
         [Serializable] private sealed class ApiError { public string error; }
-        [Serializable] private sealed class StatusResult { public bool available, online; public int maxPlayers; }
+        [Serializable] private sealed class StatusResult { public bool available, online; public int maxPlayers, protocol, minProtocol; }
 
         private readonly ConcurrentQueue<string> snapshots = new ConcurrentQueue<string>();
         private HttpClient client;
@@ -124,12 +133,8 @@ namespace GridRun
             Busy = true;
             try
             {
-                var target = ValidateOrigin(server);
-                NewSession(target);
-                Status = "Checking game server...";
-                var availability = JsonUtility.FromJson<StatusResult>(await TimedRequestAsync("/api/lan/status", null));
-                if (availability == null || !availability.available || !availability.online)
-                    throw new InvalidOperationException("This server does not offer online numeric rooms.");
+                NewSession(ValidateOrigin(server));
+                await CheckServerAsync();
                 Status = "Creating room...";
                 var entry = JsonUtility.FromJson<EntryResult>(await TimedRequestAsync("/api/rooms",
                     new CreateBody { name = name?.Trim(), maxPlayers = seats }));
@@ -148,6 +153,7 @@ namespace GridRun
                 if (code == null || code.Length != 6 || !System.Text.RegularExpressions.Regex.IsMatch(code, "^[0-9]{6}$"))
                     throw new InvalidOperationException("Enter the six-digit room code.");
                 NewSession(ValidateOrigin(server));
+                await CheckServerAsync();
                 Status = "Joining room...";
                 var entry = JsonUtility.FromJson<EntryResult>(await TimedRequestAsync("/api/rooms/" + code + "/join",
                     new JoinBody { name = name?.Trim() }));
@@ -155,6 +161,21 @@ namespace GridRun
             }
             catch (Exception error) { Status = error.Message; CloseSession(); throw; }
             finally { Busy = false; }
+        }
+
+        // Fails with a clear message before entering a room the two sides could not play together.
+        // A server from before versioning reports no protocol; it speaks protocol 1.
+        private async Task CheckServerAsync()
+        {
+            Status = "Checking game server...";
+            var server = JsonUtility.FromJson<StatusResult>(await TimedRequestAsync("/api/lan/status", null));
+            if (server == null || !server.available || !server.online)
+                throw new InvalidOperationException("This server does not offer online numeric rooms.");
+            int serverProtocol = server.protocol > 0 ? server.protocol : 1, minimum = server.minProtocol > 0 ? server.minProtocol : 1;
+            if (SpokenProtocol < minimum)
+                throw new InvalidOperationException("This app is too old for this game server. Update Grid Run to play online.");
+            if (SpokenProtocol > serverProtocol)
+                throw new InvalidOperationException("This game server is older than your app. Try again after the server is updated.");
         }
 
         private void Enter(EntryResult entry)

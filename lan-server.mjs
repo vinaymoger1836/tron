@@ -21,6 +21,11 @@ const ROOM_LIMIT = 24;
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const DIGITS = '0123456789';
 const MODES = new Set(['duel', 'arena', 'shift']);
+// Online protocol version. Raise PROTOCOL when a change would break installed app builds, and set
+// TRON_MIN_PROTOCOL to turn older apps away with an update message. Clients that send no version
+// (browser pages from this server and the first app builds) count as protocol 1.
+const PROTOCOL = 1;
+const MIN_PROTOCOL = Math.max(1, Math.min(PROTOCOL, Number.parseInt(process.env.TRON_MIN_PROTOCOL, 10) || 1));
 const rooms = new Map();
 const roomAttempts = new Map();
 let lastAttemptPrune = 0;
@@ -272,6 +277,14 @@ function authorizedRoom(id, req, res) {
       'This seat is unavailable. Rejoin the room.'); return null; }
   return { room, player };
 }
+function protocolError(body) {
+  const version = body.protocol ?? 1;
+  if (!Number.isInteger(version) || version < MIN_PROTOCOL)
+    return 'This app is too old for this game server. Update Grid Run to play online.';
+  if (version > PROTOCOL)
+    return 'This game server is older than your app. Try again after the server is updated.';
+  return null;
+}
 function createPlayer(id, value) {
   return { id, name: name(value), token: token(), connected: false,
     stream: null, wins: 0, lastInputAt: 0, inputCount: 0 };
@@ -290,12 +303,14 @@ function lanBaseUrl(req) {
 async function handleApi(req, res, pathname) {
   if (!originAllowed(req)) return fail(res, 403, 'Open the room from this LAN server.');
   if (req.method === 'GET' && pathname === '/api/lan/status')
-    return json(res, 200, { available: true, maxPlayers: 4,
+    return json(res, 200, { available: true, maxPlayers: 4, protocol: PROTOCOL, minProtocol: MIN_PROTOCOL,
       baseUrl: lanBaseUrl(req), online: !!onlineOrigin() });
   if (req.method === 'POST' && pathname === '/api/rooms') {
     if (!allowRoomAttempt(req)) return fail(res, 429, 'Too many room requests. Try again shortly.');
     if (rooms.size >= ROOM_LIMIT) return fail(res, 503, 'Too many open rooms.');
     const body = await readJson(req);
+    const outdated = protocolError(body);
+    if (outdated) return fail(res, 426, outdated);
     const maxPlayers = Number(body.maxPlayers);
     if (!Number.isInteger(maxPlayers) || maxPlayers < 2 || maxPlayers > 4)
       return fail(res, 400, 'Choose 2, 3, or 4 players.');
@@ -320,9 +335,11 @@ async function handleApi(req, res, pathname) {
   const room = rooms.get(route[1]);
   if (!room) return fail(res, 404, 'Room not found.');
   if (route[2] === 'join' && req.method === 'POST') {
+    const body = await readJson(req);
+    const outdated = protocolError(body);
+    if (outdated) return fail(res, 426, outdated);
     if (room.phase !== 'lobby') return fail(res, 409, 'This match has already started.');
     if (room.players.length >= room.maxPlayers) return fail(res, 409, 'Room is full.');
-    const body = await readJson(req);
     // A lobby departure leaves a gap, so take the lowest free seat rather than the count.
     let seat = 1;
     while (room.players.some(p => p.id === 'P' + seat)) seat++;

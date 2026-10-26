@@ -66,7 +66,7 @@ Each script builds a desktop player (unless noted) and writes an ignored report,
 | `Verify-Solo.ps1` | Every offline mode end to end through the real controls |
 | `Verify-Transit.ps1` | Solar Transit course, jet, sail, timeout, retry |
 | `Verify-Showroom.ps1` | Cosmetic showroom (desktop player only) and the shipped menu |
-| `Verify-Online.ps1` | A local room server and one Unity client per seat (`-Seats 2`, `3`, or `4`; `-Map classic|solar|vault`; `-Rule classic|decay`) |
+| `Verify-Online.ps1` | A local room server and one Unity client per seat (`-Seats 2`, `3`, or `4`; `-Map classic|solar|vault`; `-Rule classic|decay`; `-Mode arena|duel|shift`; `-ProtocolCheck` for the outdated-app checks) |
 | `Verify-Desktop.ps1` | The Phase 0 movement probe |
 | `Capture-Look.ps1` | Art-review screenshots, no assertions (`-SkipBuild` reuses the player) |
 | `Build-Android.ps1` | The Phase 0 probe APK, or `-PrepareOnly` for Phase 0 preparation |
