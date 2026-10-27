@@ -213,7 +213,8 @@ function renderUi(view) {
   $('#room-code-top').textContent = 'ROOM ' + view.code;
   $('#room-code-large').value = view.code;
   const host = view.selfId === view.hostId;
-  const full = view.players.length === view.maxPlayers && view.players.every(p => p.connected);
+  const full = view.players.length >= 2 && view.players.length === view.maxPlayers &&
+    view.players.every(p => p.connected);
   $('#pause').hidden = !host || !['running', 'countdown', 'paused'].includes(view.phase);
   $('#pause').textContent = view.phase === 'paused' ? 'RESUME' : 'PAUSE';
   const labels = {
@@ -247,12 +248,13 @@ function renderUi(view) {
       lastResult?.winnerName || 'No rider';
     const cause = lastResult?.crashes?.map(crash => {
       const rider = view.players.find(p => p.id === crash.riderId);
-      return (rider?.name || crash.riderId) + ': ' + crash.reason;
+      return (rider?.name || crash.name || crash.riderId) + ': ' + crash.reason;
     }).join(' / ');
-    const finish = view.phase === 'match-result'
-      ? lastResult?.matchDraw ? ' The match is a draw.'
-        : ' ' + lastResult?.matchWinnerName + ' won the ' + modeName(mode) + ' match.'
-      : ' Prepare for the next heat.';
+    const finish = view.players.length < 2 ? ' Every other rider has left. Leave this room to start a new one.'
+      : view.phase === 'match-result'
+        ? lastResult?.matchDraw ? ' The match is a draw.'
+          : ' ' + lastResult?.matchWinnerName + ' won the ' + modeName(mode) + ' match.'
+        : ' Prepare for the next heat.';
     message = (lastResult?.winnerId ? who + ' won heat ' + view.roundNumber :
       'Heat ' + view.roundNumber + ' was a draw') + '.' +
       (cause ? ' ' + cause + '.' : '') + finish;
@@ -311,7 +313,7 @@ function renderUi(view) {
   $('#start').disabled = !full;
   $('#start').textContent = view.phase === 'lobby' ? 'START ' + modeName(mode).toUpperCase() :
     view.phase === 'match-result' ? 'REMATCH' : 'NEXT HEAT';
-  if (!full && host && !waiting) notice('Waiting for all ' + view.maxPlayers + ' riders.');
+  if (!full && host && !waiting && (view.phase === 'lobby' || view.players.length >= 2)) notice('Waiting for all ' + view.maxPlayers + ' riders.');
   else if (!state.reconnecting) notice('');
 }
 async function action(value) {

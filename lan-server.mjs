@@ -15,7 +15,14 @@ const STATIC = new Set(['index.html', 'lan.html', 'lan.js', 'peer.html', 'peer.j
   'pickup-icons.js']);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8' };
 const ROOM_TTL = 60 * 60 * 1000;
-const RECONNECT_MS = 15000;
+// How long a dropped rider's seat is held (a phone call or app switch). TRON_RECONNECT_MS shortens it
+// for verification runs.
+const RECONNECT_MS = Math.max(1000, Number.parseInt(process.env.TRON_RECONNECT_MS, 10) || 30000);
+// Idle streams get a blank line this often, so clients can tell a silent server from a dead connection.
+// Every client skips blank lines.
+const HEARTBEAT_MS = 2000;
+const CLOSED_TTL = 10 * 60 * 1000;
+const LIVE_PHASES = new Set(['countdown', 'running', 'paused', 'connection-wait']);
 const SNAPSHOT_MS = 50;
 const ROOM_LIMIT = 24;
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -27,6 +34,8 @@ const MODES = new Set(['duel', 'arena', 'shift']);
 const PROTOCOL = 1;
 const MIN_PROTOCOL = Math.max(1, Math.min(PROTOCOL, Number.parseInt(process.env.TRON_MIN_PROTOCOL, 10) || 1));
 const rooms = new Map();
+// Recently closed room codes and why they closed, so riders still in them get a clear message.
+const closedRooms = new Map();
 const roomAttempts = new Map();
 let lastAttemptPrune = 0;
 
@@ -54,8 +63,22 @@ function code() {
   do {
     const chars = onlineOrigin() ? DIGITS : CODE_CHARS;
     value = Array.from({ length: 6 }, () => chars[randomInt(chars.length)]).join('');
-  } while (rooms.has(value));
+  } while (rooms.has(value) || closedRooms.has(value));
   return value;
+}
+function missingRoom(id) {
+  return closedRooms.get(id)?.message ||
+    'This room is no longer on the server. The host may have left, or the server restarted.';
+}
+function closeRoom(room, message) {
+  rooms.delete(room.code);
+  closedRooms.set(room.code, { message, at: Date.now() });
+  for (const p of room.players) {
+    const stream = p.stream;
+    p.stream = null;
+    p.connected = false;
+    stream?.end();
+  }
 }
 function token() { return randomBytes(24).toString('base64url'); }
 function name(value) {
@@ -98,10 +121,13 @@ function originAllowed(req) {
     return origin.host === req.headers.host && origin.protocol === 'http:';
   } catch { return false; }
 }
-function playerFor(room, req) {
-  const provided = String(req.headers.cookie || '').split('; ')
+function sessionToken(req) {
+  return String(req.headers.cookie || '').split('; ')
     .find(part => part.startsWith('tron_lan_session='))
     ?.slice('tron_lan_session='.length);
+}
+function playerFor(room, req) {
+  const provided = sessionToken(req);
   return room.players.find(player => player.token === provided);
 }
 function seatCookie(res, player) {
@@ -152,8 +178,15 @@ function send(room, player) {
   catch { player.stream = null; player.connected = false; }
 }
 function broadcast(room) {
-  room.touched = Date.now();
+  room.touched = room.lastSent = Date.now();
   for (const player of room.players) send(room, player);
+}
+function heartbeat(room) {
+  room.lastSent = Date.now();
+  for (const player of room.players) {
+    if (!player.stream || player.stream.destroyed) continue;
+    try { player.stream.write('\n'); } catch { player.stream = null; player.connected = false; }
+  }
 }
 function nextRound(room) {
   room.roundNumber++;
@@ -192,9 +225,11 @@ function finishRound(room) {
 function handleDisconnect(room, player) {
   player.connected = false;
   player.stream = null;
+  player.disconnectedAt = Date.now();
   if (room.phase === 'running' || room.phase === 'countdown' || room.phase === 'paused') {
     if (room.round) room.round.riders.forEach(r => {
       r.fireHeld = false;
+      r.throttleHeld = false;
       if (r.input) r.input = { x: 0, z: 0 };
     });
     room.beforeWait = room.phase;
@@ -202,37 +237,78 @@ function handleDisconnect(room, player) {
     room.phase = 'connection-wait';
     room.deadline = Date.now() + RECONNECT_MS;
     room.waitStarted = Date.now();
+    room.lastWaitBroadcast = Date.now();
   }
   broadcast(room);
+}
+// A guest who leaves mid-match, or stays away past the hold, gives up the seat: their rider is out
+// of the heat and later heats run without them. The room keeps at least two seats, so a lone host
+// sees an unfilled room rather than a one-rider match.
+function releaseSeat(room, player, reason) {
+  room.players = room.players.filter(p => p !== player);
+  room.maxPlayers = Math.max(2, room.players.length);
+  room.released.add(player.token);
+  const stream = player.stream;
+  player.stream = null;
+  player.connected = false;
+  stream?.end();
+  const rider = room.round?.riders.find(r => r.id === player.id);
+  if (rider?.alive && !room.round.outcome && LIVE_PHASES.has(room.phase)) {
+    rider.alive = false;
+    if (rider.segment) rider.segment.active = false;
+    rider.fireHeld = false;
+    room.crashes.push({ riderId: player.id, reason, name: player.name });
+  }
+}
+// Ends a live heat that releases left with one rider or none; returns whether it ended.
+function settleRound(room) {
+  if (!room.round || room.round.outcome || !LIVE_PHASES.has(room.phase)) return false;
+  const alive = room.round.riders.filter(r => r.alive);
+  if (alive.length > 1) return false;
+  room.round.outcome = { kind: alive.length ? 'won' : 'draw', winnerId: alive[0]?.id || null };
+  finishRound(room);
+  return true;
+}
+function endWait(room, now) {
+  room.phase = room.beforeWait;
+  room.deadline = room.deadlineBeforeWait;
+  if (room.phase === 'countdown') room.deadline += Date.now() - room.waitStarted;
+  room.lastTickAt = now;
+  room.accumulator = 0;
 }
 function tickRoom(room, now) {
   if (room.phase === 'connection-wait') {
     if (room.players.every(p => p.connected)) {
-      room.phase = room.beforeWait;
-      room.deadline = room.deadlineBeforeWait;
-      if (room.phase === 'countdown') room.deadline += Date.now() - room.waitStarted;
-      room.lastTickAt = now;
-      room.accumulator = 0;
+      endWait(room, now);
       broadcast(room);
     } else if (Date.now() >= room.deadline) {
       if (!room.round) { room.phase = 'lobby'; broadcast(room); return; }
+      // The host keeps their seat (the room is theirs); their rider is out of this heat.
       for (const p of room.players.filter(p => !p.connected)) {
+        if (p.id !== room.hostId) { releaseSeat(room, p, 'disconnect'); continue; }
         const rider = room.round.riders.find(r => r.id === p.id);
         if (rider?.alive) {
           rider.alive = false;
           if (rider.segment) rider.segment.active = false;
           rider.fireHeld = false;
-          room.crashes.push({ riderId: p.id, reason: 'disconnect' });
+          room.crashes.push({ riderId: p.id, reason: 'disconnect', name: p.name });
         }
       }
-      const alive = room.round.riders.filter(r => r.alive);
-      room.round.outcome = alive.length <= 1
-        ? { kind: alive.length ? 'won' : 'draw', winnerId: alive[0]?.id || null } : null;
-      room.phase = 'running';
-      room.lastTickAt = now;
-      room.accumulator = 0;
-      if (room.round.outcome) finishRound(room);
-      else broadcast(room);
+      endWait(room, now);
+      if (!settleRound(room)) broadcast(room);
+    } else if (Date.now() - room.lastWaitBroadcast >= 1000) {
+      // Keeps every client's hold countdown current.
+      room.lastWaitBroadcast = Date.now();
+      broadcast(room);
+    }
+    return;
+  }
+  if (room.phase === 'round-result' || room.phase === 'match-result') {
+    const gone = room.players.filter(p => !p.connected && p.id !== room.hostId &&
+      Date.now() - (p.disconnectedAt || 0) >= RECONNECT_MS);
+    if (gone.length) {
+      for (const p of gone) releaseSeat(room, p, 'disconnect');
+      broadcast(room);
     }
     return;
   }
@@ -270,11 +346,14 @@ function tickRoom(room, now) {
 }
 function authorizedRoom(id, req, res) {
   const room = rooms.get(id);
-  if (!room) { fail(res, 404, 'Room not found.'); return null; }
+  if (!room) { fail(res, 404, missingRoom(id)); return null; }
   const player = playerFor(room, req);
-  if (!player) { fail(res, onlineOrigin() ? 404 : 403,
-    onlineOrigin() ? 'Room not found or seat unavailable.' :
-      'This seat is unavailable. Rejoin the room.'); return null; }
+  if (!player) {
+    const released = room.released.has(sessionToken(req));
+    fail(res, onlineOrigin() ? 404 : 403, released ? 'You were away too long, so your seat was released.' :
+      onlineOrigin() ? 'Room not found or seat unavailable.' : 'This seat is unavailable. Rejoin the room.');
+    return null;
+  }
   return { room, player };
 }
 function protocolError(body) {
@@ -304,7 +383,7 @@ async function handleApi(req, res, pathname) {
   if (!originAllowed(req)) return fail(res, 403, 'Open the room from this LAN server.');
   if (req.method === 'GET' && pathname === '/api/lan/status')
     return json(res, 200, { available: true, maxPlayers: 4, protocol: PROTOCOL, minProtocol: MIN_PROTOCOL,
-      baseUrl: lanBaseUrl(req), online: !!onlineOrigin() });
+      heartbeatMs: HEARTBEAT_MS, reconnectMs: RECONNECT_MS, baseUrl: lanBaseUrl(req), online: !!onlineOrigin() });
   if (req.method === 'POST' && pathname === '/api/rooms') {
     if (!allowRoomAttempt(req)) return fail(res, 429, 'Too many room requests. Try again shortly.');
     if (rooms.size >= ROOM_LIMIT) return fail(res, 503, 'Too many open rooms.');
@@ -323,7 +402,7 @@ async function handleApi(req, res, pathname) {
     const room = { code: code(), map: body.map, mode, rule, maxPlayers, hostId: host.id,
       players: [host], phase: 'lobby', round: null, roundNumber: 0,
       result: null, crashes: [], effects: [], effectSeq: 0, touched: Date.now(), lastBroadcast: 0,
-      lastTickAt: performance.now(), accumulator: 0 };
+      lastSent: Date.now(), released: new Set(), lastTickAt: performance.now(), accumulator: 0 };
     rooms.set(room.code, room);
     seatCookie(res, host);
     return json(res, 201, { code: room.code, playerId: host.id });
@@ -333,7 +412,7 @@ async function handleApi(req, res, pathname) {
   if (route[2] === 'join' && req.method === 'POST' && !allowRoomAttempt(req))
     return fail(res, 429, 'Too many room requests. Try again shortly.');
   const room = rooms.get(route[1]);
-  if (!room) return fail(res, 404, 'Room not found.');
+  if (!room) return fail(res, 404, route[2] === 'join' ? 'Room not found.' : missingRoom(route[1]));
   if (route[2] === 'join' && req.method === 'POST') {
     const body = await readJson(req);
     const outdated = protocolError(body);
@@ -466,14 +545,17 @@ async function handleApi(req, res, pathname) {
     return json(res, 200, { ok: true });
   }
   if (route[2] === 'leave' && req.method === 'POST') {
-    if (player.stream) player.stream.end();
-    if (player.id === room.hostId) {
-      for (const p of room.players) if (p.stream) p.stream.end();
-      rooms.delete(room.code);
-    } else if (room.phase === 'lobby') {
+    if (player.id === room.hostId) closeRoom(room, 'The host closed the room.');
+    else if (room.phase === 'lobby') {
+      if (player.stream) player.stream.end();
       room.players = room.players.filter(p => p !== player);
       broadcast(room);
-    } else handleDisconnect(room, player);
+    } else {
+      // Leaving on purpose forfeits at once; holding the heat is for riders who lost connection.
+      releaseSeat(room, player, 'left');
+      if (room.phase === 'connection-wait' && room.players.every(p => p.connected)) endWait(room, performance.now());
+      if (!settleRound(room)) broadcast(room);
+    }
     return json(res, 200, { ok: true });
   }
   return fail(res, 405, 'Method unavailable.');
@@ -505,11 +587,14 @@ export function createLanServer() {
     const now = performance.now();
     for (const room of rooms.values()) {
       if (Date.now() - room.touched > ROOM_TTL && !room.players.some(p => p.connected)) {
-        rooms.delete(room.code);
+        closeRoom(room, 'This room closed after an hour without play.');
         continue;
       }
       tickRoom(room, now);
+      if (rooms.has(room.code) && Date.now() - room.lastSent >= HEARTBEAT_MS) heartbeat(room);
     }
+    for (const [id, closed] of closedRooms)
+      if (Date.now() - closed.at > CLOSED_TTL) closedRooms.delete(id);
   }, 8);
   clock.unref();
   server.on('close', () => clearInterval(clock));

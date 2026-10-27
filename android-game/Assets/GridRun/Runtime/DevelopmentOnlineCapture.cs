@@ -25,6 +25,9 @@ namespace GridRun
         private string output, role, server;
         private int seats = 2;
         private string map = "classic", rule = "classic", mode = "arena";
+        // interrupt: background drops, a forfeit, and a released seat; close: a silent server, a server
+        // restart, and the host closing the room. Null runs the standard match flow.
+        private string scenario;
         private OnlineRoomClient room;
         private bool failed;
 
@@ -43,9 +46,11 @@ namespace GridRun
             runner.map = Option(args, "--phase2-map") ?? "classic";
             runner.mode = Option(args, "--phase2-mode") ?? "arena";
             runner.rule = Option(args, "--phase2-rule") ?? "classic";
+            runner.scenario = Option(args, "--phase2-scenario");
             Directory.CreateDirectory(runner.output);
             Application.runInBackground = true;
-            runner.Invoke(nameof(Timeout), 115);
+            // Scenarios wait out seat holds and a frozen server, so they get longer.
+            runner.Invoke(nameof(Timeout), runner.scenario != null ? 170 : 115);
             runner.StartCoroutine(runner.Run());
         }
         private static string Option(string[] args, string flag)
@@ -276,6 +281,167 @@ namespace GridRun
             Check("Trail from before the turn stays visible", own.Length >= 2 && Array.Exists(own, s => !s.active) && drawn >= own.Length);
         }
 
+        // Calls the scene's own OnApplicationPause, as Android does when the app leaves or returns to the screen.
+        private static void Background(bool away) => FindFirstObjectByType<OnlineArenaGame>().SendMessage("OnApplicationPause", away);
+        private bool InResult(int round) => room.View?.roundNumber == round && (room.View.phase == "round-result" || room.View.phase == "match-result");
+        private bool AllConnected(int count) => room.View?.players?.Length == count && Array.TrueForAll(room.View.players, p => p.connected);
+        // Verify-Online.ps1 watches for these files to freeze or restart the server.
+        private void Signal(string request) => File.WriteAllText(Path.Combine(output, request + ".request"), role);
+
+        private IEnumerator HostRoom(string codePath, int count)
+        {
+            var sizeLabel = Control("Room Size").GetComponentInChildren<Text>();
+            for (int i = 0; i < 3 && sizeLabel.text != "RIDERS: " + count; i++) Submit("Room Size");
+            Submit("Create Room");
+            yield return WaitFor(() => !string.IsNullOrEmpty(room.Code), 10, "Host created a room");
+            if (string.IsNullOrEmpty(room.Code)) yield break;
+            File.WriteAllText(codePath + ".tmp", room.Code);
+            File.Move(codePath + ".tmp", codePath);
+            yield return WaitFor(() => AllConnected(count), 30, "Every seat joined the lobby");
+        }
+        // The lobby enables START when it presents a snapshot, which can be a frame after the client applies it.
+        private IEnumerator StartWhenReady()
+        {
+            yield return WaitFor(() => GameObject.Find("Start Heat")?.GetComponent<Button>().interactable ?? false, 3, "START is open");
+            Submit("Start Heat");
+        }
+        private IEnumerator JoinRoom(string codePath)
+        {
+            yield return WaitFor(() => File.Exists(codePath), 40, role + " found the room code");
+            if (!File.Exists(codePath)) yield break;
+            Field("Room code").text = File.ReadAllText(codePath).Trim();
+            Submit("Join Room");
+            yield return WaitFor(() => room.View?.phase == "lobby", 15, role + " joined the room");
+        }
+
+        // Three riders, a 10 s hold. FRIEND backgrounds the app during the countdown and returns; THIRD
+        // leaves during that hold; in heat 2 FRIEND stays away past the hold and loses the seat.
+        private IEnumerator InterruptHost(string codePath)
+        {
+            yield return HostRoom(codePath, 3);
+            yield return StartWhenReady();
+            yield return WaitFor(() => room.View?.phase == "connection-wait", 15, "A guest in the background holds the heat for everyone");
+            if (room.View?.phase != "connection-wait") yield break;
+            int firstWait = room.View.waitMs;
+            yield return WaitFor(() => room.View.players.Length == 2, 5, "A rider who leaves during the hold gives up the seat at once");
+            Check("Room shrinks to two seats", room.View.maxPlayers == 2);
+            Check("The hold continues for the rider still away", room.View.phase == "connection-wait");
+            yield return new WaitForSecondsRealtime(1.2f);
+            Check("Hold countdown counts down", room.View.phase == "connection-wait" && room.View.waitMs < firstWait);
+            yield return null;
+            string waiting = TextOf("Room roster");
+            Check("Room names who is being waited for", waiting.Contains("Waiting up to") && waiting.Contains("FRIEND to reconnect"));
+            yield return CaptureLayout("hold-phone.png", 1170, 540);
+            yield return WaitFor(() => room.View?.phase == "countdown" || room.View?.phase == "running", 15, "The heat resumes when the guest returns");
+            yield return WaitFor(() => room.View?.phase == "running", 5, "Heat 1 runs");
+            int tick = room.View?.round?.tick ?? -1;
+            yield return new WaitForSecondsRealtime(.4f);
+            Check("Server tick advances after the hold", (room.View?.round?.tick ?? -1) > tick);
+            yield return WaitFor(() => InResult(1), 20, "Heat 1 ends");
+            yield return null;
+            Check("Result names the rider who left", TextOf("Room roster").Contains("THIRD: left"));
+            yield return StartWhenReady();
+            yield return WaitFor(() => room.View?.roundNumber == 2, 10, "Host starts heat 2 with the two riders left");
+            yield return WaitFor(() => room.View?.phase == "connection-wait", 10, "A second background drop holds heat 2");
+            yield return WaitFor(() => InResult(2), 25, "The hold runs out and heat 2 ends");
+            yield return null;
+            var view = room.View;
+            Check("The guest away too long gives up the seat", view?.players?.Length == 1 && view.maxPlayers == 2);
+            Check("Host wins the heat the guest abandoned", view?.result?.winnerId == view?.selfId);
+            string roster = TextOf("Room roster");
+            Check("Result names the disconnected rider", roster.Contains("FRIEND: disconnect"));
+            Check("Room explains every other rider left", roster.Contains("Every other rider has left"));
+            Check("A lone host cannot start", !Control("Start Heat").GetComponent<Button>().interactable);
+            yield return CaptureLayout("released-phone.png", 1170, 540);
+            // Closing the room first would change the message the returning guest sees.
+            string seen = Path.Combine(output, "guest-returned.txt");
+            yield return WaitFor(() => File.Exists(seen), 20, "Guest returned and saw the released seat");
+            Submit("Leave Room");
+            yield return WaitFor(() => room.Code == null, 5, "Host left the room");
+        }
+        private IEnumerator InterruptGuest(string codePath)
+        {
+            yield return JoinRoom(codePath);
+            string seat = room.SelfId;
+            yield return WaitFor(() => room.View?.phase == "countdown", 30, "Heat 1 countdown reached the guest");
+            yield return new WaitForSecondsRealtime(.3f);
+            Background(true);
+            yield return WaitFor(() => !room.Connected, 2, "Going to the background closes the stream");
+            yield return new WaitForSecondsRealtime(6);
+            Background(false);
+            yield return WaitFor(() => room.Connected && room.View?.selfId == seat, 10, "Returning reconnects to the same seat");
+            yield return WaitFor(() => room.View?.phase == "running" || InResult(1), 10, "Heat 1 resumes for the returning guest");
+            yield return WaitFor(() => room.View?.roundNumber == 2, 40, "Guest sees heat 2");
+            Background(true);
+            yield return new WaitForSecondsRealtime(13);
+            Background(false);
+            yield return WaitFor(() => room.Unavailable, 10, "Returning after the hold reports the seat is gone");
+            yield return null;
+            Check("Status says the guest was away too long (" + room.Status + ")", room.Status.Contains("away too long"));
+            Check("Room heading shows unavailable", TextOf("Room heading").EndsWith("UNAVAILABLE"));
+            File.WriteAllText(Path.Combine(output, "guest-returned.txt"), room.Status);
+            Submit("Leave Room");
+            yield return WaitFor(() => room.Code == null, 5, "Guest left the unavailable room");
+        }
+        private IEnumerator InterruptLeaver(string codePath)
+        {
+            yield return JoinRoom(codePath);
+            yield return WaitFor(() => room.View?.phase == "connection-wait", 30, "THIRD sees the hold");
+            yield return new WaitForSecondsRealtime(.5f);
+            Check("The hold shows LEAVE ROOM", GameObject.Find("Leave Room") != null);
+            Submit("Leave Room");
+            yield return WaitFor(() => room.Code == null, 5, "THIRD left during the hold");
+        }
+
+        // Two riders. The script freezes the server in the quiet lobby (only heartbeats would arrive),
+        // then restarts it mid-heat; afterwards the host opens a new room and closes it during a heat.
+        private IEnumerator CloseHost(string codePath, string secondCode)
+        {
+            yield return HostRoom(codePath, 2);
+            string seat = room.SelfId;
+            Signal("freeze");
+            yield return WaitFor(() => !room.Connected, 12, "A silent server is noticed in the quiet lobby");
+            yield return null;
+            Check("Room shows reconnecting", TextOf("Room heading").EndsWith("RECONNECTING"));
+            yield return WaitFor(() => room.Connected && room.View?.selfId == seat, 30, "Host reconnects once the server answers");
+            yield return WaitFor(() => AllConnected(2), 15, "Both riders are back in the lobby");
+            yield return StartWhenReady();
+            yield return WaitFor(() => room.View?.phase == "running", 10, "Heat runs before the restart");
+            Signal("restart");
+            yield return WaitFor(() => room.Unavailable, 30, "A server restart ends the room with an explanation");
+            yield return null;
+            Check("Status explains the restart", room.Status.Contains("server restarted"));
+            yield return CaptureLayout("restart-phone.png", 1170, 540);
+            Submit("Leave Room");
+            yield return WaitFor(() => GameObject.Find("Online setup") != null, 5, "Setup reopens after the restart");
+            yield return HostRoom(secondCode, 2);
+            yield return StartWhenReady();
+            yield return WaitFor(() => room.View?.phase == "countdown" || room.View?.phase == "running", 10, "The restarted server runs a new heat");
+            Submit("Pause");
+            yield return WaitFor(() => room.View?.phase == "paused", 5, "Host pauses to leave");
+            yield return null;
+            Submit("Leave Room");
+            yield return WaitFor(() => room.Code == null, 5, "Host closed the room");
+        }
+        private IEnumerator CloseGuest(string codePath, string secondCode)
+        {
+            yield return JoinRoom(codePath);
+            string seat = room.SelfId;
+            yield return WaitFor(() => !room.Connected, 15, "Guest notices the silent server");
+            yield return WaitFor(() => room.Connected && room.View?.selfId == seat, 30, "Guest reconnects to the same seat");
+            yield return WaitFor(() => room.View?.phase == "running", 20, "Guest heat runs before the restart");
+            yield return WaitFor(() => room.Unavailable, 30, "Guest is told the room ended with the restart");
+            Submit("Leave Room");
+            yield return WaitFor(() => room.Code == null, 5, "Guest left the lost room");
+            yield return JoinRoom(secondCode);
+            yield return WaitFor(() => room.Unavailable, 30, "Guest is told when the host closes the room");
+            yield return null;
+            Check("Status says the host closed the room", room.Status == "The host closed the room.");
+            Check("Room heading shows unavailable", TextOf("Room heading").EndsWith("UNAVAILABLE"));
+            Submit("Leave Room");
+            yield return WaitFor(() => room.Code == null, 5, "Guest left the closed room");
+        }
+
         private IEnumerator Run()
         {
             report.role = role; report.engine = Application.unityVersion; report.platform = Application.platform.ToString();
@@ -283,8 +449,17 @@ namespace GridRun
             room = FindFirstObjectByType<OnlineRoomClient>();
             Check("Online client loaded", room != null);
             Field("Server origin").text = server;
-            Field("Rider name").text = role == "host" ? "HOST" : "FRIEND";
+            Field("Rider name").text = role == "host" ? "HOST" : scenario != null && role == "guest2" ? "THIRD" : "FRIEND";
             string codePath = Path.Combine(output, "room-code.txt");
+            if (scenario != null)
+            {
+                string secondCode = Path.Combine(output, "room-code-2.txt");
+                if (scenario == "interrupt")
+                    yield return role == "host" ? InterruptHost(codePath) : role == "guest" ? InterruptGuest(codePath) : InterruptLeaver(codePath);
+                else yield return role == "host" ? CloseHost(codePath, secondCode) : CloseGuest(codePath, secondCode);
+                CancelInvoke(nameof(Timeout)); Save(); Application.Quit(failed ? 2 : 0);
+                yield break;
+            }
             if (role == "outdated")
             {
                 // Plays a build one protocol behind the server: Create and Join must stop with an update message.
@@ -452,9 +627,12 @@ namespace GridRun
                 yield return CaptureLayout("result-phone.png", 1170, 540);
                 Submit("Start Heat");
                 yield return WaitFor(() => room.View?.roundNumber == 2, 10, "Host started next heat");
-                yield return WaitFor(() => room.View?.phase == "connection-wait", 20, "Departure pauses the server heat");
+                // Guests leave on purpose here, which forfeits at once rather than holding the heat.
+                yield return WaitFor(() => InResult(2) && room.View.players.Length == 1, 20, "Departures end heat 2 and free their seats");
                 // Let the presentation component apply the fresh snapshot this frame.
                 yield return null;
+                Check("Room explains every other rider left", TextOf("Room roster").Contains("Every other rider has left"));
+                Check("A lone host cannot start", !Control("Start Heat").GetComponent<Button>().interactable);
                 Submit("Leave Room");
                 yield return WaitFor(() => room.Code == null, 5, "Host left room cleanly");
                 yield return WaitFor(() => GameObject.Find("Online setup") != null, 5, "Online setup reopened after leaving");

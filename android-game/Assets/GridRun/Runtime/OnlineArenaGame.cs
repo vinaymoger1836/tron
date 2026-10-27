@@ -279,10 +279,10 @@ namespace GridRun
                 playHud.SetActive(false);
                 roomPanel.SetActive(true);
                 startButton.gameObject.SetActive(false);
-                bool unavailable = room.Status.StartsWith("Room expired", StringComparison.Ordinal);
+                bool unavailable = room.Unavailable;
                 roomHeading.text = "ROOM " + room.Code + (unavailable ? "  /  UNAVAILABLE" : "  /  RECONNECTING");
                 roster.text = room.Status + (unavailable ? "\nLeave this room to start again." :
-                    "\nYour seat is held while the server allows reconnection.");
+                    "\nOffline for " + room.OfflineSeconds + " s. The server holds your seat for " + room.HoldSeconds + " s.");
             }
             var current = room.View;
             if (current != null && !ReferenceEquals(current, shown)) { shown = current; Present(current); }
@@ -370,13 +370,22 @@ namespace GridRun
             }
             int open = current.maxPlayers - current.players.Length;
             if (current.phase == "lobby" && open > 0) lines += "Waiting for " + open + (open == 1 ? " more rider.\n" : " more riders.\n");
-            if (current.phase == "connection-wait") lines += "Waiting for a rider to reconnect.\n";
+            if (current.phase == "connection-wait")
+            {
+                var away = Array.FindAll(current.players, p => !p.connected);
+                lines += "Waiting up to " + Mathf.CeilToInt(current.waitMs / 1000f) + " s for " +
+                    (away.Length == 0 ? "a rider" : string.Join(", ", Array.ConvertAll(away, p => Seat(current, p.id)))) + " to reconnect.\n";
+            }
+            // A released seat leaves the room with fewer riders than a match needs.
+            if (current.phase != "lobby" && current.players.Length < 2) lines += "Every other rider has left. Leave this room to start a new one.\n";
             if (current.result != null && (current.phase == "round-result" || current.phase == "match-result"))
             {
                 // JsonUtility reads a null winner as an empty string.
                 lines += string.IsNullOrEmpty(current.result.winnerId) ? "HEAT DRAW\n" : Seat(current, current.result.winnerId) + " WINS THE HEAT\n";
                 if (current.result.crashes != null)
-                    foreach (var crash in current.result.crashes) lines += Seat(current, crash.riderId) + ": " + crash.reason + "\n";
+                    foreach (var crash in current.result.crashes)
+                        lines += (Array.Exists(current.players, p => p.id == crash.riderId) || string.IsNullOrEmpty(crash.name) ?
+                            Seat(current, crash.riderId) : crash.name) + ": " + crash.reason + "\n";
                 if (current.phase == "match-result")
                     lines += current.result.matchDraw || string.IsNullOrEmpty(current.result.matchWinnerId) ? "MATCH DRAW" :
                         Seat(current, current.result.matchWinnerId) + " WINS THE MATCH";
@@ -384,7 +393,7 @@ namespace GridRun
             roster.text = lines;
             bool host = current.selfId == current.hostId;
             startButton.gameObject.SetActive(host && (current.phase == "lobby" || current.phase == "round-result" || current.phase == "match-result" || current.phase == "paused"));
-            startButton.interactable = current.players.Length == current.maxPlayers && Array.TrueForAll(current.players, p => p.connected);
+            startButton.interactable = current.players.Length >= 2 && current.players.Length == current.maxPlayers && Array.TrueForAll(current.players, p => p.connected);
             startLabel.text = current.phase == "paused" ? "RESUME" : current.phase == "match-result" ? "REMATCH" : current.phase == "round-result" ? "NEXT HEAT" : "START " + mode;
             bool choosing = host && current.phase == "lobby";
             modeButton.gameObject.SetActive(choosing); mapButton.gameObject.SetActive(choosing); wallsButton.gameObject.SetActive(choosing);
@@ -607,18 +616,28 @@ namespace GridRun
             }
             ChaseCamera.Follow(view.transform, ref cameraAim, target, aim, Time.deltaTime);
         }
-        private void OnApplicationPause(bool paused)
+        private void ReleaseHolds()
         {
-            if (!paused || room == null) return;
+            if (room == null) return;
             hud?.ClearHolds();
             lastThrottle = lastFire = false;
             _ = room.SendAsync("throttle", held: false);
             _ = room.SendAsync("fire", held: false);
             if (room.View?.mode == "shift") { lastMove = Vector2.zero; _ = room.SendAsync(new OnlineRoomClient.ActionBody { type = "move" }); }
         }
+        // In the background the rider cannot steer, so the stream closes and the server holds the heat
+        // for everyone until this seat reconnects or the hold runs out.
+        private void OnApplicationPause(bool paused)
+        {
+            if (room == null) return;
+            if (!paused) { room.Resume(); return; }
+            ReleaseHolds();
+            room.Suspend();
+        }
+        // Losing focus alone (a notification shade or dialog) only releases held controls.
         private void OnApplicationFocus(bool focused)
         {
-            if (!focused && !verificationNoFocusPause) OnApplicationPause(true);
+            if (!focused && !verificationNoFocusPause) ReleaseHolds();
         }
         private void OnDestroy()
         {

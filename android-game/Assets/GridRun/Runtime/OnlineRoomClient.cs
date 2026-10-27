@@ -35,7 +35,8 @@ namespace GridRun
             public RiderView[] riders; public SegmentView[] segments;
             public BulletView[] bullets; public PickupView[] pickups; public EffectView[] effects; public ShiftView shift;
         }
-        [Serializable] public sealed class CrashView { public string riderId, reason; }
+        // The server names riders whose seat was released, since they are no longer in the player list.
+        [Serializable] public sealed class CrashView { public string riderId, reason, name; }
         [Serializable] public sealed class ResultView
         {
             public string winnerId, winnerName, matchWinnerId, matchWinnerName;
@@ -64,13 +65,20 @@ namespace GridRun
         { public string type, mode, map, rule, kind; public int sign; public bool held, enabled; public float x, z; }
         [Serializable] private sealed class EntryResult { public string code, playerId, error; }
         [Serializable] private sealed class ApiError { public string error; }
-        [Serializable] private sealed class StatusResult { public bool available, online; public int maxPlayers, protocol, minProtocol; }
+        [Serializable] private sealed class StatusResult { public bool available, online; public int maxPlayers, protocol, minProtocol, heartbeatMs, reconnectMs; }
 
         private readonly ConcurrentQueue<string> snapshots = new ConcurrentQueue<string>();
         private HttpClient client;
         private CancellationTokenSource streamCancellation;
         private HttpResponseMessage liveStream;
         private Uri origin;
+        // Servers that send heartbeats report the interval; a stream silent for three of them is treated
+        // as dead (a phone that changed networks can keep a socket that never errors). Zero: no watchdog.
+        private int heartbeatMs;
+        // Each stream loop owns one generation, so a loop ending late cannot clear a newer stream's state.
+        private int generation;
+        private bool suspended;
+        private readonly System.Diagnostics.Stopwatch offline = new System.Diagnostics.Stopwatch();
         public string Code { get; private set; }
         public string SelfId { get; private set; }
         public RoomView View { get; private set; }
@@ -81,6 +89,11 @@ namespace GridRun
         public bool Supported { get; private set; } = true;
         public bool Busy { get; private set; }
         public bool IsHost => View != null && View.selfId == View.hostId;
+        // The room is gone or this seat was released; reconnecting cannot help.
+        public bool Unavailable { get; private set; }
+        // How long the server holds a dropped seat; servers from before it was reported held 15 s.
+        public int HoldSeconds { get; private set; } = 15;
+        public int OfflineSeconds => (int)(offline.ElapsedMilliseconds / 1000);
 
         private static Uri ValidateOrigin(string value)
         {
@@ -176,6 +189,8 @@ namespace GridRun
                 throw new InvalidOperationException("This app is too old for this game server. Update Grid Run to play online.");
             if (SpokenProtocol > serverProtocol)
                 throw new InvalidOperationException("This game server is older than your app. Try again after the server is updated.");
+            heartbeatMs = Math.Max(0, server.heartbeatMs);
+            HoldSeconds = server.reconnectMs > 0 ? Mathf.CeilToInt(server.reconnectMs / 1000f) : 15;
         }
 
         private void Enter(EntryResult entry)
@@ -185,8 +200,35 @@ namespace GridRun
             Code = entry.code;
             SelfId = entry.playerId;
             Status = "Connecting to room " + Code + "...";
+            OpenStream();
+        }
+
+        private void OpenStream()
+        {
+            streamCancellation?.Dispose();
             streamCancellation = new CancellationTokenSource();
-            _ = StreamLoopAsync(streamCancellation.Token);
+            _ = StreamLoopAsync(streamCancellation.Token, ++generation);
+        }
+
+        // The app went to the background: close the stream so the server holds the heat for everyone
+        // instead of letting this rider drive blind. Resume reconnects to the same seat.
+        public void Suspend()
+        {
+            if (string.IsNullOrEmpty(Code) || suspended || Unavailable) return;
+            suspended = true;
+            streamCancellation?.Cancel();
+            liveStream?.Dispose();
+            streamOpen = false;
+            if (!offline.IsRunning) offline.Restart();
+            Status = "Paused in the background. Reconnecting when you return.";
+        }
+
+        public void Resume()
+        {
+            if (string.IsNullOrEmpty(Code) || !suspended || client == null) return;
+            suspended = false;
+            Status = "Reconnecting to room " + Code + "...";
+            OpenStream();
         }
 
         public Task<string> SendAsync(string type, int sign = 0, bool held = false, bool enabled = false, string map = null, string rule = null) =>
@@ -214,47 +256,83 @@ namespace GridRun
             Status = "Left the room.";
         }
 
-        private async Task StreamLoopAsync(CancellationToken token)
+        private async Task StreamLoopAsync(CancellationToken token, int loop)
         {
+            string path = "/api/rooms/" + Code + "/stream";
             while (!token.IsCancellationRequested)
             {
                 try
                 {
-                    using (var request = new HttpRequestMessage(HttpMethod.Get, new Uri(origin, "/api/rooms/" + Code + "/stream")))
-                    using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false))
+                    using (var request = new HttpRequestMessage(HttpMethod.Get, new Uri(origin, path)))
+                    using (var connecting = CancellationTokenSource.CreateLinkedTokenSource(token))
                     {
-                        if (!response.IsSuccessStatusCode)
+                        // A server that accepts the connection but never answers must not stall reconnection.
+                        connecting.CancelAfter(TimeSpan.FromSeconds(8));
+                        HttpResponseMessage response;
+                        try { response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, connecting.Token).ConfigureAwait(false); }
+                        catch (OperationCanceledException) when (!token.IsCancellationRequested) { throw new IOException("The room server did not answer."); }
+                        using (response)
                         {
-                            if (response.StatusCode == HttpStatusCode.NotFound || response.StatusCode == HttpStatusCode.Forbidden)
+                            if (!response.IsSuccessStatusCode)
                             {
-                                Status = "Room expired or this seat is unavailable.";
-                                return;
+                                if (response.StatusCode == HttpStatusCode.NotFound || response.StatusCode == HttpStatusCode.Forbidden)
+                                {
+                                    string reason = null;
+                                    try { reason = JsonUtility.FromJson<ApiError>(await response.Content.ReadAsStringAsync().ConfigureAwait(false))?.error; }
+                                    catch { /* Fall back to the generic message. */ }
+                                    if (loop != generation) return;
+                                    Unavailable = true;
+                                    Status = string.IsNullOrWhiteSpace(reason) ? "This room is no longer available." : reason;
+                                    return;
+                                }
+                                throw new IOException("Room stream returned " + (int)response.StatusCode + ".");
                             }
-                            throw new IOException("Room stream returned " + (int)response.StatusCode + ".");
-                        }
-                        liveStream = response;
-                        streamOpen = true;
-                        Status = "Connected to room.";
-                        using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
-                        using (var reader = new StreamReader(stream))
-                        {
-                            while (!token.IsCancellationRequested)
+                            liveStream = response;
+                            streamOpen = true;
+                            offline.Reset();
+                            Status = "Connected to room.";
+                            using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                            using (var reader = new StreamReader(stream))
                             {
-                                string line = await reader.ReadLineAsync().ConfigureAwait(false);
-                                if (line == null) throw new IOException("Room stream closed.");
-                                if (line.Length > 0) snapshots.Enqueue(line);
+                                int silence = heartbeatMs > 0 ? heartbeatMs * 3 : Timeout.Infinite;
+                                while (!token.IsCancellationRequested)
+                                {
+                                    var read = reader.ReadLineAsync();
+                                    if (silence != Timeout.Infinite)
+                                        using (var quiet = CancellationTokenSource.CreateLinkedTokenSource(token))
+                                        {
+                                            var first = await Task.WhenAny(read, Task.Delay(silence, quiet.Token)).ConfigureAwait(false);
+                                            quiet.Cancel();
+                                            if (first != read)
+                                            {
+                                                if (token.IsCancellationRequested) break;
+                                                throw new IOException("The room stream went silent.");
+                                            }
+                                        }
+                                    string line = await read.ConfigureAwait(false);
+                                    if (line == null) throw new IOException("Room stream closed.");
+                                    if (line.Length > 0) snapshots.Enqueue(line);
+                                }
                             }
                         }
                     }
                 }
                 catch (OperationCanceledException) { break; }
-                catch (ObjectDisposedException)
+                catch (Exception error)
                 {
                     if (token.IsCancellationRequested) break;
-                    Status = "Connection interrupted. Reconnecting...";
+                    // The reason goes to the log; players see one plain message.
+                    Debug.Log("Online stream interrupted: " + error.Message);
+                    if (loop == generation) Status = "Connection interrupted. Reconnecting...";
                 }
-                catch (Exception error) { Status = "Connection interrupted. Reconnecting: " + error.Message; }
-                finally { liveStream = null; streamOpen = false; }
+                finally
+                {
+                    if (loop == generation)
+                    {
+                        liveStream = null; streamOpen = false;
+                        if (!token.IsCancellationRequested && !offline.IsRunning) offline.Restart();
+                    }
+                }
                 try { await Task.Delay(1000, token).ConfigureAwait(false); }
                 catch (OperationCanceledException) { break; }
             }
@@ -295,6 +373,7 @@ namespace GridRun
             streamCancellation = null; liveStream = null;
             client?.Dispose(); client = null;
             Code = SelfId = null; View = null; streamOpen = false; Supported = true;
+            Unavailable = suspended = false; heartbeatMs = 0; offline.Reset(); generation++;
             while (snapshots.TryDequeue(out _)) { }
         }
         private void OnDestroy() { CloseSession(); }

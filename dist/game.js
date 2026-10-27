@@ -1450,10 +1450,13 @@ function onlineReceive(view) {
             'The heat ended in a draw.';
       mode = winnerId === view.selfId ? 'won' : 'lost';
       hideCountdown();
+      // Riders who leave or stay away past the hold give up their seat; a lone host cannot continue.
+      const alone = view.players.length < 2;
       setOverlay(finished ? 'MATCH COMPLETE' : 'HEAT COMPLETE',
         winnerId === view.selfId ? 'GRID <span>SECURED</span>' : 'END OF <span>LINE</span>',
-        result + ' ' + view.players.map(player => player.name + ' ' + player.wins).join(' / '),
-        view.selfId === view.hostId ? finished ? 'REMATCH' : 'NEXT HEAT' : 'RETURN TO ROOM');
+        result + ' ' + view.players.map(player => player.name + ' ' + player.wins).join(' / ') +
+          (alone ? ' Every other rider has left.' : ''),
+        view.selfId === view.hostId && !alone ? finished ? 'REMATCH' : 'NEXT HEAT' : 'RETURN TO ROOM');
       ui.start.disabled = false;
       ui['change-mode'].hidden = false;
       ui['change-mode'].textContent = 'ROOM';
@@ -1699,7 +1702,7 @@ function start() {
     if (!online.connected || !online.view) { location.href = './lan.html?room=' + online.code; return; }
     if (online.view?.selfId === online.view?.hostId && online.view.phase === 'paused')
       onlineAction({ type: 'pause' });
-    else if (online.view?.selfId === online.view?.hostId &&
+    else if (online.view?.selfId === online.view?.hostId && online.view.players.length >= 2 &&
         ['round-result', 'match-result', 'lobby'].includes(online.view.phase))
       onlineAction({ type: 'start' });
     else if (online.view?.selfId !== online.view?.hostId || !online.view)
