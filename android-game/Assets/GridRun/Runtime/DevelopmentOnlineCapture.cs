@@ -416,7 +416,8 @@ namespace GridRun
             yield return WaitFor(() => GameObject.Find("Online setup") != null, 5, "Setup reopens after the restart");
             yield return HostRoom(secondCode, 2);
             yield return StartWhenReady();
-            yield return WaitFor(() => room.View?.phase == "countdown" || room.View?.phase == "running", 10, "The restarted server runs a new heat");
+            yield return WaitFor(() => room.View?.phase == "running", 10, "The restarted server runs a new heat");
+            yield return WaitFor(() => GameObject.Find("Pause") != null, 3, "Host sees PAUSE");
             Submit("Pause");
             yield return WaitFor(() => room.View?.phase == "paused", 5, "Host pauses to leave");
             yield return null;
