@@ -1705,7 +1705,7 @@ function start() {
     else if (online.view?.selfId === online.view?.hostId && online.view.players.length >= 2 &&
         ['round-result', 'match-result', 'lobby'].includes(online.view.phase))
       onlineAction({ type: 'start' });
-    else if (online.view?.selfId !== online.view?.hostId || !online.view)
+    else if (online.view?.selfId !== online.view?.hostId || !online.view || online.view.players.length < 2)
       location.href = './lan.html?room=' + online.code;
     return;
   }
