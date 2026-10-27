@@ -29,7 +29,7 @@ The user judged the performance good. The log showed one Unity error at launch: 
 
 ## v0.6.0 user check - 2026-10-26
 
-The user installed Grid Run v0.6.0 (the first release with 2-4 player online rooms, Duel and Grid Shift online, and online sound) on their phone and reported that the test "looks good". No measurements, logs, modes covered, second device, or network conditions were recorded, so this is a qualitative pass, not a completed checklist item or a performance result. The online motion smoothing added after v0.6.0 was not part of it.
+The user installed Grid Run v0.6.0 (the first release with 2-4 player online rooms, Duel and Grid Shift online, and online sound) on their phone and reported that the test "looks good". Scope as reported: an online Arena match between two devices on Wi-Fi, against the live Render server. No measurements, logs, device models for the second device, or other modes were recorded, so this is a qualitative pass, not a completed checklist item or a performance result. Duel, Grid Shift, 3-4 seats, mobile data, and network changes remain untested on devices. The online motion smoothing added after v0.6.0 was not part of it.
 
 ## Targets
 

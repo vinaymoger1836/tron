@@ -60,7 +60,7 @@ To share the HUD, `SoloHud.Sync` takes a small `HudPlayer` state that solo play 
 - Add ready state, rider names in-world, wall-cut and disc-hit effects the server does not forward yet, interpolation for bullets and discs, command ordering, and robust error/status messages during play.
 - Test reconnect, timeout, stale-room cleanup, server restart, host departure, app backgrounding, and network changes on devices.
 - Measure latency, jitter, bandwidth, server tick time, concurrent rooms, capacity, and cost. Test four devices with simulated 50/150/250 ms latency and 1-5% loss where practical.
-- Validate Android HTTP streaming/cookies, touch controls, safe areas, and power/network interruption on the Galaxy M35. The first phone session (2026-10-23) was planned around offline modes; the Online Room was not checked on the phone.
+- Validate Android HTTP streaming/cookies, touch controls, safe areas, and power/network interruption on the Galaxy M35. First device evidence (2026-10-26, v0.6.0): the user played an online Arena match between two devices on Wi-Fi against the live server and reported it looks good, so streaming, cookies, and controls worked in that case. Measurements, mobile data, network changes, backgrounding, and 3-4 devices are still open.
 
 ## Reproduce locally
 
